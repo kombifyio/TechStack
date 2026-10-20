@@ -127,7 +127,7 @@ func (r *deployRollout) admitRuntimeListeners(ctx context.Context, apply bool) e
 	r.portGeneration = &admission.GenerationRef
 	r.portActivated = admission.State == portinventory.ClaimStateActive
 	r.job.mutateResult(func(result map[string]interface{}) {
-		result["runtime_listener_plan_hash"] = admission.GenerationRef.ResolvedPlanHash
+		result[RuntimeListenerPlanHashResultField] = admission.GenerationRef.ResolvedPlanHash
 		result["runtime_listener_server_generation"] = admission.GenerationRef.ServerGeneration
 		result["runtime_listener_claim_count"] = len(admission.Admission.Claims)
 	})

@@ -150,7 +150,15 @@ func GoalDeliveryStatuses() (map[string]string, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
-	return goalDeliveryStatuses(manifest), true, nil
+	statuses := goalDeliveryStatuses(manifest)
+	platforms, err := platformGoalBindings(manifest)
+	if err != nil {
+		return nil, true, err
+	}
+	for goal, platform := range platforms {
+		statuses[goal] = platform.status
+	}
+	return statuses, true, nil
 }
 
 func goalDeliveryStatuses(manifest compatibilityManifest) map[string]string {
@@ -186,7 +194,50 @@ func loadGoalMetadata(path, releaseVersion string) (map[string]string, map[strin
 	if err != nil {
 		return nil, nil, err
 	}
-	return goalMetadata(manifest, releaseVersion)
+	goals, bindings, err := goalMetadata(manifest, releaseVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	platforms, err := platformGoalBindings(manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	for goal, platform := range platforms {
+		goals[goal] = goal
+		bindings[goal] = platform.binding
+	}
+	return goals, bindings, nil
+}
+
+type platformGoalBinding struct {
+	binding workloadModuleBinding
+	status  string
+}
+
+// Platform installations use StackKits' host lifecycle, not an application
+// delivery adapter. Their executable release catalog binding is the admission
+// source; no synthetic standalone-compose compatibility row is invented.
+func platformGoalBindings(manifest compatibilityManifest) (map[string]platformGoalBinding, error) {
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		return nil, err
+	}
+	platforms := map[string]platformGoalBinding{}
+	for _, useCase := range catalog.UseCases {
+		for _, alternative := range useCase.Alternatives {
+			if alternative.ID != useCase.DefaultAlternative || alternative.ProvidesRuntimeAdapterRef == "" || len(alternative.Modules) != 1 || !deliverableStatus(useCase.ApplicationMaturity(alternative.ID)) {
+				continue
+			}
+			if strings.TrimPrefix(catalog.Release.Version, "v") != strings.TrimPrefix(manifest.Release.Version, "v") || catalog.Release.Tag != manifest.Release.Tag || catalog.Release.SourceSHA != manifest.Release.SourceSHA {
+				return nil, fmt.Errorf("specv2: platform catalog and compatibility manifest have different release identities")
+			}
+			if contractID(useCase.ID) != useCase.ID || contractID(alternative.ID) != alternative.ID || contractID(alternative.Modules[0].ID) != alternative.Modules[0].ID {
+				return nil, fmt.Errorf("specv2: invalid platform catalog authoring binding")
+			}
+			platforms[useCase.ID] = platformGoalBinding{binding: workloadModuleBinding{AlternativeRef: alternative.ID, ModuleRef: alternative.Modules[0].ID}, status: useCase.ApplicationMaturity(alternative.ID)}
+		}
+	}
+	return platforms, nil
 }
 
 func goalMetadata(manifest compatibilityManifest, releaseVersion string) (map[string]string, map[string]workloadModuleBinding, error) {
@@ -311,14 +362,13 @@ func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBas
 		"--owner-email", authoringOwnerEmail,
 		"--owner-username", "owner",
 		"--use-case", strings.Join(useCases, ","),
-		"--platform", wizardRuntimeAdapter,
 		"--api-version", apiVersion,
 	}
 	args = append(args, choiceArgs...)
 	if apiVersion == NativeSpecAPIVersion {
 		args = append(args, "--catalog-defaults")
 	} else {
-		args = append(args, "--compute-tier", authoringComputeTier)
+		args = append(args, "--compute-tier", authoringComputeTier, "--platform", wizardRuntimeAdapter)
 	}
 	domainBase = strings.TrimSpace(domainBase)
 	// Init refuses a local identity realm on the shared kombify.me parent
@@ -407,6 +457,16 @@ func (v *CLIValidator) installChoices(apiVersion string, mappedGoals []string, w
 		bindings[v.goalWorkloads[goal]] = workloadModuleBinding{AlternativeRef: choice.Alternative, ModuleRef: choice.Module}
 	}
 	args = append(args, selection.capabilityArgs(mappedGoals)...)
+	for _, platform := range selection.ExistingPlatforms {
+		if slices.Contains(useCases, platform.Workload) {
+			continue
+		}
+		if contractID(platform.Workload) != platform.Workload || contractID(platform.Alternative) != platform.Alternative {
+			return nil, nil, nil, fmt.Errorf("specv2: invalid installed platform authoring context")
+		}
+		useCases = append(useCases, platform.Workload)
+		args = append(args, "--use-case-alternative", platform.Workload+"="+platform.Alternative)
+	}
 	for _, addOn := range selection.AddOns {
 		workload := addOn.Workload
 		if !slices.Contains(mappedGoals, addOn.Goal) || workloadIDs[workload] ||
@@ -510,7 +570,11 @@ func goalAuthoringFromDocument(document []byte, kitSlug string, mappedGoals, unm
 			profiles[workloadID] = map[string]any{binding.ModuleRef: profile}
 		}
 	}
+	network, _ := authoredSpec["network"].(map[string]any)
+	tls, _ := network["tls"].(map[string]any)
+	minimumTLS, _ := tls["minVersion"].(string)
 	return GoalAuthoring{
+		TLSMinVersion:  minimumTLS,
 		UseCases:       authoredUseCases(authoredSpec, mappedGoals),
 		Workloads:      selected,
 		ModuleProfiles: profiles,

@@ -670,6 +670,13 @@ func (o *Orchestrator) teardownRuntimeSummary(ctx context.Context, stack *orches
 	}
 	if latest != nil {
 		summary[stackKitOutputKey] = latest.Result[stackKitOutputKey]
+		// The generation hash belongs to the rollout the outputs come from; a stored value of
+		// another rollout is never mixed in, so a result without one leaves it unset.
+		if hash, ok := latest.Result[jobs.RuntimeListenerPlanHashResultField]; ok {
+			summary[jobs.RuntimeListenerPlanHashResultField] = hash
+		} else {
+			delete(summary, jobs.RuntimeListenerPlanHashResultField)
+		}
 	}
 	if strings.TrimSpace(stringFromAny(summary[runtimeFieldStackKitRef])) == "" {
 		kit := ""

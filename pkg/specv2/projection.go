@@ -28,6 +28,9 @@ type GoalAuthoring struct {
 	AccessPolicies map[string]map[string]any
 	DataBindings   map[string]map[string]any
 	UnmappedGoals  []string
+	// TLSMinVersion is the minimum emitted by the release init. It applies
+	// only to a new platform installation in a first-run projection.
+	TLSMinVersion string
 }
 
 // GoalAuthor resolves shipped use cases from a published compatibility
@@ -251,7 +254,7 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 	apiVersion, _ := spec["apiVersion"].(string)
 	selection := GoalSelection{Goals: intent.Goals}
 	var aiCatalog *stackkitrelease.UseCaseCatalog
-	if (len(intent.UseCaseSettings) > 0 || len(intent.UseCaseCapabilities) > 0) && p.catalog != nil {
+	if p.catalog != nil {
 		catalog, err := p.catalog()
 		if err != nil {
 			return fmt.Errorf("specv2: read the release use-case catalog for the selected settings: %w", err)
@@ -263,6 +266,7 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 		if err := requireNoAlternativeReplacement(spec, selection); err != nil {
 			return err
 		}
+		selection.ExistingPlatforms = installedPlatformContext(spec, catalog, result.NodeID)
 	}
 	authored, err := p.author.AuthorGoals(
 		ctx,
@@ -274,6 +278,11 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 	)
 	if err != nil {
 		return fmt.Errorf("specv2: the selected installation needs release authoring: %w", err)
+	}
+	if intent.RunKind == RunKindFirstRun && aiCatalog != nil {
+		if err := projectInitialPlatformTLS(spec, authored, *aiCatalog); err != nil {
+			return err
+		}
 	}
 	if err := proposeSmartHomeSelection(spec, intent, &authored); err != nil {
 		return err
@@ -292,6 +301,38 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 		return err
 	}
 	result.UnmappedGoals = appendUnmappedGoals(result.UnmappedGoals, authored.UnmappedGoals)
+	return nil
+}
+
+// projectInitialPlatformTLS retains the new platform init's release-owned TLS
+// minimum. Existing installations and application-only additions keep their TLS.
+func projectInitialPlatformTLS(spec map[string]any, authored GoalAuthoring, catalog stackkitrelease.UseCaseCatalog) error {
+	if authored.TLSMinVersion == "" {
+		return nil
+	}
+	if authored.TLSMinVersion != "TLS1.2" && authored.TLSMinVersion != "TLS1.3" {
+		return fmt.Errorf("specv2: release authored an invalid platform TLS minimum")
+	}
+	owned, _ := spec["workloads"].(map[string]any)
+	for _, useCase := range catalog.UseCases {
+		if _, exists := owned[useCase.ID]; exists {
+			continue
+		}
+		entry, _ := authored.Workloads[useCase.ID].(map[string]any)
+		for _, alternative := range useCase.Alternatives {
+			if entry["alternative"] != alternative.ID || alternative.ProvidesRuntimeAdapterRef == "" {
+				continue
+			}
+			network, _ := spec["network"].(map[string]any)
+			tls, _ := network["tls"].(map[string]any)
+			if tls == nil {
+				return fmt.Errorf("specv2: new platform seed has no TLS policy")
+			}
+			if authored.TLSMinVersion == "TLS1.3" {
+				tls["minVersion"] = authored.TLSMinVersion
+			}
+		}
+	}
 	return nil
 }
 
