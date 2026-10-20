@@ -11,7 +11,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { runManagedDay2Evidence } from "./managed-day2-evidence";
+import {
+  runManagedDay2Evidence,
+  type ManagedDay2Evidence,
+} from "./managed-day2-evidence";
 import { managedLifecycleReceipt } from "./managed-lifecycle-receipt";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -41,7 +44,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-async function producerCommit(): Promise<string> {
+async function testSourceCommit(): Promise<string> {
   const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"]);
   return stdout.trim();
 }
@@ -967,6 +970,19 @@ async function fetchRuntimeApi<T>(
 
 // Read the owner-bound native receipt. Terminal server aggregates remain for
 // audit, so their presence is not a cleanup failure or a substitute for proof.
+class ManagedRuntimeCleanupReadbackError extends Error {
+  readonly lastReadback: MonthlyRuntimeCleanupReadback | undefined;
+
+  constructor(
+    cause: unknown,
+    lastReadback: MonthlyRuntimeCleanupReadback | undefined,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "ManagedRuntimeCleanupReadbackError";
+    this.lastReadback = lastReadback;
+  }
+}
+
 async function waitForManagedRuntimeCleanupReadback(args: {
   token: RuntimeBearer;
   apiBase: string;
@@ -976,31 +992,35 @@ async function waitForManagedRuntimeCleanupReadback(args: {
 }): Promise<MonthlyRuntimeCleanupReadback> {
   const deadline = Date.now() + (args.timeoutMs ?? 120_000);
   let last: MonthlyRuntimeCleanupReadback | undefined;
-  while (Date.now() < deadline) {
-    last = await fetchRuntimeApi<MonthlyRuntimeCleanupReadback>(
-      args.token,
-      `/api/v1/monthly-runtimes/${encodeURIComponent(args.leaseId)}/cleanup-readback`,
-      args.apiBase,
-      deadline,
-    );
-    if (
-      last?.lease_id === args.leaseId &&
-      last.lease?.desired_terminal &&
-      last.lease.observed_terminal &&
-      last.server?.bound &&
-      last.server.terminal &&
-      last.provider_operation?.found &&
-      last.provider_operation.terminal &&
-      last.provider_operation.absence_evidence_ref?.trim() &&
-      last.provider_operation.capacity_released
-    ) {
-      return last;
+  try {
+    while (Date.now() < deadline) {
+      last = await fetchRuntimeApi<MonthlyRuntimeCleanupReadback>(
+        args.token,
+        `/api/v1/monthly-runtimes/${encodeURIComponent(args.leaseId)}/cleanup-readback`,
+        args.apiBase,
+        deadline,
+      );
+      if (
+        last?.lease_id === args.leaseId &&
+        last.lease?.desired_terminal &&
+        last.lease.observed_terminal &&
+        last.server?.bound &&
+        last.server.terminal &&
+        last.provider_operation?.found &&
+        last.provider_operation.terminal &&
+        last.provider_operation.absence_evidence_ref?.trim() &&
+        last.provider_operation.capacity_released
+      ) {
+        return last;
+      }
+      await delay(2_000);
     }
-    await delay(2_000);
+    throw new Error(
+      `Timed out waiting for native managed cleanup stack=${args.stackId} lease=${args.leaseId}; last=${JSON.stringify(redactObject(last))}`,
+    );
+  } catch (error) {
+    throw new ManagedRuntimeCleanupReadbackError(error, last);
   }
-  throw new Error(
-    `Timed out waiting for native managed cleanup stack=${args.stackId} lease=${args.leaseId}; last=${JSON.stringify(redactObject(last))}`,
-  );
 }
 
 async function waitForManagedRuntimeInventoryEvidence(args: {
@@ -2688,8 +2708,10 @@ test.describe.serial("Runtime E2E scenarios", () => {
       let stackName = "";
       let leaseId = "";
       let provisionJob: Record<string, unknown> | undefined;
-      let stackkitsRelease = "";
+      let advertisedStackkitsRelease = "";
       let laneStartedAt = "";
+      let day2Evidence: ManagedDay2Evidence | undefined;
+      const attemptId = randomUUID();
       test.afterEach(async () => {
         test.setTimeout(MANAGED_RUNTIME_BUDGETS.cleanupMs);
         logRuntimeE2E("phase started", {
@@ -2710,44 +2732,62 @@ test.describe.serial("Runtime E2E scenarios", () => {
           return;
         }
         if (stackId && managedApi) {
-          const cleanupJob = await destroyRuntimeStackViaApi(
-            managedApi,
-            stackId,
-            managedApi.apiBase,
-          );
-          const cleanupReadback = leaseId
-            ? await waitForManagedRuntimeCleanupReadback({
-                token: managedApi,
-                apiBase: managedApi.apiBase,
-                stackId,
-                leaseId,
-              })
-            : undefined;
-          await attachJson("kombify-cloud-cleanup.json", {
-            provider_id: leaseProvider.id,
-            stack_id: stackId,
-            stack_name: stackName,
-            lease_id: leaseId,
-            destroy_job_id: cleanupJob?.id,
-            destroy_job_state: cleanupJob?.state,
-            native_cleanup_readback: cleanupReadback,
-            cleanup_proof_status: cleanupReadback
-              ? "native_cleanup_verified"
-              : "lease_identity_unavailable_after_failed_setup",
-          });
-          // The StackKits public-vps compatibility receipt for this attempt.
-          if (provisionJob && stackkitsRelease) {
+          let cleanupJob: Record<string, unknown> | undefined;
+          let cleanupReadback: MonthlyRuntimeCleanupReadback | undefined;
+          let cleanupReadbackVerified = false;
+          try {
+            cleanupJob = await destroyRuntimeStackViaApi(
+              managedApi,
+              stackId,
+              managedApi.apiBase,
+            );
+            cleanupReadback = leaseId
+              ? await waitForManagedRuntimeCleanupReadback({
+                  token: managedApi,
+                  apiBase: managedApi.apiBase,
+                  stackId,
+                  leaseId,
+                })
+              : undefined;
+            cleanupReadbackVerified = Boolean(cleanupReadback);
+            await attachJson("kombify-cloud-cleanup.json", {
+              provider_id: leaseProvider.id,
+              stack_id: stackId,
+              stack_name: stackName,
+              lease_id: leaseId,
+              destroy_job_id: cleanupJob?.id,
+              destroy_job_state: cleanupJob?.state,
+              native_cleanup_readback: cleanupReadback,
+              cleanup_proof_status: cleanupReadback
+                ? "native_cleanup_verified"
+                : "lease_identity_unavailable_after_failed_setup",
+            });
+          } catch (error) {
+            if (error instanceof ManagedRuntimeCleanupReadbackError) {
+              cleanupReadback = error.lastReadback;
+            }
+            throw error;
+          } finally {
+            // A failed destroy or readback still produces an honest failed
+            // receipt for the same attempt. Never lose cleanup evidence by
+            // throwing before the artifact is written.
             const receipt = managedLifecycleReceipt({
-              attemptId: randomUUID(),
+              attemptId,
+              stackId,
+              leaseId,
               providerId: leaseProvider.id,
-              release: stackkitsRelease,
-              producerCommit:
-                process.env.GITHUB_SHA ?? (await producerCommit()),
+              advertisedStackkitsRelease,
+              testSourceCommit:
+                process.env.GITHUB_SHA ?? (await testSourceCommit().catch(() => "")),
               startedAt: laneStartedAt,
               finishedAt: new Date().toISOString(),
               job: provisionJob,
+              destroyJobId:
+                typeof cleanupJob?.id === "string" ? cleanupJob.id : undefined,
+              day2: day2Evidence,
               cleanupReadback: cleanupReadback as
                 Record<string, unknown> | undefined,
+              cleanupReadbackVerified,
             });
             await mkdir(ARTIFACTS_DIR, { recursive: true });
             await writeFile(
@@ -2761,6 +2801,9 @@ test.describe.serial("Runtime E2E scenarios", () => {
               `managed-lifecycle-receipt-${leaseProvider.id}.json`,
               receipt,
             );
+          }
+          if (leaseId) {
+            expect(cleanupReadback?.lease_id).toBe(leaseId);
           }
         }
       });
@@ -2908,7 +2951,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
         );
         managedApi = session;
         laneStartedAt = new Date().toISOString();
-        stackkitsRelease = String(
+        advertisedStackkitsRelease = String(
           (
             await fetchRuntimeApi<{ release?: { tag?: string } }>(
               session,
@@ -2981,9 +3024,14 @@ test.describe.serial("Runtime E2E scenarios", () => {
         let day2Recorded = false;
         if (enrolledLease?.enrollment_status === "enrolled") {
           managedObservationPhase("day2", MANAGED_DAY2_BUDGET_MS);
+          day2Evidence = await managedDay2Evidence(
+            session,
+            leaseId,
+            stack.stack_id,
+          );
           await attachJson(
             "kombify-cloud-day2.json",
-            await managedDay2Evidence(session, leaseId, stack.stack_id),
+            day2Evidence,
           );
           day2Recorded = true;
         }
@@ -3023,9 +3071,14 @@ test.describe.serial("Runtime E2E scenarios", () => {
         expect(status.enrollment_status).toBe("enrolled");
         if (!day2Recorded) {
           managedObservationPhase("day2", MANAGED_DAY2_BUDGET_MS);
+          day2Evidence = await managedDay2Evidence(
+            session,
+            leaseId,
+            stack.stack_id,
+          );
           await attachJson(
             "kombify-cloud-day2.json",
-            await managedDay2Evidence(session, leaseId, stack.stack_id),
+            day2Evidence,
           );
           managedObservationPhase(
             "verification",
