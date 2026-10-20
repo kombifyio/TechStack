@@ -15,6 +15,7 @@
   import { beforeNavigate, goto } from "$app/navigation";
   import { Stepper } from "./index";
   import GoalsStep from "./steps/GoalsStep.svelte";
+  import LayoutRecommendationPanel from "./LayoutRecommendationPanel.svelte";
   import ServerStep from "./steps/ServerStep.svelte";
   import AccessStep from "./steps/AccessStep.svelte";
   import UsersStep from "./steps/UsersStep.svelte";
@@ -38,11 +39,22 @@
     getEasyAudienceQuestions,
     getEasyGoalQuestions,
     getVpnQuestions,
+    buildLayoutSelection,
     selectedCanonicalUseCasesFromGoals,
     WizardPreviewController,
     type WizardPreviewState,
   } from "#lib/wizard/index.js";
   import type { WizardRecommendation } from "#lib/api/unifier.js";
+  import type {
+    LayoutFlow,
+    LayoutRecommendationAcceptance,
+    LayoutRecommendationView,
+  } from "#lib/api/layout.js";
+  import {
+    LayoutPreviewController,
+    acceptedLayoutFromPreview,
+    type LayoutPreviewState,
+  } from "#lib/wizard/LayoutPreviewController.js";
   import { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
   import type {
     HouseholdPersonDraft,
@@ -70,7 +82,16 @@
   } from "#lib/wizard/validation-context.js";
 
   interface Props {
-    oncreate?: (config: StackConfig) => void;
+    /**
+     * Called when the person creates on the last step. `layoutRecommendation`
+     * is the recommended distribution the person was shown, present only when
+     * it is recorded, open and verified against their hardware; the run request
+     * carries it, and finishing the run accepts it.
+     */
+    oncreate?: (
+      config: StackConfig,
+      extras?: { layoutRecommendation?: LayoutRecommendationAcceptance },
+    ) => void;
     initialConfig?: StackConfig;
     isDeploying?: boolean;
     /** Text of the final button; the catalog's "Create homelab" when omitted. */
@@ -91,6 +112,21 @@
     applyDeploymentLaneDefaults?: boolean;
     reuseExistingOwner?: boolean;
     joinExistingDeployment?: boolean;
+    /**
+     * The deployment the wizard adds to. With joinExistingDeployment and a
+     * selected use case, the wizard asks for the recommended distribution of
+     * the selection and shows it on the Goals step.
+     */
+    layoutStackId?: string;
+    layoutFlow?: LayoutFlow;
+    /** A replacement a superseded run handed back; shown to be confirmed again. */
+    layoutReplacement?: LayoutRecommendationView;
+    /** Changes when the shown recommendation must be asked for again. */
+    layoutRefresh?: number;
+    /** The server step is inherited from the deployment (use cases only). */
+    inheritServer?: boolean;
+    /** The run needs at least one selected use case (adding use cases). */
+    requireGoal?: boolean;
     onmanagedproviderselect?: (provider: ManagedProviderID) => void;
     nodeOptions?: Snippet<[StackConfig]>;
     nodeAlternative?: Snippet;
@@ -109,6 +145,12 @@
     applyDeploymentLaneDefaults = true,
     reuseExistingOwner = false,
     joinExistingDeployment = reuseExistingOwner,
+    layoutStackId,
+    layoutFlow = "add-server",
+    layoutReplacement,
+    layoutRefresh = 0,
+    inheritServer = false,
+    requireGoal = false,
     onmanagedproviderselect,
     nodeOptions,
     nodeAlternative,
@@ -244,6 +286,7 @@
   const surfaceSteps = EASY_STEPS;
   const disabledStepReasons = $derived.by(() => {
     const reasons: Record<number, string> = {};
+    if (inheritServer) reasons[2] = tr("wizard.step.inherited");
     if (joinExistingDeployment) {
       reasons[3] = tr("wizard.step.inherited");
       reasons[4] = tr("wizard.step.inherited");
@@ -326,6 +369,46 @@
   });
 
   $effect(() => () => recommendationController.destroy());
+
+  // Recommended distribution: only for a run against an existing deployment
+  // with something selected. The preview follows the selection (debounced,
+  // stale answers dropped); the run request carries the acceptable one.
+  let layoutState = $state<LayoutPreviewState>({ phase: "idle" });
+  const layoutController = new LayoutPreviewController((state) => {
+    layoutState = state;
+  });
+  const layoutEnabled = $derived(
+    Boolean(layoutStackId) && joinExistingDeployment && !nodeAlternative,
+  );
+  const layoutSelection = $derived(
+    layoutEnabled && layoutStackId
+      ? buildLayoutSelection(config, layoutStackId, layoutFlow)
+      : null,
+  );
+  const layoutAcceptance = $derived(
+    layoutEnabled
+      ? acceptedLayoutFromPreview(layoutState, layoutSelection)
+      : undefined,
+  );
+  $effect(() => {
+    const selection = layoutSelection;
+    untrack(() => layoutController.update(selection));
+  });
+  $effect(() => {
+    const replacement = layoutReplacement;
+    if (!replacement) return;
+    untrack(() => {
+      if (layoutSelection) layoutController.adopt(layoutSelection, replacement);
+    });
+  });
+  let layoutRefreshSeen = untrack(() => layoutRefresh);
+  $effect(() => {
+    const requested = layoutRefresh;
+    if (requested === layoutRefreshSeen) return;
+    layoutRefreshSeen = requested;
+    untrack(() => layoutController.retry(layoutSelection));
+  });
+  $effect(() => () => layoutController.destroy());
 
   $effect(() => {
     if (reuseExistingOwner) return;
@@ -413,6 +496,9 @@
   }
 
   // Validation helpers
+  const hasSelectedGoal = $derived(
+    selectedCanonicalUseCasesFromGoals(config.goals).length > 0,
+  );
   const hasUsers = $derived(
     config.audience.onlyMe ||
       config.audience.familyFriends ||
@@ -435,6 +521,12 @@
     const server = config.serverProvisioning;
 
     if (currentStepKey === "goals") {
+      if (requireGoal && !hasSelectedGoal) {
+        blockers.push({
+          field: "step",
+          message: tr("wizard.validation.goalsRequired"),
+        });
+      }
       if (useCaseCatalogState === "loading") {
         blockers.push({
           field: "catalog",
@@ -544,7 +636,8 @@
   let stepContent = $state<HTMLDivElement>();
   const canGoNext = $derived(() => {
     // A failed or unfinished catalog read must not read as "nothing to install".
-    if (currentStepKey === "goals") return useCaseCatalogState === "ready";
+    if (currentStepKey === "goals")
+      return useCaseCatalogState === "ready" && (!requireGoal || hasSelectedGoal);
     if (currentStepKey === "server") {
       if (!serverSelectionReady) return false;
       if (config.serverProvisioning.mode === "hypervisor") {
@@ -661,7 +754,7 @@
 
     config.wizardType = "easy";
     deriveServices();
-    oncreate?.(config);
+    oncreate?.(config, { layoutRecommendation: layoutAcceptance });
   }
 
   /**
@@ -888,6 +981,8 @@
         {useCaseCatalog}
         catalogState={useCaseCatalogState}
         onCatalogReload={reloadUseCaseCatalog}
+        {layoutState}
+        onLayoutRetry={() => layoutController.retry(layoutSelection)}
       />
     {/if}
 
@@ -930,6 +1025,17 @@
 
     {#if currentStepKey === "login" && !reuseExistingOwner}
       <LoginStep {config} owner={ownerState} lane={wizardDeploymentLane} />
+    {/if}
+
+    <!-- The accepted distribution, as a reminder where the run is created. -->
+    {#if layoutEnabled && step === lastActiveStep && currentStepKey !== "goals" && layoutState.phase !== "idle"}
+      <div class="mt-6" data-testid="layout-recommendation-summary-slot">
+        <LayoutRecommendationPanel
+          state={layoutState}
+          variant="summary"
+          onretry={() => layoutController.retry(layoutSelection)}
+        />
+      </div>
     {/if}
   </div>
   {#if footerNotice}

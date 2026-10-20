@@ -640,7 +640,10 @@ jobs:
               echo "Database Delivery ${database_run} applied the forward batch of ${RELEASE_SHA}." >> "$GITHUB_STEP_SUMMARY"
               ;;
           esac
-          gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}" --jq '.files[].filename' | grep -qx '.kombify/VERSION' || {
+          # Read the list first: under pipefail, `gh api | grep -q` fails when grep
+          # exits on the first match before gh has written everything (0.41.18).
+          release_files="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}" --jq '.files[].filename')"
+          grep -qx '.kombify/VERSION' <<<"$release_files" || {
             echo "::error::${RELEASE_SHA} is not a prepared release commit." >&2
             exit 1
           }

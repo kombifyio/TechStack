@@ -87,6 +87,9 @@ type Facts struct {
 	Hypervisor    HypervisorFacts `json:"hypervisor"`
 	// Accelerators are the devices a hypervisor node could hand to a guest.
 	Accelerators AcceleratorFacts `json:"accelerators"`
+	// Hardware is what the machine itself is: CPU level, GPU, render nodes, system
+	// disk and chassis, read from procfs and sysfs.
+	Hardware HardwareFacts `json:"hardware"`
 
 	// ProbeErrors record what the probe itself could not do. They exist so a
 	// half-failed probe degrades into unknown checks instead of into a report

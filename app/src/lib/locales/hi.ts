@@ -640,6 +640,14 @@ export const hi: Record<string, string> = {
   "wizard.server.hypervisor.refresh": "रीफ़्रेश करें",
   "wizard.server.hypervisor.resourcesMissing":
     "इमेज और इम्पोर्ट सपोर्ट करने वाला सक्रिय स्टोरेज, और एक सक्रिय LAN ब्रिज ज़रूरी हैं।",
+  "wizard.server.hypervisor.gpuNeeded":
+    "इस उपयोग के लिए GPU चाहिए। ऐसा Proxmox नोड चुनें जिसमें GPU हो।",
+  "wizard.server.hypervisor.gpuProposed":
+    "इस उपयोग के लिए GPU चाहिए। नए सर्वर को इस नोड का GPU {address} मिलेगा; कुछ भी दर्ज करने की ज़रूरत नहीं है।",
+  "wizard.server.hypervisor.gpuMissing":
+    "इस उपयोग के लिए GPU चाहिए, और इस नोड के पास ऐसा कोई GPU नहीं है जिसे वह किसी सर्वर को दे सके। यहाँ बताई गई बातें ठीक करें और रीफ़्रेश करें, या कोई दूसरा नोड चुनें।",
+  "wizard.server.hypervisor.gpuUnreported":
+    "इस उपयोग के लिए GPU चाहिए, लेकिन इस नोड ने अभी तक अपने GPU की जानकारी नहीं भेजी है। नोड पर kombify एजेंट अपडेट करें, फिर रीफ़्रेश करें।",
   "wizard.server.hypervisor.scan": "मेरे नेटवर्क पर Proxmox खोजें",
   "wizard.server.hypervisor.scanning": "खोज रहे हैं…",
   "wizard.server.hypervisor.scanFailed":

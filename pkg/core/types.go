@@ -810,6 +810,43 @@ type Worker struct {
 
 	// Tags for affinity rules
 	Tags map[string]string `json:"tags,omitempty"`
+
+	// ServerID is the canonical runtime-inventory server this worker reports
+	// for; StackID is the kit deployment that server belongs to, if any.
+	ServerID string `json:"serverId,omitempty"`
+	StackID  string `json:"stackId,omitempty"`
+
+	// Availability is observed availability evidence; nil when none exists.
+	Availability *WorkerAvailability `json:"availability,omitempty"`
+
+	// UsageObserved reports whether Usage carries an observation. A zero
+	// Usage without it is unknown, never "idle".
+	UsageObserved bool `json:"usageObserved,omitempty"`
+}
+
+// WorkerAvailability is a node availability fact with its provenance. It is
+// observed from the server transition history and may be confirmed by the
+// user; it is never inferred from chassis or battery alone.
+type WorkerAvailability struct {
+	// Class: "always-on", "part-time" or "unknown".
+	Class string `json:"class"`
+	// Source: "server-transitions", "user-confirmed" or "none".
+	Source string `json:"source"`
+	// UptimeRatio over the observed part of the window; nil when unobserved.
+	UptimeRatio *float64 `json:"uptimeRatio,omitempty"`
+	// ObservedSeconds is the time with an availability signal in the window.
+	ObservedSeconds int64 `json:"observedSeconds,omitempty"`
+	// WindowDays is the evaluation window length.
+	WindowDays int `json:"windowDays,omitempty"`
+	// Confirmed is true when the owner confirmed the class.
+	Confirmed bool `json:"confirmed,omitempty"`
+}
+
+// HardwareFact carries a hardware class with the provenance it came from,
+// for example a Guard probe reading or an estimate.
+type HardwareFact struct {
+	Class  string `json:"class"`
+	Source string `json:"source"`
 }
 
 // WorkerCapabilities defines hardware and software capabilities.
@@ -839,6 +876,14 @@ type WorkerCapabilities struct {
 	HasNVMe                     bool `json:"hasNVMe,omitempty"`
 	HasHWTranscode              bool `json:"hasHWTranscode,omitempty"`
 	AMD64MicroarchitectureLevel int  `json:"amd64MicroarchitectureLevel,omitempty"`
+
+	// Media is the integrated or discrete GPU media capability, for example
+	// class "hardware-transcode" from a Guard probe; nil when unobserved.
+	Media *HardwareFact `json:"media,omitempty"`
+	// DiskClass is the class of the system disk ("nvme", "ssd", "hdd").
+	DiskClass *HardwareFact `json:"diskClass,omitempty"`
+	// PowerClass is an estimated power class ("low", "medium", "high").
+	PowerClass *HardwareFact `json:"powerClass,omitempty"`
 }
 
 // GPUInfo contains GPU details for AI workloads.

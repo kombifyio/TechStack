@@ -10,6 +10,7 @@
     type WizardJoinAdditionMode,
   } from "#lib/wizard/idempotency-keys.js";
   import type { WizardRunRequest } from "#lib/api/wizardRuns.js";
+  import type { LayoutRecommendationAcceptance } from "#lib/api/layout.js";
   import {
     buildFoundRunRequest,
     buildJoinRunRequest,
@@ -21,8 +22,7 @@
   import { tr } from "#lib/i18n.svelte.js";
   import {
     applyServerProvisioningMode,
-    CANONICAL_USE_CASE_GOALS,
-    createDefaultConfig,
+    createExpansionConfig,
     normalizeIonosDatacenter,
     readRuntimeOfferingID,
     type StackConfig,
@@ -76,28 +76,7 @@
     await svelteGoto(href, options);
   }
 
-  function createAddServerConfig(): StackConfig {
-    const next = createDefaultConfig();
-    // The first-run defaults carry a pre-selected use case (vault). On an
-    // Additional Node that selection was never made by anyone, and the
-    // backend merges an expansion's goals into the homelab backlog, so a
-    // default riding along here would silently add a use case the operator
-    // did not ask for. Start empty; what is sent is what was picked.
-    if (next.goals) {
-      for (const goal of CANONICAL_USE_CASE_GOALS) {
-        next.goals[goal] = false;
-      }
-      next.goals.everything = false;
-    }
-    next.serverProvisioning.nodeRole = "worker";
-    next.owner.bootstrapMode = "none";
-    next.auth.requirePassword = false;
-    next.auth.requireMfa = false;
-    next.auth.allowPasswordless = false;
-    return next;
-  }
-
-  let config = $state<StackConfig>(createAddServerConfig());
+  let config = $state<StackConfig>(createExpansionConfig());
   let additionMode = $state<"join" | "found" | "substrate">("join");
 
   function chooseAddition(
@@ -231,7 +210,10 @@
     return mintJoinWizardIdempotencyKey(id, mode);
   }
 
-  async function prepareRegistration(wizardConfig: StackConfig = config) {
+  async function prepareRegistration(
+    wizardConfig: StackConfig = config,
+    extras?: { layoutRecommendation?: LayoutRecommendationAcceptance },
+  ) {
     const currentStackId = stackId;
     if (!currentStackId) {
       error = tr("ui.managedCreationFlow.stackkitDeploymentNotFound");
@@ -258,6 +240,7 @@
               currentStackId,
               deployment?.name || "",
               selectedServiceKeys(wizardConfig),
+              extras?.layoutRecommendation,
             );
       await openCreationScreen(
         request,
@@ -343,6 +326,8 @@
       applyDeploymentLaneDefaults={false}
       reuseExistingOwner={true}
       joinExistingDeployment={additionMode !== "found"}
+      layoutStackId={stackId}
+      layoutFlow="add-server"
       nodeAlternative={additionMode === "substrate"
         ? substrateContent
         : undefined}

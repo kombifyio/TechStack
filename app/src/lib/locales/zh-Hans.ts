@@ -611,6 +611,14 @@ export const zhHans: Record<string, string> = {
   "wizard.server.hypervisor.refresh": "刷新",
   "wizard.server.hypervisor.resourcesMissing":
     "需要一个支持镜像和导入的活动存储，以及一个活动的 LAN 网桥。",
+  "wizard.server.hypervisor.gpuNeeded":
+    "此用例需要 GPU。请选择一个带有 GPU 的 Proxmox 节点。",
+  "wizard.server.hypervisor.gpuProposed":
+    "此用例需要 GPU。新服务器将获得此节点的 GPU {address}，无需输入任何内容。",
+  "wizard.server.hypervisor.gpuMissing":
+    "此用例需要 GPU，但此节点没有可以分配给服务器的 GPU。请修复此处列出的问题后刷新，或选择其他节点。",
+  "wizard.server.hypervisor.gpuUnreported":
+    "此用例需要 GPU，但此节点尚未报告其 GPU。请更新节点上的 kombify 代理，然后刷新。",
   "wizard.server.hypervisor.scan": "在我的网络中查找 Proxmox",
   "wizard.server.hypervisor.scanning": "正在搜索…",
   "wizard.server.hypervisor.scanFailed":

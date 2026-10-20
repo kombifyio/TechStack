@@ -289,7 +289,7 @@ func (h wizardRunHandlers) projectFoundSpec(e *httpx.Event, run *wizardRunState)
 
 // projectAndValidate runs the shared projection + pinned-CLI validation gate
 // for both lanes.
-func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]any, intent specv2.WizardIntent, homelabID string) (*specv2.Projection, bool) {
+func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]any, intent specv2.WizardIntent, homelabID string, beforeValidate ...func(*specv2.Projection) bool) (*specv2.Projection, bool) {
 	if h.cfg.Projector == nil {
 		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
 			"StackKits goal authoring is not configured", wizardRunDetails(
@@ -311,6 +311,11 @@ func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]an
 		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
 			"Wizard projection rejected: "+projErr.Error(), details)
 		return nil, true
+	}
+	for _, hook := range beforeValidate {
+		if hook != nil && hook(projection) {
+			return nil, true
+		}
 	}
 	if h.cfg.Validator == nil {
 		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
@@ -795,6 +800,10 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 	if persisted {
 		data["idempotent_replay"] = true
 	}
+	if run.layoutRecommendationID != "" {
+		data[wizardRunLayoutRecommendationKey] = run.layoutRecommendationID
+		h.linkLayoutExecution(e, run, firstNonEmptyWizardJob(guestJobID, minted.JobID))
+	}
 	addWizardProjectionFields(data, projection, h.cfg.ReleaseVersion)
 
 	if err := h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
@@ -1055,7 +1064,7 @@ func (h wizardRunHandlers) resolveJoinProjection(e *httpx.Event, run *wizardRunS
 			intent.Name = name
 		}
 	}
-	projection, handled := h.projectAndValidate(e, base, intent, run.homelabID)
+	projection, handled := h.projectAndValidate(e, base, intent, run.homelabID, h.layoutAcceptanceHook(e, run, stack.ID))
 	if !handled {
 		run.captureGoalActivations(projection)
 	}

@@ -35,6 +35,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/kombifyio/techstack/internal/layoutadvice"
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/internal/routes/trust"
@@ -111,6 +112,9 @@ type WizardRunRouteConfig struct {
 	// KombifyWallet is the central kombify Wallet client. Nil means the
 	// deployment reads the built-in (legacy) wallet through Wallet.
 	KombifyWallet *kombifywallet.Client
+	// LayoutAdvice revalidates and accepts layout recommendations a run
+	// carries. Nil refuses runs that carry one.
+	LayoutAdvice *layoutadvice.Service
 }
 
 // WizardManagedRuntimeExpansion is the narrow adapter boundary from the
@@ -352,6 +356,8 @@ func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
 	switch request.Intent.KitAssignment.Mode {
 	case wizardRunKindJoin:
 		return h.runWizardJoin(e, &run)
+	case wizardRunKindExtend:
+		return h.runWizardExtend(e, &run)
 	default:
 		return h.runWizardFound(e, &run)
 	}
@@ -504,6 +510,9 @@ type wizardRunState struct {
 	// effectiveKind is the run kind after coercion; requested kind stays in
 	// request.Intent.RunKind.
 	effectiveKind string
+	// layoutRecommendationID is the accepted layout recommendation this run
+	// carries out, set only after revalidation accepted it.
+	layoutRecommendationID string
 }
 
 func (run *wizardRunState) coerced() bool {
@@ -671,7 +680,7 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 	ctx := e.Request.Context()
 	run.homelabID = deterministicHomelabID(run.tenantID, run.ownerID)
 
-	if run.key != "" && run.request.Intent.KitAssignment.Mode != wizardRunKindJoin {
+	if run.key != "" && run.request.Intent.KitAssignment.Mode != wizardRunKindJoin && run.request.Intent.KitAssignment.Mode != wizardRunKindExtend {
 		keyed, err := h.crud.stackStore.GetStack(ctx, run.tenantID, deterministicStackID(run.tenantID, run.ownerID, run.key))
 		if err == nil && keyed.OwnerSubjectID == run.ownerID {
 			run.resumeStack = keyed
@@ -687,8 +696,8 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 	}
 
 	run.effectiveKind = run.request.Intent.RunKind
-	if run.request.Intent.KitAssignment.Mode == wizardRunKindJoin {
-		// Joining an existing deployment is by definition an expansion.
+	if run.request.Intent.KitAssignment.Mode == wizardRunKindJoin || run.request.Intent.KitAssignment.Mode == wizardRunKindExtend {
+		// Joining or extending an existing deployment is by definition an expansion.
 		run.effectiveKind = specv2.RunKindExpansion
 	}
 	if run.effectiveKind == specv2.RunKindFirstRun && run.resumeStack == nil {

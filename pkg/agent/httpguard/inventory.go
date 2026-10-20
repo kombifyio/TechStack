@@ -137,6 +137,9 @@ type Host struct {
 	// Network is the observed network position (Linux only); a change of its
 	// fingerprint is how the control plane detects a home network move.
 	Network *Network `json:"network,omitempty"`
+	// Hardware is the machine-level sysfs/procfs probe (CPU level, GPU, media,
+	// disk and power class). Absent when the Guard has no probe or it read nothing.
+	Hardware *HostHardware `json:"hardware,omitempty"`
 }
 
 type Service struct {
@@ -216,6 +219,9 @@ type SystemCollectorConfig struct {
 	// Discovery bounds unmanaged service discovery. The zero value enables it
 	// with the documented defaults.
 	Discovery DiscoveryConfig
+	// HostHardware observes the machine's own hardware facts. It is called with
+	// every host snapshot, so an implementation caches. Nil sends none.
+	HostHardware func(context.Context) *HostHardware
 }
 
 // SystemCollector reads the host, the services actually running on it, and,
@@ -274,6 +280,9 @@ func (c *SystemCollector) CollectHostSnapshot(ctx context.Context) (Snapshot, er
 	hostInventory, err := collectHost(ctx, c.cfg.PublicIP)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if c.cfg.HostHardware != nil {
+		hostInventory.Hardware = c.cfg.HostHardware(ctx)
 	}
 	snapshot := Snapshot{
 		Hostname: hostInventory.Hostname,

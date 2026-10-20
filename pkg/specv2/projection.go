@@ -123,6 +123,15 @@ func (p *ReleaseProjector) Project(ctx context.Context, seed map[string]any, int
 			return nil, err
 		}
 		result.NodeID = nodeID
+	case KitAssignmentExtend:
+		// No node changes; the new workloads land on existing nodes.
+		nodes, err := specNodes(spec)
+		if err != nil {
+			return nil, err
+		}
+		if primary := primaryNode(nodes); primary != nil {
+			result.NodeID, _ = primary["id"].(string)
+		}
 	}
 
 	if len(intent.Goals) > 0 {

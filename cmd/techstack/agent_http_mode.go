@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/agent/hostidentity"
 	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/devicereadiness"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardexec"
 	"github.com/kombifyio/techstack/pkg/privatechannel"
@@ -223,7 +225,7 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 			ServerID: enrollment.ServerID, TenantID: enrollment.TenantID,
 			OwnerID: enrollment.OwnerID, StackID: enrollment.StackID,
 			AgentVersion: version, Interval: cfg.heartbeatInterval, Logger: log,
-			Collector:  httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{}),
+			Collector:  httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{HostHardware: (&localHardwareCache{observe: devicereadiness.ObserveLocalHardware}).current}),
 			HTTPClient: guardHTTP, OnProgress: cfg.progress,
 		}
 		localConfigPath := envDefault("TECHSTACK_SUBSTRATE_CONFIG", "/var/lib/kombify/substrate.json")
@@ -233,7 +235,7 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 			if nativeErr != nil {
 				return nativeErr
 			}
-			guardConfig.Collector = substrateInventoryCollector{base: guardConfig.Collector, client: native, config: localConfig}
+			guardConfig.Collector = substrateInventoryCollector{base: guardConfig.Collector, client: native, config: localConfig, accelerator: &localAcceleratorCache{observe: devicereadiness.ObserveLocalAccelerator}}
 			guardConfig.WorkerExecutor = substrate.Executor{Client: native, WorkerID: enrollment.RuntimeAgentID, TenantID: enrollment.TenantID}
 			guardConfig.WorkerCommandURL = strings.TrimSuffix(enrollment.CommandURL, "/commands/next") + "/provider/next"
 			guardConfig.WorkerResultURL = strings.TrimSuffix(enrollment.CommandResultURL, "/commands/result") + "/provider/result"
@@ -265,7 +267,10 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 	collector := httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{
 		AccessManifestFiles: manifestPaths,
 		ReadManifest:        execution.manifestReader(),
-		PublicIP:            cfg.publicIP,
+		// The machine's own hardware (CPU level, GPU, disk, chassis) is read from
+		// procfs and sysfs and repeated only every half hour in the background.
+		HostHardware: (&localHardwareCache{observe: devicereadiness.ObserveLocalHardware}).current,
+		PublicIP:     cfg.publicIP,
 		// Unmanaged service discovery is on by default: a host without a
 		// StackKit must still report what it is actually running. The kill
 		// switch exists so a fleet operator can silence host probes without
@@ -744,6 +749,8 @@ type substrateInventoryCollector struct {
 	base   httpguard.Collector
 	client *substrate.Client
 	config substrate.Config
+	// accelerator is nil only in tests that do not look at the PCI bus.
+	accelerator *localAcceleratorCache
 }
 
 func (c substrateInventoryCollector) Collect(ctx context.Context) (httpguard.Snapshot, error) {
@@ -765,6 +772,76 @@ func (c substrateInventoryCollector) Collect(ctx context.Context) (httpguard.Sna
 		}
 		images[profile.ID] = image
 	}
+	if c.accelerator != nil {
+		inventory.Accelerator = c.accelerator.current(ctx)
+	}
 	snapshot.Substrate, err = json.Marshal(substrate.GuardObservation{Node: c.config.Node, MinGuestID: c.config.MinGuestID, MaxGuestID: c.config.MaxGuestID, Images: images, Inventory: inventory, OwnedGuests: c.client.ObserveOwnedGuests(ctx, inventory)})
 	return snapshot, err
+}
+
+// localAcceleratorCache repeats the node's GPU observation only every few
+// minutes: the inventory goes out far more often than a GPU is plugged in or
+// prepared. A failed look reports nothing rather than an old answer.
+type localAcceleratorCache struct {
+	observe func(context.Context) (substrate.AcceleratorObservation, error)
+	mu      sync.Mutex
+	at      time.Time
+	last    *substrate.AcceleratorObservation
+}
+
+const localAcceleratorRefresh = 5 * time.Minute
+
+func (c *localAcceleratorCache) current(ctx context.Context) *substrate.AcceleratorObservation {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < localAcceleratorRefresh {
+		return c.last
+	}
+	c.at, c.last = time.Now(), nil
+	if observed, err := c.observe(ctx); err == nil {
+		c.last = &observed
+	}
+	return c.last
+}
+
+// localHardwareCache repeats the machine's hardware probe only every half hour:
+// a CPU, a GPU, a disk or a chassis does not change between heartbeats. The
+// probe runs in the background, so a slow shell never delays a heartbeat; the
+// first inventory after start goes out without hardware facts and the next one
+// carries them. A failed probe keeps the last good observation for a day (its
+// own ObservedAt says how old it is) and then reports nothing rather than an
+// old answer.
+type localHardwareCache struct {
+	observe func(context.Context) (*httpguard.HostHardware, error)
+	mu      sync.Mutex
+	started time.Time
+	good    time.Time
+	last    *httpguard.HostHardware
+	running bool
+}
+
+const (
+	localHardwareRefresh = 30 * time.Minute
+	localHardwareKeep    = 24 * time.Hour
+)
+
+func (c *localHardwareCache) current(context.Context) *httpguard.HostHardware {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.running && (c.started.IsZero() || time.Since(c.started) >= localHardwareRefresh) {
+		c.running, c.started = true, time.Now()
+		go func() {
+			observed, err := c.observe(context.Background())
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.running = false
+			if err == nil && observed != nil {
+				c.last, c.good = observed, time.Now()
+			}
+		}()
+	}
+	if c.last != nil && time.Since(c.good) > localHardwareKeep {
+		c.last = nil
+	}
+	return c.last
 }

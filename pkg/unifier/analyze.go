@@ -5,6 +5,7 @@ package unifier
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -197,6 +198,11 @@ func (e *Engine) calculateWorkerRequirements(spec *core.KombinationSpec) (core.W
 		facts, matched, err := catalog.ServiceFootprints(svc.Name, serviceProfile, true)
 		if !matched {
 			facts, matched, err = catalog.ServiceFootprints(svc.Type, serviceProfile, false)
+		}
+		if errors.Is(err, stackkitrelease.ErrWorkloadOmittedOnProfile) {
+			// The release does not install it on this profile; a declared
+			// or discovered service is then sized like any other service.
+			matched, err = false, nil
 		}
 		if err != nil {
 			return req, err

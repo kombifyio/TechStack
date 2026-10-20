@@ -70,8 +70,8 @@ func BuildDecisionTrace(spec *core.KombinationSpec, ctx *core.DecisionContext, r
 		Foundation:       metadataValue(spec, "stackkit_foundation", stackKit),
 		Addons:           append([]string(nil), addons...),
 		// Every Techstack-managed deployment runs StackKits Advanced Mode.
-		DeploymentMode:      deploymentModeAdvanced,
-		ComputeTier:         resolveComputeTier(spec, ctx),
+		DeploymentMode: deploymentModeAdvanced,
+		ComputeTier:    resolveComputeTier(spec, ctx),
 		// No PaaS unless the spec names one: the default core has none
 		// (StackKits ADR-0049).
 		PAAS:                metadataValue(spec, "paas", ""),
@@ -142,8 +142,22 @@ func ApplyUnifiedDecisionArtifacts(unified *core.UnifiedSpec, ctx *core.Decision
 	unified.DecisionTraceHash = HashDecisionTrace(trace)
 }
 
+// HashDecisionContext digests the semantic decision input. Observation and
+// generation timestamps are freshness evidence, not decision input, so they
+// stay outside the digest: the same inventory always yields the same hash.
 func HashDecisionContext(ctx *core.DecisionContext) string {
-	return hashJSON(ctx)
+	if ctx == nil {
+		return ""
+	}
+	semantic := cloneDecisionContext(ctx)
+	if semantic.Environment != nil {
+		semantic.Environment.GeneratedAt = time.Time{}
+		semantic.Environment.ObservedAt = time.Time{}
+	}
+	if semantic.Operator != nil {
+		semantic.Operator.UpdatedAt = time.Time{}
+	}
+	return hashJSON(semantic)
 }
 
 func HashDecisionTrace(trace *core.DecisionTrace) string {
@@ -416,7 +430,7 @@ func evaluateEnvironmentGaps(spec *core.KombinationSpec, ctx *core.DecisionConte
 	if nodeCount == 0 && !hasManagedRuntime {
 		gaps = append(gaps, core.EnvironmentGap{
 			Code:     "foundation_node_or_managed_runtime_required",
-			Message:  "Foundation Node oder Managed Runtime nötig",
+			Message:  "A foundation node or a managed runtime is required.",
 			Severity: "requirement",
 			Blocking: false,
 			Source:   "environment-inventory",
@@ -431,6 +445,7 @@ func evaluateEnvironmentGaps(spec *core.KombinationSpec, ctx *core.DecisionConte
 			Source:   "stackkit-policy",
 		})
 	}
+	gaps = append(gaps, capacityGaps(spec, inventory)...)
 	if spec != nil && isCustomPublicDomain(spec.Network.Domain) && !inventoryHasReadyDomainAsset(inventory, spec.Network.Domain) {
 		gaps = append(gaps, core.EnvironmentGap{
 			Code:     "domain_dns_asset_required",

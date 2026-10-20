@@ -267,6 +267,10 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 			for i := range observed.Inventory.Guests {
 				observed.Inventory.Guests[i].Config = nil
 			}
+			if observed.Inventory.Accelerator != nil {
+				clean := observed.Inventory.Accelerator.Sanitized()
+				observed.Inventory.Accelerator = &clean
+			}
 			images := map[string]substrate.Image{}
 			for _, profile := range substrate.Profiles() {
 				images[profile.ID] = observed.Images[profile.ID]

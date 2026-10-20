@@ -45,3 +45,8 @@ export function addServerHref(deploymentId?: string | null): string {
   const id = deploymentId?.trim();
   return id ? `/stacks/${encodeURIComponent(id)}/servers/new` : "/stacks/new";
 }
+
+/** Adding use cases to a homelab: the Goals step against its deployment. */
+export function addUseCasesHref(deploymentId: string): string {
+  return `/stacks/${encodeURIComponent(deploymentId.trim())}/use-cases/new`;
+}

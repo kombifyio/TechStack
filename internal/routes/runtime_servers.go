@@ -109,6 +109,12 @@ type serverRuntimeHandlers struct {
 	workers                 ServerWorkerReader
 	currentMTLSCapabilities func(controlplane.ServerRuntime) ([]string, bool)
 	network                 *ServerNetworkRouteConfig
+	// availabilityReader and availabilityConfirmer back the node availability
+	// routes. They are the canonical server store itself; a store that cannot
+	// serve a windowed transition read or the confirmation write leaves the
+	// routes unregistered.
+	availabilityReader    serverTransitionWindowReader
+	availabilityConfirmer controlplane.ServerAvailabilityConfirmer
 }
 
 type serverRuntimeResponse struct {
@@ -237,6 +243,14 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 	r.GET("/api/v1/servers/{serverId}", h.get)
 	r.GET("/api/v1/servers/{serverId}/ports", h.portInventory)
 	r.GET("/api/v1/servers/{serverId}/transitions", h.transitions)
+	h.availabilityReader, _ = cfg.Store.(serverTransitionWindowReader)
+	h.availabilityConfirmer, _ = cfg.Store.(controlplane.ServerAvailabilityConfirmer)
+	if h.availabilityReader != nil {
+		r.GET("/api/v1/servers/{serverId}/availability", h.availabilityRead)
+		if h.availabilityConfirmer != nil {
+			r.PUT("/api/v1/servers/{serverId}/availability", h.availabilityConfirm)
+		}
+	}
 	if cfg.Detacher != nil {
 		r.POST("/api/v1/servers/{serverId}/detach", h.detach)
 	}

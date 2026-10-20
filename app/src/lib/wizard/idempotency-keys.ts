@@ -116,3 +116,55 @@ export function clearSubmittedJoinWizardIdempotencyKey(
     sessionStorage.removeItem(key);
   }
 }
+
+function extendWizardIdempotencyStorageKey(stackId: string): string {
+  return `${JOIN_WIZARD_IDEMPOTENCY_STORAGE_PREFIX}extend:${stackId}`;
+}
+
+/**
+ * The key of an extend run ("add use cases"). The same request retried (a
+ * dropped connection, a reload) keeps its key, so the backend replays the
+ * attempt; a changed request (other use cases, a newer recommendation) gets a
+ * fresh key, because the backend answers a different payload on a used key
+ * with a conflict.
+ */
+export function mintExtendWizardIdempotencyKey(
+  stackId: string,
+  fingerprint: string,
+): string {
+  const storageKey = extendWizardIdempotencyStorageKey(stackId);
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(storageKey) ?? "null") as {
+      fingerprint?: unknown;
+      key?: unknown;
+    } | null;
+    if (
+      stored?.fingerprint === fingerprint &&
+      typeof stored.key === "string" &&
+      stored.key.trim()
+    ) {
+      return stored.key;
+    }
+  } catch {
+    // An unreadable stored key is replaced below.
+  }
+  const generated =
+    typeof crypto?.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `extend-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  try {
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({ fingerprint, key: generated }),
+    );
+  } catch {
+    // Without storage a retry mints a new key; the server refuses a stale one.
+  }
+  return generated;
+}
+
+/** An extend run reached a definitive outcome; the next attempt starts fresh. */
+export function clearExtendWizardIdempotencyKey(stackId: string): void {
+  if (!stackId) return;
+  sessionStorage.removeItem(extendWizardIdempotencyStorageKey(stackId));
+}

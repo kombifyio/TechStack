@@ -189,7 +189,7 @@ func CreateInTx(ctx context.Context, tx *sql.Tx, input CreateGovernedCard) (*Gov
 func (s *PostgresAuthority) Get(ctx context.Context, tenantID, ownerID, cardID string) (*GovernedCard, error) {
 	var out *GovernedCard
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		card, err := scanGovernedCard(tx.QueryRowContext(ctx, `SELECT `+governedCardColumns+` FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3`, tenantID, ownerID, cardID))
+		card, err := scanGovernedCard(tx.QueryRowContext(ctx, `SELECT `+governedCardColumns+` FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3 AND card_kind='governed-action'`, tenantID, ownerID, cardID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCardNotFound
 		}
@@ -202,7 +202,7 @@ func (s *PostgresAuthority) Get(ctx context.Context, tenantID, ownerID, cardID s
 func (s *PostgresAuthority) List(ctx context.Context, tenantID, ownerID string) ([]GovernedCard, error) {
 	var out []GovernedCard
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT `+governedCardColumns+` FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 ORDER BY created_at DESC`, tenantID, ownerID)
+		rows, err := tx.QueryContext(ctx, `SELECT `+governedCardColumns+` FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 AND card_kind='governed-action' ORDER BY created_at DESC`, tenantID, ownerID)
 		if err != nil {
 			return err
 		}

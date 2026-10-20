@@ -18,6 +18,12 @@ import {
   type WizardRunSubstrateParams,
   type WizardRunRequest,
 } from "#lib/api/wizardRuns.js";
+import type {
+  LayoutFlow,
+  LayoutPlannedNode,
+  LayoutRecommendationAcceptance,
+  LayoutSelection,
+} from "#lib/api/layout.js";
 import {
   isValidSubstrateGuest,
   readRuntimeOfferingID,
@@ -246,6 +252,10 @@ function buildRunSubstrateParams(
 ): WizardRunSubstrateParams | undefined {
   if (config.serverProvisioning.mode !== "hypervisor") return undefined;
   const guest = config.serverProvisioning.substrate;
+  // The server refuses this too (wizard_accelerator_required); saying it here
+  // keeps the reason in the person's words instead of a failed run.
+  if (guest?.requiresAccelerator && !guest.accelerator?.address)
+    throw new WizardInputError(tr("wizard.server.hypervisor.gpuNeeded"));
   if (!isValidSubstrateGuest(guest) || !guest)
     throw new WizardInputError(
       tr("ui.wizardRunRequest.selectAConnectedHypervisorAnd"),
@@ -287,6 +297,9 @@ function buildRunSubstrateParams(
     cpu: guest.cpu,
     memory_mib: guest.memoryMiB,
     disk_gib: guest.diskGiB,
+    ...(guest.requiresAccelerator && guest.accelerator
+      ? { accelerator: { ...guest.accelerator } }
+      : {}),
   };
 }
 
@@ -370,6 +383,7 @@ export function buildJoinRunRequest(
   deploymentId: string,
   deploymentName: string,
   services: string[],
+  layoutRecommendation?: LayoutRecommendationAcceptance,
 ): WizardRunRequest {
   const intent: WizardIntent = {
     schema: WIZARD_INTENT_SCHEMA,
@@ -400,6 +414,7 @@ export function buildJoinRunRequest(
   if (joinSettings) intent.use_case_settings = joinSettings;
   const joinCapabilities = runUseCaseCapabilities(config, intent.goals ?? []);
   if (joinCapabilities) intent.use_case_capabilities = joinCapabilities;
+  applyLayoutAcceptance(intent, layoutRecommendation);
   const request: WizardRunRequest = { intent, services };
   const substrate = buildRunSubstrateParams(config);
   if (substrate) request.substrate = substrate;
@@ -408,4 +423,92 @@ export function buildJoinRunRequest(
   const remote = buildRunRemoteParams(config);
   if (remote) request.remote = remote;
   return request;
+}
+
+/**
+ * An extend run for /stacks/[id]/use-cases/new: add use cases to the existing
+ * deployment without a new server. The deployment's own nodes run them, as the
+ * accepted recommendation distributes them. Goals are required (the backend
+ * refuses an extend that adds nothing) and no server section is needed.
+ */
+export function buildExtendRunRequest(
+  config: StackConfig,
+  deploymentId: string,
+  deploymentName: string,
+  layoutRecommendation?: LayoutRecommendationAcceptance,
+): WizardRunRequest {
+  const goals = selectedCanonicalUseCasesFromGoals(config.goals);
+  if (goals.length === 0) {
+    throw new WizardInputError(tr("wizard.validation.goalsRequired"));
+  }
+  const intent: WizardIntent = {
+    schema: WIZARD_INTENT_SCHEMA,
+    run_kind: "expansion",
+    name: (deploymentName || "").trim() || DEFAULT_RUN_NAME,
+    goals,
+    server: {},
+    kit_assignment: { mode: "extend", kit_deployment_id: deploymentId },
+  };
+  intent.use_case_setup_answers = runUseCaseSetupAnswers(config, goals);
+  const settings = runUseCaseSettings(config, goals);
+  if (settings) intent.use_case_settings = settings;
+  const capabilities = runUseCaseCapabilities(config, goals);
+  if (capabilities) intent.use_case_capabilities = capabilities;
+  applyLayoutAcceptance(intent, layoutRecommendation);
+  return { intent };
+}
+
+/** The recommendation a run accepts; absent unless a verified one was shown. */
+function applyLayoutAcceptance(
+  intent: WizardIntent,
+  acceptance: LayoutRecommendationAcceptance | undefined,
+): void {
+  if (!acceptance?.id || !acceptance.proposal_digest) return;
+  intent.layout_recommendation = {
+    id: acceptance.id,
+    proposal_digest: acceptance.proposal_digest,
+  };
+}
+
+/** The server a hypervisor guest will become, sized as the owner configured it. */
+function plannedGuestNode(config: StackConfig): LayoutPlannedNode | undefined {
+  if (config.serverProvisioning.mode !== "hypervisor") return undefined;
+  const guest = config.serverProvisioning.substrate;
+  if (!guest || !isValidSubstrateGuest(guest)) return undefined;
+  const server = joinServer(config);
+  return {
+    name: tr("layout.panel.newServer"),
+    cpu_cores: guest.cpu,
+    ram_gb: guest.memoryMiB / 1024,
+    storage_gb: guest.diskGiB,
+    source: "guest-sizing",
+    ...(server.roles ? { roles: server.roles } : {}),
+    ...(server.transport ? { transport: server.transport } : {}),
+  };
+}
+
+/**
+ * The question for the layout recommendation: the selection the run would
+ * send, or null while nothing is selected (nothing to distribute). An
+ * add-server run with a hypervisor guest names the guest's sizing as the
+ * planned node; every other server is distributed as it enrolls.
+ */
+export function buildLayoutSelection(
+  config: StackConfig,
+  stackId: string,
+  flow: LayoutFlow,
+): LayoutSelection | null {
+  const goals = selectedCanonicalUseCasesFromGoals(config.goals);
+  const id = stackId.trim();
+  if (!id || goals.length === 0) return null;
+  const selection: LayoutSelection = { flow, stack_id: id, goals };
+  const settings = runUseCaseSettings(config, goals);
+  if (settings) selection.use_case_settings = settings;
+  const capabilities = runUseCaseCapabilities(config, goals);
+  if (capabilities) selection.use_case_capabilities = capabilities;
+  if (flow === "add-server") {
+    const planned = plannedGuestNode(config);
+    if (planned) selection.planned_node = planned;
+  }
+  return selection;
 }

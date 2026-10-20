@@ -477,3 +477,37 @@ describe("buildJoinRunRequest", () => {
     ).toThrow("Unsupported managed runtime offering");
   });
 });
+
+it("fills a GPU use case's accelerator from the node's proposal and refuses one without", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { catalogViewsFromResponse } =
+    await import("#lib/api/useCaseCatalog.js");
+  const { useCasesRequireAccelerator } = await import("./accelerator");
+  const catalog = catalogViewsFromResponse(
+    JSON.parse(readFileSync("static/preview-catalogs/latest.json", "utf8")),
+  );
+  const config = createDefaultConfig();
+  applyServerProvisioningMode(config, "hypervisor");
+  Object.assign(config.serverProvisioning.substrate!, {
+    serverId: "substrate-1",
+    storage: "local",
+    bridge: "vmbr0",
+  });
+  config.goals!.ai = true;
+  config.useCaseSettings = { ai: { "model-size": "small" } };
+  expect(useCasesRequireAccelerator(catalog, config)).toBe(false);
+  config.useCaseSettings.ai["model-size"] = "large";
+  expect(useCasesRequireAccelerator(catalog, config)).toBe(true);
+
+  const guest = config.serverProvisioning.substrate!;
+  guest.requiresAccelerator = true;
+  expect(() => buildFoundRunRequest(config)).toThrow(/GPU/);
+  guest.accelerator = {
+    address: "0000:08:00",
+    root_port: "0000:00:03.1",
+    subtree: "0000:06:00.0",
+  };
+  expect(buildFoundRunRequest(config).substrate?.accelerator).toEqual(
+    guest.accelerator,
+  );
+});

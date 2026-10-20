@@ -2,8 +2,8 @@
   "schema": "techstack.database-forward-batch/v1",
   "migrations": [
     {
-      "version": "159_guard_local_policy_operations.sql",
-      "sha256": "2f5af9fa4afdaa981cb3927e03aa7d540a412c09ca495b146dd0cc9e90be87ba"
+      "version": "160_ril_layout_recommendations.sql",
+      "sha256": "4a5120f63e07c9c4ce6679dd9bdb82ac3a1addac411f1ea3e09616936cbb4dcb"
     }
   ],
   "provider_resource": "clickhouse-postgres:b6140b1d-3833-455a-b515-729055d3140d:f9301db0-e99d-8ad0-bec2-efb56642a37e:migrations",

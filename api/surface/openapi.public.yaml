@@ -1872,6 +1872,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/servers/{serverId}/availability:
+    get:
+      operationId: getServerAvailability
+      tags: [Servers]
+      summary: How available the server is, observed and as the owner confirmed it
+      description: >-
+        The class the Layout Planner reads for this machine (`always-on`, `part-time` or `unknown`) and where it came from. The observed class folds the server's connection transitions over 14 days: `always-on` at 97 % uptime or more, `part-time` below 90 %, `unknown` in between and whenever fewer than three days were observed. The owner's confirmation, when there is one, is the class; the observed class stays next to it. Owner only.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "200":
+          description: The availability of the server
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ServerAvailability"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    put:
+      operationId: setServerAvailability
+      tags: [Servers]
+      summary: Confirm or correct how available the server is
+      description: >-
+        The owner says whether the machine is on all the time (`always-on`) or switched off at times (`part-time`). The statement is stored next to what the Guard observed and replaces the observed class for planning. `unknown` or `null` withdraws it. Owner only; any other caller gets 404.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServerAvailabilityRequest"
+      responses:
+        "200":
+          description: The availability after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ServerAvailability"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /api/v1/servers/{serverId}/detach:
     post:
       operationId: detachSelfOwnedServer
@@ -6744,6 +6794,38 @@ components:
         reason_code:
           type: string
           description: Stable structured reason for a pending or failed target.
+    ServerAvailability:
+      type: object
+      required: [server_id, class, source, observed_class, uptime_ratio, observed_seconds, window_days, confirmed]
+      properties:
+        server_id: {type: string}
+        class:
+          type: string
+          enum: [always-on, part-time, unknown]
+          description: The class the Layout Planner reads - the owner's confirmation when there is one, otherwise the observed class.
+        source: {type: string, enum: [user-confirmed, server-transitions, none]}
+        observed_class:
+          type: string
+          enum: [always-on, part-time, unknown]
+          description: What the connection history alone supports over the window.
+        uptime_ratio:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+          description: Share of the observed time the server was connected; null when the window holds no observed time.
+        observed_seconds: {type: integer, minimum: 0}
+        window_days: {type: integer}
+        confirmed: {type: boolean}
+        confirmed_at: {type: string, format: date-time}
+    ServerAvailabilityRequest:
+      type: object
+      additionalProperties: false
+      required: [class]
+      properties:
+        class:
+          type: [string, "null"]
+          enum: [always-on, part-time, unknown, null]
+          description: always-on or part-time confirms; unknown or null withdraws the confirmation.
     GuardPublicReachRequest:
       type: object
       additionalProperties: false

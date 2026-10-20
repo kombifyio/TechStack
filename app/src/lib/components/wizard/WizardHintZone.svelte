@@ -5,6 +5,7 @@
   } from "#lib/api/unifier.js";
   import type { WizardPreviewState } from "#lib/wizard/WizardPreviewController.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import { hintReasonText } from "#lib/wizard/layout-reasons.js";
 
   interface Props {
     state: WizardPreviewState;
@@ -26,6 +27,19 @@
   );
 
   const tip = $derived(result?.selection?.tip);
+
+  // Why the recommended setup fits: the decision trace and the capacity
+  // reasons, one sentence per code. A code without a message of its own shows
+  // the server's English text.
+  const reasonLines = $derived.by(() => {
+    const lines: { code: string; text: string }[] = [];
+    for (const reason of primary?.reasons ?? []) {
+      const text = hintReasonText(reason);
+      if (!text || lines.some((line) => line.code === reason.code)) continue;
+      lines.push({ code: reason.code, text });
+    }
+    return lines;
+  });
 
   function stackKitLabel(value: string): string {
     return value
@@ -97,6 +111,20 @@
               </span>
             {/each}
           </div>
+          {#if reasonLines.length > 0}
+            <details class="mt-3 text-sm" data-testid="wizard-hint-why">
+              <summary
+                class="cursor-pointer select-none text-xs font-medium text-primary"
+              >
+                {tr("wizard.hints.why")}
+              </summary>
+              <ul class="mt-2 list-disc space-y-1 ps-5 text-muted-foreground">
+                {#each reasonLines as line (line.code)}
+                  <li>{line.text}</li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
         {:else if result?.status === "incomplete"}
           <p class="mt-1 text-sm text-muted-foreground">
             {tr("wizard.hints.incomplete")}

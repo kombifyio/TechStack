@@ -13,6 +13,7 @@ import { uiMessages } from "./ui-messages";
 import { screenMessages } from "./screen-messages";
 import { serviceCardMessages } from "./service-card-messages";
 import { networkMessages } from "./network-messages";
+import { availabilityMessages } from "./availability-messages";
 import { storageMessages } from "./monitoring/storage-messages";
 import { domainMessages } from "./monitoring/domain-messages";
 import { maintenanceMessages } from "./maintenance-messages";
@@ -28,6 +29,7 @@ import { shellMessages } from "./shell-messages";
 import { creationTemplateMessages } from "./wizard/creation-template-messages";
 import { marketplaceMessages } from "./wizard/marketplace-messages";
 import { creationFlowMessages } from "./wizard/creation-flow-messages";
+import { layoutMessages } from "./wizard/layout-messages";
 import { connectDevicesMessages } from "./dashboard/connect-devices-messages";
 import { es } from "./locales/es";
 import { zhHans } from "./locales/zh-Hans";
@@ -49,6 +51,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...guardMessages.en,
     ...serviceCardMessages.en,
     ...networkMessages.en,
+    ...availabilityMessages.en,
     ...storageMessages.en,
     ...domainMessages.en,
     ...maintenanceMessages.en,
@@ -59,6 +62,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.en,
     ...marketplaceMessages.en,
     ...creationFlowMessages.en,
+    ...layoutMessages.en,
     ...connectDevicesMessages.en,
     "wizard.creation.preferenceOnly":
       "Preference saved. This release installs the suggested service; the alternative is not applied yet.",
@@ -256,6 +260,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.hypervisor.refresh": "Refresh",
     "wizard.server.hypervisor.resourcesMissing":
       "An active storage supporting images and imports, and an active LAN bridge are required.",
+    "wizard.server.hypervisor.gpuNeeded":
+      "This use case needs a GPU. Choose a Proxmox node that has one.",
+    "wizard.server.hypervisor.gpuProposed":
+      "This use case needs a GPU. The new server gets this node's GPU {address}; there is nothing to enter.",
+    "wizard.server.hypervisor.gpuMissing":
+      "This use case needs a GPU, and this node has none it can give to a server. Fix what is listed here, then refresh, or choose another node.",
+    "wizard.server.hypervisor.gpuUnreported":
+      "This use case needs a GPU, but this node has not reported its GPUs yet. Update the kombify agent on the node, then refresh.",
     "wizard.server.hypervisor.scan": "Find Proxmox on my network",
     "wizard.server.hypervisor.scanning": "Searching…",
     "wizard.server.hypervisor.scanFailed":
@@ -1012,6 +1024,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...guardMessages.de,
     ...serviceCardMessages.de,
     ...networkMessages.de,
+    ...availabilityMessages.de,
     ...storageMessages.de,
     ...domainMessages.de,
     ...maintenanceMessages.de,
@@ -1022,6 +1035,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.de,
     ...marketplaceMessages.de,
     ...creationFlowMessages.de,
+    ...layoutMessages.de,
     ...connectDevicesMessages.de,
     ...loginMessages.de,
     ...accessUsersMessages.de,
@@ -1223,6 +1237,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.hypervisor.refresh": "Aktualisieren",
     "wizard.server.hypervisor.resourcesMissing":
       "Benötigt werden ein aktiver Speicher für Images und Imports sowie eine aktive LAN-Bridge.",
+    "wizard.server.hypervisor.gpuNeeded":
+      "Dieser Anwendungsfall braucht eine GPU. Wähle einen Proxmox-Knoten, der eine hat.",
+    "wizard.server.hypervisor.gpuProposed":
+      "Dieser Anwendungsfall braucht eine GPU. Der neue Server bekommt die GPU {address} dieses Knotens; du musst nichts eingeben.",
+    "wizard.server.hypervisor.gpuMissing":
+      "Dieser Anwendungsfall braucht eine GPU, und dieser Knoten hat keine, die er an einen Server geben kann. Behebe die hier genannten Punkte und aktualisiere, oder wähle einen anderen Knoten.",
+    "wizard.server.hypervisor.gpuUnreported":
+      "Dieser Anwendungsfall braucht eine GPU, aber dieser Knoten hat seine GPUs noch nicht gemeldet. Aktualisiere den kombify-Agenten auf dem Knoten und lade dann neu.",
     "wizard.server.hypervisor.scan": "Proxmox im Heimnetz finden",
     "wizard.server.hypervisor.scanning": "Suche läuft…",
     "wizard.server.hypervisor.scanFailed":
@@ -1991,6 +2013,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...guardMessagesEs,
     ...serviceCardMessages.es,
     ...networkMessages.es,
+    ...availabilityMessages.es,
     ...storageMessages.es,
     ...domainMessages.es,
     ...maintenanceMessages.es,
@@ -2001,6 +2024,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.es,
     ...marketplaceMessages.es,
     ...creationFlowMessages.es,
+    ...layoutMessages.es,
     ...connectDevicesMessages.es,
   },
   "zh-Hans": {
@@ -2008,6 +2032,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...guardMessagesZhHans,
     ...serviceCardMessages["zh-Hans"],
     ...networkMessages["zh-Hans"],
+    ...availabilityMessages["zh-Hans"],
     ...storageMessages["zh-Hans"],
     ...domainMessages["zh-Hans"],
     ...maintenanceMessages["zh-Hans"],
@@ -2018,6 +2043,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages["zh-Hans"],
     ...marketplaceMessages["zh-Hans"],
     ...creationFlowMessages["zh-Hans"],
+    ...layoutMessages["zh-Hans"],
     ...connectDevicesMessages["zh-Hans"],
   },
   hi: {
@@ -2025,6 +2051,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...guardMessagesHi,
     ...serviceCardMessages.hi,
     ...networkMessages.hi,
+    ...availabilityMessages.hi,
     ...storageMessages.hi,
     ...domainMessages.hi,
     ...maintenanceMessages.hi,
@@ -2035,6 +2062,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.hi,
     ...marketplaceMessages.hi,
     ...creationFlowMessages.hi,
+    ...layoutMessages.hi,
     ...connectDevicesMessages.hi,
   },
   ar: {
@@ -2042,6 +2070,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...guardMessagesAr,
     ...serviceCardMessages.ar,
     ...networkMessages.ar,
+    ...availabilityMessages.ar,
     ...storageMessages.ar,
     ...domainMessages.ar,
     ...maintenanceMessages.ar,
@@ -2052,6 +2081,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.ar,
     ...marketplaceMessages.ar,
     ...creationFlowMessages.ar,
+    ...layoutMessages.ar,
     ...connectDevicesMessages.ar,
   },
 };

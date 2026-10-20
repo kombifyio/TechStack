@@ -26,6 +26,9 @@ const (
 const (
 	KitAssignmentFound = "found" // found a new kit deployment (new spec)
 	KitAssignmentJoin  = "join"  // join an existing kit deployment (append node)
+	// KitAssignmentExtend adds use cases to an existing kit deployment
+	// without a new node.
+	KitAssignmentExtend = "extend"
 )
 
 // Architecture v2 node roles (#NodeRoleV2). The legacy wizard vocabulary
@@ -122,6 +125,17 @@ type WizardIntent struct {
 	UseCaseSetupAnswers map[string]map[string][]string `json:"use_case_setup_answers,omitempty"`
 	// Backup records the owner's explicit backup choices for a new deployment.
 	Backup BackupIntent `json:"backup,omitempty"`
+	// LayoutRecommendation accepts the recommended distribution the owner
+	// was shown. The run revalidates it against a fresh snapshot before it
+	// writes any node binding (owner decision D2).
+	LayoutRecommendation *LayoutRecommendationAcceptance `json:"layout_recommendation,omitempty"`
+}
+
+// LayoutRecommendationAcceptance names the shown recommendation and the
+// exact proposal digest the owner accepted.
+type LayoutRecommendationAcceptance struct {
+	ID             string `json:"id"`
+	ProposalDigest string `json:"proposal_digest"`
 }
 
 // OffsiteBackupCapability is the Cloud Kit capability that binds a
@@ -215,8 +229,23 @@ func (intent WizardIntent) Validate() error {
 		if strings.TrimSpace(intent.KitAssignment.KitDeploymentID) == "" {
 			return fmt.Errorf("specv2: kit_deployment_id required for join")
 		}
+	case KitAssignmentExtend:
+		if strings.TrimSpace(intent.KitAssignment.KitDeploymentID) == "" {
+			return fmt.Errorf("specv2: kit_deployment_id required for extend")
+		}
+		if intent.RunKind != RunKindExpansion || len(intent.Goals) == 0 {
+			return fmt.Errorf("specv2: extend is an expansion that adds at least one use case")
+		}
 	default:
-		return fmt.Errorf("specv2: kit_assignment.mode must be %q or %q", KitAssignmentFound, KitAssignmentJoin)
+		return fmt.Errorf("specv2: kit_assignment.mode must be %q, %q or %q", KitAssignmentFound, KitAssignmentJoin, KitAssignmentExtend)
+	}
+	if layout := intent.LayoutRecommendation; layout != nil {
+		if intent.KitAssignment.Mode != KitAssignmentJoin && intent.KitAssignment.Mode != KitAssignmentExtend {
+			return fmt.Errorf("specv2: layout_recommendation applies only to join and extend runs")
+		}
+		if strings.TrimSpace(layout.ID) == "" || !strings.HasPrefix(layout.ProposalDigest, "sha256:") {
+			return fmt.Errorf("specv2: layout_recommendation needs an id and its sha256 proposal digest")
+		}
 	}
 	for _, role := range intent.Server.Roles {
 		if NormalizeRole(role) == "" {

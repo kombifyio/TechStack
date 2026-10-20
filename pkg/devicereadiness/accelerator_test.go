@@ -174,3 +174,33 @@ func TestPassthroughFixesRefuseValuesNoReportProduced(t *testing.T) {
 		})
 	}
 }
+
+// The node-local Guard reports this observation with its inventory, and the
+// creation flow fills the guest's GPU in from it. A node without an isolated
+// GPU must say why instead of proposing one, and the control plane keeps only
+// a proposal a placement would accept.
+func TestGuardObservationProposesOnlyAnIsolatedGPUAndSaysWhyNot(t *testing.T) {
+	yes := true
+	isolated := devicereadiness.AcceleratorObservation(proxmoxNode(devicereadiness.AcceleratorFacts{
+		IOMMUEnabled: &yes, IOMMUGroups: 32, GPUs: []devicereadiness.PCIGPU{consoleGPU(), thunderboltGPU()},
+	}))
+	if !isolated.Observed || isolated.Proposed == nil || isolated.Proposed.Address != "0000:08:00" {
+		t.Fatalf("isolated GPU: observation = %+v, want the enclosure's GPU proposed", isolated)
+	}
+
+	shared := thunderboltGPU()
+	shared.GroupMembers = append(shared.GroupMembers, fn("0000:09:00.0", "0x020000", "8086", "125c", "igc"))
+	blocked := devicereadiness.AcceleratorObservation(proxmoxNode(devicereadiness.AcceleratorFacts{
+		IOMMUEnabled: &yes, IOMMUGroups: 12, GPUs: []devicereadiness.PCIGPU{shared},
+	}))
+	if blocked.Proposed != nil || !slices.ContainsFunc(blocked.Findings, func(f substrate.AcceleratorFinding) bool {
+		return f.ID == devicereadiness.CheckIOMMUGroup && f.Status == string(devicereadiness.StatusBlocked)
+	}) {
+		t.Fatalf("shared group: observation = %+v, want no proposal and the blocked group check", blocked)
+	}
+
+	forged := substrate.AcceleratorObservation{Observed: true, Proposed: &substrate.PCIPassthrough{Address: "0000:08:00; reboot"}}
+	if clean := forged.Sanitized(); clean.Proposed != nil {
+		t.Fatalf("a proposal no placement accepts was kept: %+v", clean.Proposed)
+	}
+}

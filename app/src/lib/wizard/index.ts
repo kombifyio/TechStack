@@ -7,3 +7,4 @@ export * from "./session-owner";
 export * from "./standardBundle";
 export * from "./WizardPreviewController";
 export * from "./wizardRunRequest";
+export * from "./expansion-config";
