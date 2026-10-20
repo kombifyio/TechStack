@@ -33,7 +33,11 @@ func (s *PostgresStore) PrepareWizardPairing(ctx context.Context, run WizardRun,
 		if e != nil {
 			return e
 		}
-		if existing.ID != run.ID || existing.RequestSHA256 != run.RequestSHA256 || existing.StackID != run.StackID || existing.NodeID != run.NodeID {
+		// A keyed run reserves its row before the Stack exists, and a failure
+		// recorded after the Stack was created carries the Stack but no Node. The
+		// first preparation binds what is missing; a Stack or Node already
+		// recorded must match.
+		if existing.ID != run.ID || existing.RequestSHA256 != run.RequestSHA256 || !wizardRunBindable(*existing, run) {
 			return ErrConflict
 		}
 		jobID = existing.PairingJobID
@@ -53,7 +57,7 @@ func (s *PostgresStore) PrepareWizardPairing(ctx context.Context, run WizardRun,
 			if e != nil {
 				return e
 			}
-			_, e = tx.ExecContext(ctx, `UPDATE wizard_runs SET pairing_job_id=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2`, run.TenantID, existing.ID, jobID)
+			_, e = tx.ExecContext(ctx, `UPDATE wizard_runs SET pairing_job_id=$3,stack_id=NULLIF($4,''),node_id=NULLIF($5,''),updated_at=now() WHERE tenant_id=$1 AND id=$2`, run.TenantID, existing.ID, jobID, run.StackID, run.NodeID)
 			return e
 		}
 		return nil

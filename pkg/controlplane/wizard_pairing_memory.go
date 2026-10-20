@@ -48,6 +48,13 @@ func (s *MemoryStore) PrepareWizardPairing(ctx context.Context, run WizardRun, r
 	return cloneJob(job), true, nil
 }
 
+// wizardRunBindable reports whether a stored keyed run can take the run's
+// Stack and Node: each stored value is either still empty or already equal.
+func wizardRunBindable(existing, run WizardRun) bool {
+	return (existing.StackID == "" || existing.StackID == run.StackID) &&
+		(existing.NodeID == "" || existing.NodeID == run.NodeID)
+}
+
 func (s *MemoryStore) reservePairingJob(run WizardRun, requested UpsertJobRequest) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -59,10 +66,10 @@ func (s *MemoryStore) reservePairingJob(run WizardRun, requested UpsertJobReques
 		}
 		existing = stored
 	}
-	// A reservation is written before the Stack exists, so it carries no
-	// Stack/Node yet; the first preparation binds them.
-	unbound := existing.StackID == "" && existing.NodeID == ""
-	if existing.ID != run.ID || existing.RequestSHA256 != run.RequestSHA256 || (!unbound && (existing.StackID != run.StackID || existing.NodeID != run.NodeID)) {
+	// A reservation is written before the Stack exists, and a failure recorded
+	// after the Stack was created carries the Stack but no Node; the first
+	// preparation binds what is missing.
+	if existing.ID != run.ID || existing.RequestSHA256 != run.RequestSHA256 || !wizardRunBindable(*existing, run) {
 		return "", ErrConflict
 	}
 	if existing.PairingJobID != "" {

@@ -368,6 +368,20 @@ func runApplicationConnectorJob(ctx context.Context, cfg StackKitLifecycleConfig
 
 func ApplicationConnectorRelease() (*agentpb.StackKitReleasePin, error) {
 	release, err := configuredTargetStackKitRelease()
+	return applicationConnectorReleasePin(release, err)
+}
+
+// CachedApplicationConnectorAvailable is the read-path gate of
+// ApplicationConnectorRelease: it reuses the cached release admission, so the
+// per-inventory reconcile does not digest the StackKits bundle each time. An
+// enqueued refresh still admits the release afresh.
+func CachedApplicationConnectorAvailable() error {
+	release, err := CachedTargetStackKitRelease()
+	_, err = applicationConnectorReleasePin(release, err)
+	return err
+}
+
+func applicationConnectorReleasePin(release *stackkitrelease.Release, err error) (*agentpb.StackKitReleasePin, error) {
 	if err != nil {
 		return nil, err
 	}

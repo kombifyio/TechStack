@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
@@ -13,12 +14,37 @@ import (
 
 const stackKitReleaseBundleEnv = "TECHSTACK_STACKKIT_RELEASE_BUNDLE"
 
+var stackKitReleaseBundleCache struct {
+	mu       sync.Mutex
+	key      string
+	artifact agentBinaryArtifact
+}
+
+// currentStackKitReleaseBundle digests the bundle once per file identity
+// (path, size, modification time). Every Guard checks this route, and hashing
+// the whole bundle per request, before the ETag answer, saturated the
+// control plane's CPU.
 func currentStackKitReleaseBundle() (agentBinaryArtifact, error) {
 	path := strings.TrimSpace(os.Getenv(stackKitReleaseBundleEnv))
 	if path == "" {
 		return agentBinaryArtifact{}, fmt.Errorf("%s is not configured", stackKitReleaseBundleEnv)
 	}
-	return agentBinaryArtifactForPath(path, managedRuntimeOSLinux, "amd64")
+	info, err := os.Stat(path)
+	if err != nil {
+		return agentBinaryArtifact{}, err
+	}
+	key := fmt.Sprintf("%s|%d|%d", path, info.Size(), info.ModTime().UnixNano())
+	stackKitReleaseBundleCache.mu.Lock()
+	defer stackKitReleaseBundleCache.mu.Unlock()
+	if stackKitReleaseBundleCache.key == key {
+		return stackKitReleaseBundleCache.artifact, nil
+	}
+	artifact, err := agentBinaryArtifactForPath(path, managedRuntimeOSLinux, "amd64")
+	if err != nil {
+		return agentBinaryArtifact{}, err
+	}
+	stackKitReleaseBundleCache.key, stackKitReleaseBundleCache.artifact = key, artifact
+	return artifact, nil
 }
 
 func (h workerRouteHandlers) agentStackKitRelease(e *httpx.Event) error {
