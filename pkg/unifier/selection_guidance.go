@@ -115,7 +115,7 @@ func preselectGoals(request core.WizardRecommendationRequest, catalog stackkitre
 			continue
 		}
 		footprints, err := selectedFootprints(catalog, []string{goal}, request.ComputeProfile, request.UseCaseSettings, request.UseCaseCapabilities)
-		if err != nil || !reserveFootprints(footprints, workers, allocations) {
+		if err != nil || !reserveFootprints(catalog, footprints, workers, allocations) {
 			code := SelectionWithheldCapacity
 			if goal == "ai" {
 				code = SelectionWithheldLocalAI

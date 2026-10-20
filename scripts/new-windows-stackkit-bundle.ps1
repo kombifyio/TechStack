@@ -8,12 +8,12 @@ param(
     [switch]$ControllerOnly,
     [string]$ExpectedReleaseTag = "",
     [string]$ExpectedLinuxArchiveSHA256 = "",
-    [string]$ReleaseTag = "v0.53.16",
-    [string]$ReleaseVersion = "0.53.16",
-    [string]$LinuxArchiveSHA256 = "61bca8dc9c327ec31d56a34d7a0fcc7f9b6a2b3e841dd0727a71ab1af5abcbc9",
-    [string]$WindowsArchiveSHA256 = "7027a50963da34446133309e6172303ceadbf6353d5ac7e0489ef6579b761337",
-    [string]$ReleaseIndexSHA256 = "ca4a10b4584b1f0db1544f1525a130a500c226bc87dfdfbde2b2aae7408483b9",
-    [string]$CompatibilityManifestSHA256 = "c30f4a6a4e71eadfbfebafc841f558031b6e29e9a0b1acea3c709cf81082c5c6",
+    [string]$ReleaseTag = "v0.53.17",
+    [string]$ReleaseVersion = "0.53.17",
+    [string]$LinuxArchiveSHA256 = "3af07ae8e5cba7ead02912250a5a600ba7bdf0103ced4f124eff8225b53f9181",
+    [string]$WindowsArchiveSHA256 = "a581c83e0df4849eb67212326191b3d57d744c1eec03f9fc6c5af9f651ab42a2",
+    [string]$ReleaseIndexSHA256 = "670c1c1ff3c08e6319e5e96b99315bd8a5717010c3d0cbea7dec56da25869a96",
+    [string]$CompatibilityManifestSHA256 = "e711c9ea86bbfeaec17af5e54c6ade56c0e546dc45a2425f03aacad27da3f065",
     # Directory holding <kit>/stack-spec.yaml produced by the SAME pinned
     # StackKits release on Linux. Supplied in CI; when empty the script falls
     # back to generating them with the Windows CLI, which is what a developer

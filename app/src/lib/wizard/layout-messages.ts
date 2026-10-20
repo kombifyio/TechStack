@@ -79,6 +79,7 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify has not measured {title} yet, so it stays on your main server, {node}.",
     "layout.reason.pinned": "{title} stays on {node}.",
+    "layout.reason.with_use_case": "{title} adds to the use case that already runs on {node}, so it runs there too.",
     "layout.reason.repacked":
       "{title} runs on {node} so that every app you picked fits.",
     "layout.reason.uses_accelerator":
@@ -247,6 +248,7 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify hat {title} noch nicht ausgemessen und lässt es deshalb auf deinem Hauptserver {node}.",
     "layout.reason.pinned": "{title} bleibt auf {node}.",
+    "layout.reason.with_use_case": "{title} erweitert den Anwendungsfall, der schon auf {node} läuft, und läuft deshalb auch dort.",
     "layout.reason.repacked":
       "{title} läuft auf {node}, damit alle ausgewählten Apps Platz haben.",
     "layout.reason.uses_accelerator":
@@ -417,6 +419,7 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify aún no ha medido {title}, así que se queda en tu servidor principal, {node}.",
     "layout.reason.pinned": "{title} se queda en {node}.",
+    "layout.reason.with_use_case": "{title} amplía el caso de uso que ya se ejecuta en {node}, así que también se ejecuta allí.",
     "layout.reason.repacked":
       "{title} se ejecuta en {node} para que quepan todas las apps que elegiste.",
     "layout.reason.uses_accelerator":
@@ -574,6 +577,7 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify 尚未测量 {title}，所以它保留在你的主服务器 {node} 上。",
     "layout.reason.pinned": "{title} 保留在 {node} 上。",
+    "layout.reason.with_use_case": "{title} 扩展了已在 {node} 上运行的用例，因此也在那里运行。",
     "layout.reason.repacked":
       "{title} 运行在 {node} 上，以便你选择的所有应用都能放下。",
     "layout.reason.uses_accelerator":
@@ -730,6 +734,7 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify ने {title} को अभी मापा नहीं है, इसलिए यह आपके मुख्य सर्वर {node} पर ही रहता है।",
     "layout.reason.pinned": "{title} {node} पर ही रहता है।",
+    "layout.reason.with_use_case": "{title} उस उपयोग को बढ़ाता है जो पहले से {node} पर चलता है, इसलिए यह भी वहीं चलता है।",
     "layout.reason.repacked":
       "{title} {node} पर चलता है, ताकि आपके चुने सभी ऐप्स समा सकें।",
     "layout.reason.uses_accelerator":
@@ -893,6 +898,7 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "لم يقس kombify التطبيق {title} بعد، لذلك يبقى على خادمك الرئيسي {node}.",
     "layout.reason.pinned": "يبقى {title} على {node}.",
+    "layout.reason.with_use_case": "يضيف {title} إلى حالة الاستخدام التي تعمل بالفعل على {node}، لذلك يعمل هناك أيضًا.",
     "layout.reason.repacked":
       "يعمل {title} على {node} حتى تتسع جميع التطبيقات التي اخترتها.",
     "layout.reason.uses_accelerator":

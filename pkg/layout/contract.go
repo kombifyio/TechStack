@@ -124,6 +124,9 @@ type Node struct {
 	Availability Availability `json:"availability"`
 	// Missing names observations the planner had to do without.
 	Missing []string `json:"missingObservations,omitempty"`
+	// Address is the node's observed site IP, handed to the verification as
+	// an inventory fact; like ObservedAt it stays outside the digest.
+	Address string `json:"address,omitempty"`
 	// ObservedAt is freshness evidence and stays outside the digest.
 	ObservedAt time.Time `json:"observedAt,omitempty"`
 }
@@ -180,7 +183,11 @@ type AcceleratorDemand struct {
 // Demand is one selected workload to place. Its modules land together in L0;
 // component splits with typed edges arrive in L1.
 type Demand struct {
-	Workload       string             `json:"workload"`
+	// Workload is the placed unit: a use case with all its workloads.
+	Workload string `json:"workload"`
+	// Workloads are the StackSpec workloads of the unit (the use case and its
+	// add-ons); they land on one node together.
+	Workloads      []string           `json:"workloads,omitempty"`
 	Title          string             `json:"title,omitempty"`
 	Goal           string             `json:"goal"`
 	Alternative    string             `json:"alternative,omitempty"`
@@ -197,6 +204,8 @@ type Demand struct {
 	Band string `json:"band"`
 	// RequiresRoles are the node roles the release-authored placement asks for.
 	RequiresRoles []string `json:"requiresRoles,omitempty"`
+	// pinReason is the reason of the problem pin on this unit, if any.
+	pinReason string
 }
 
 // Pin binds a workload to a node.
@@ -245,6 +254,7 @@ type Reason struct {
 // Assignment places one workload on one node.
 type Assignment struct {
 	Workload    string    `json:"workload"`
+	Workloads   []string  `json:"workloads,omitempty"`
 	Goal        string    `json:"goal"`
 	Modules     []string  `json:"modules"`
 	NodeID      string    `json:"nodeId"`

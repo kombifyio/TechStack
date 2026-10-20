@@ -12,11 +12,14 @@ import { createDefaultConfig, type StackConfig } from "./types";
  * a use case the operator did not ask for. Start empty; what is sent is what
  * was picked.
  */
-export function createExpansionConfig(): StackConfig {
+export function createExpansionConfig(preselected: readonly string[] = []): StackConfig {
   const next = createDefaultConfig();
   if (next.goals) {
     for (const goal of CANONICAL_USE_CASE_GOALS) {
-      next.goals[goal] = false;
+      // A link may name use cases to start with (for example a Day-2 card);
+      // only canonical ids count, and nothing is accepted until the owner
+      // finishes the flow.
+      next.goals[goal] = preselected.includes(goal);
     }
     next.goals.everything = false;
   }

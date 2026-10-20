@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -182,6 +183,7 @@ type NodeView struct {
 // AssignmentView explains one placement.
 type AssignmentView struct {
 	Workload    string          `json:"workload"`
+	Workloads   []string        `json:"workloads,omitempty"`
 	Title       string          `json:"title"`
 	Goal        string          `json:"goal"`
 	NodeID      string          `json:"node_id"`
@@ -416,9 +418,19 @@ func viewFromRecord(record actions.Recommendation, view View) View {
 func assignmentsFromView(view View) map[string]string {
 	out := map[string]string{}
 	for _, assignment := range view.Assignments {
-		out[assignment.Workload] = assignment.SpecNodeRef
+		for _, workload := range assignmentWorkloads(assignment.Workload, assignment.Workloads) {
+			out[workload] = assignment.SpecNodeRef
+		}
 	}
 	return out
+}
+
+// assignmentWorkloads are the StackSpec workloads one placed unit covers.
+func assignmentWorkloads(unit string, workloads []string) []string {
+	if len(workloads) == 0 {
+		return []string{unit}
+	}
+	return workloads
 }
 
 func normalizeSelection(selection Selection) Selection {
@@ -501,7 +513,9 @@ func (s *Service) evaluate(ctx context.Context, scope Scope, stack *controlplane
 	}
 	option := computation.Result.Options[0]
 	for _, assignment := range option.Assignments {
-		out.assignments[assignment.Workload] = assignment.SpecNodeRef
+		for _, workload := range assignmentWorkloads(assignment.Workload, assignment.Workloads) {
+			out.assignments[workload] = assignment.SpecNodeRef
+		}
 	}
 	out.material = materialDigest(computation.Problem, option)
 	out.view.MaterialDigest = out.material
@@ -872,7 +886,8 @@ func inventoryDocument(snapshot layout.Snapshot) specv2.InventoryDocument {
 			continue
 		}
 		fact := specv2.InventoryNodeFact{
-			Arch: node.Arch, AMD64MicroarchitectureLevel: node.AMD64Level,
+			SiteAddress: siteAddress(node.Address),
+			Arch:        node.Arch, AMD64MicroarchitectureLevel: node.AMD64Level,
 			CPUCores: int(node.Capacity.CPUCores), RAMGB: int(math.Floor(node.Capacity.RAMGB)), StorageGB: int(node.Capacity.StorageGB),
 		}
 		if node.Accelerator != nil && node.Accelerator.Vendor != "" {
@@ -908,7 +923,7 @@ func buildView(scope string, selection Selection, computation unifier.LayoutComp
 				}
 			}
 			view.Assignments = append(view.Assignments, AssignmentView{
-				Workload: assignment.Workload, Title: title, Goal: assignment.Goal, NodeID: assignment.NodeID, NodeName: names[assignment.NodeID],
+				Workload: assignment.Workload, Workloads: assignment.Workloads, Title: title, Goal: assignment.Goal, NodeID: assignment.NodeID, NodeName: names[assignment.NodeID],
 				SpecNodeRef: assignment.SpecNodeRef, Band: assignment.Band, Provenance: assignment.Provenance, Reasons: assignment.Reasons,
 			})
 		}
@@ -939,4 +954,18 @@ func acceptedByRun(record actions.Recommendation, correlationID string) bool {
 	}
 	return record.Acceptance != nil && strings.TrimSpace(correlationID) != "" &&
 		record.Acceptance.AuditCorrelation == strings.TrimSpace(correlationID)
+}
+
+// siteAddress keeps an observed node IP only when it is a concrete unicast
+// address; anything else stays absent, so StackKits reports it unknown.
+func siteAddress(value string) string {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	address = address.Unmap().WithZone("")
+	if !address.IsGlobalUnicast() || address.IsLoopback() {
+		return ""
+	}
+	return address.String()
 }

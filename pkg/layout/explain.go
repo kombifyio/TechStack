@@ -22,6 +22,7 @@ var reasonTemplates = map[string]string{
 	"only_fitting_node":    "{node} is the only server that meets what {title} needs.",
 	"profile_not_measured": "kombify has not measured {title} yet, so it stays on your main server {node}.",
 	"pinned":               "{title} stays on {node}.",
+	"with_use_case":        "{title} adds to the use case that already runs on {node}, so it runs there too.",
 	"repacked":             "{title} runs on {node} so that every selected app fits.",
 	"uses_accelerator":     "{title} needs a {vendor} graphics card, which {node} has.",
 	"measured_reservation": "kombify measured {title}: it reserves {ram} GB of memory.",
@@ -85,6 +86,8 @@ func explainPlacement(placed placement, state *nodeState, states []*nodeState) [
 	}
 	var reasons []Reason
 	switch {
+	case placed.pinned && demand.pinReason == "with_use_case":
+		reasons = append(reasons, reason("with_use_case", params))
 	case placed.pinned && demand.Provenance != "measured":
 		reasons = append(reasons, reason("profile_not_measured", params))
 	case placed.pinned:
@@ -116,7 +119,7 @@ func explainPlacement(placed placement, state *nodeState, states []*nodeState) [
 	if demand.Accelerator != nil {
 		reasons = append(reasons, reason("uses_accelerator", merge(params, map[string]string{"vendor": demand.Accelerator.Vendor})))
 	}
-	if demand.Provenance != "measured" && !placed.pinned {
+	if demand.Provenance != "measured" && (!placed.pinned || demand.pinReason == "with_use_case") {
 		reasons = append(reasons, reason("estimated_profile", params))
 	}
 	if demand.Provenance == "measured" && demand.Reservation.RAMGB > 0 {
