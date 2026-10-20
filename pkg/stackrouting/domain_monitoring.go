@@ -228,7 +228,9 @@ func refreshExpiry(e *ExpiryEvidence, now time.Time) {
 
 // RefreshDomain recomputes age and time remaining without inventing an observation or transition.
 func RefreshDomain(row DomainRow, now time.Time) DomainRow {
-	row.Conditions = append([]DomainCondition(nil), row.Conditions...)
+	// Copy onto a non-nil slice. append onto nil stays nil when there are no
+	// conditions, and encoding/json then emits null instead of [].
+	row.Conditions = append([]DomainCondition{}, row.Conditions...)
 	refreshExpiry(&row.Registration, now)
 	refreshExpiry(&row.TLS.ExpiryEvidence, now)
 	for _, e := range []*DriftEvidence{&row.DNS, &row.TLSDrift} {

@@ -128,11 +128,14 @@
     );
   }
 
-  function conditionsUnique(conditions: DomainCondition[]): DomainCondition[] {
+  function conditionsUnique(
+    conditions: DomainCondition[] | null | undefined,
+  ): DomainCondition[] {
     // Backend IDs represent persistent conditions, not each polling occurrence.
-    return conditions.filter(
+    const list = conditions ?? [];
+    return list.filter(
       (condition, index) =>
-        conditions.findIndex((item) => item.id === condition.id) === index,
+        list.findIndex((item) => item.id === condition.id) === index,
     );
   }
 
@@ -365,7 +368,7 @@
             {@render drift(tr("domains.dns"), domain.dns)}
             {@render drift(tr("domains.tlsDrift"), domain.tls_drift)}
           </div>
-          {#if domain.conditions.length}
+          {#if domain.conditions?.length}
             <section class="mt-3 border-t border-border pt-3">
               <h4 class="text-xs font-semibold">{tr("domains.conditions")}</h4>
               <ul class="mt-2 space-y-2">

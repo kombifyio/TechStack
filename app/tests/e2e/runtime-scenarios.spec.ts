@@ -3414,7 +3414,45 @@ async function enrollWithRunToken(
   resource: { ip: string; keyPair: { privateKeyPath: string } },
   run: Record<string, unknown>,
 ) {
-  const pairing = String(run.bootstrap_token ?? "");
+  // Job projections stay secret-free, so the wizard run returns only its
+  // pairing job. Like the dashboard's connect action (renewNodePairing), the
+  // owner mints the connection token from that job's registration fields.
+  let pairing = String(run.bootstrap_token ?? "");
+  const pairingJobId = String(run.pairing_job_id ?? "");
+  if (!pairing && pairingJobId) {
+    const job = (await getJob(token, pairingJobId)) as Record<string, any>;
+    const registration = (job?.result ?? {}) as Record<string, unknown>;
+    const response = await authorizedFetch(
+      token,
+      runtimeApiUrl(API_BASE, "/api/v1/trust/pairing-tokens"),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stack_id: String(run.kit_deployment_id ?? run.stack_id ?? ""),
+          name: "layout-two-node",
+          server_provisioning_mode:
+            registration.server_provisioning_mode ?? "install-command",
+          node_role: registration.server_node_role,
+          stackkit: registration.stackkit_foundation,
+          services: Array.isArray(registration.requested_services)
+            ? registration.requested_services
+            : [],
+          ...(typeof registration.spec_node_id === "string" &&
+          registration.spec_node_id
+            ? { spec_node_id: registration.spec_node_id }
+            : {}),
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Connection token mint failed (HTTP ${response.status})`,
+      );
+    }
+    const minted = (await response.json()) as { data?: { token?: string } };
+    pairing = String(minted.data?.token ?? "");
+  }
   if (!pairing) throw new Error("The wizard run returned no pairing token");
   const hostname = (
     await runSSH(
