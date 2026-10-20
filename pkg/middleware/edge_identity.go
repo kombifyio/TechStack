@@ -441,7 +441,7 @@ var edgeReplayGuard = commonedgeauth.NewMemoryReplayGuard(10*time.Minute, 0)
 // so those headers cannot be forged downstream; v7 also binds the step-up
 // facts, which it returns with bound=true. Techstack no longer hand-rolls
 // the edge-signature crypto — go-common is the single source of truth for the
-// contract (kombify-Core/standards/EDGE-AUTH-RESPONSIBILITY-STANDARD.md), so the
+// contract (platform/standards/EDGE-AUTH-RESPONSIBILITY-STANDARD.md), so the
 // Gateway flip from v1 to v2 is accepted here without a further code change.
 //
 // The caller only invokes this after confirming X-Kombify-Edge-Auth is present
