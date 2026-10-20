@@ -149,40 +149,6 @@ func footprintFits(footprint stackkitrelease.WorkloadFootprint, worker core.Work
 	return shortfall, unknown
 }
 
-func reserveFootprints(footprints []stackkitrelease.WorkloadFootprint, workers []core.Worker, allocations map[string]stackkitrelease.UseCaseResources) bool {
-	trial := make(map[string]stackkitrelease.UseCaseResources, len(allocations))
-	for id, resources := range allocations {
-		trial[id] = resources
-	}
-	for _, footprint := range footprints {
-		placed := false
-		for index, worker := range workers {
-			id := worker.ID
-			if id == "" {
-				id = fmt.Sprint(index)
-			}
-			shortfall, _ := footprintFits(footprint, worker, trial[id])
-			if len(shortfall) > 0 {
-				continue
-			}
-			resources := trial[id]
-			resources.CPUCores += footprint.Reservation.CPUCores
-			resources.RAMGB += footprint.Reservation.RAMGB
-			resources.StorageGB += footprint.Reservation.StorageGB
-			trial[id] = resources
-			placed = true
-			break
-		}
-		if !placed {
-			return false
-		}
-	}
-	for id, resources := range trial {
-		allocations[id] = resources
-	}
-	return true
-}
-
 func footprintRAM(footprints []stackkitrelease.WorkloadFootprint) int {
 	reservation, floor := 0.0, 0.0
 	for _, footprint := range footprints {

@@ -64,6 +64,7 @@
   import GuardPanel from "#lib/components/guard/GuardPanel.svelte";
   import GuardBadge from "#lib/components/guard/GuardBadge.svelte";
   import ServerNetworkCard from "#lib/components/server-network/ServerNetworkCard.svelte";
+  import ServerAvailabilityCard from "#lib/components/server-availability/ServerAvailabilityCard.svelte";
   import StackKitOperatorPanel from "#lib/components/stackkit/StackKitOperatorPanel.svelte";
   import ServerMaintenanceCard from "#lib/components/server-maintenance/ServerMaintenanceCard.svelte";
   import DriveHealth from "#lib/components/monitoring/DriveHealth.svelte";
@@ -745,6 +746,9 @@
           unreachable={canonicalServer?.connection.state === "stale" ||
             canonicalServer?.connection.state === "offline"}
         />
+      </div>
+      <div class="mb-6">
+        <ServerAvailabilityCard serverId={serverId || ""} />
       </div>
     {/if}
 

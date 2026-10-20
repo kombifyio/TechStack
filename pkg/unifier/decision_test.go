@@ -2,6 +2,7 @@ package unifier
 
 import (
 	"testing"
+	"time"
 
 	"github.com/kombifyio/techstack/pkg/core"
 )
@@ -120,4 +121,27 @@ func hasEnvironmentGap(gaps []core.EnvironmentGap, code string) bool {
 		}
 	}
 	return false
+}
+
+// Observation and profile timestamps are freshness evidence, not decision
+// input: the same inventory observed twice yields the same digest.
+func TestHashDecisionContextIgnoresObservationTimes(t *testing.T) {
+	build := func(at time.Time) *core.DecisionContext {
+		return &core.DecisionContext{
+			Channel:     "wizard:easy",
+			Environment: &core.EnvironmentInventory{SnapshotID: "worker-registry", GeneratedAt: at, ObservedAt: at, ComputeNodes: []core.EnvironmentComputeNode{{ID: "w1", RAMMB: 8192}}},
+			Operator:    &core.OperatorCapabilityProfile{Score: 3, Band: "guided", UpdatedAt: at},
+		}
+	}
+	first, second := build(time.Unix(100, 0)), build(time.Unix(200, 0))
+	if HashDecisionContext(first) != HashDecisionContext(second) {
+		t.Fatal("decision context hash changes with observation time")
+	}
+	if first.Environment.ObservedAt.IsZero() {
+		t.Fatal("hashing must not clear the caller's timestamps")
+	}
+	second.Environment.ComputeNodes[0].RAMMB = 4096
+	if HashDecisionContext(first) == HashDecisionContext(second) {
+		t.Fatal("decision context hash ignores a semantic change")
+	}
 }

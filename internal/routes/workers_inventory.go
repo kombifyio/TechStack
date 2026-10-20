@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/portinventory"
+	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -102,6 +103,8 @@ type workerInventoryHost struct {
 	// Network is the optional observed network position; a changed fingerprint
 	// is how a home network move is detected.
 	Network *workerInventoryNetwork `json:"network,omitempty"`
+	// Hardware is the Guard's machine-level probe; absent from a Guard without it.
+	Hardware *httpguard.HostHardware `json:"hardware,omitempty"`
 }
 
 type workerInventoryService struct {
@@ -359,6 +362,7 @@ func (req *workerInventoryRequest) normalize(runtimeAgentID string) error {
 	if req.Host.Network != nil {
 		req.Host.Network.normalize()
 	}
+	req.Host.Hardware = req.Host.Hardware.Sanitized()
 	for i := range req.Services {
 		req.Services[i].normalize()
 	}
@@ -1103,6 +1107,9 @@ func inventoryHostMap(host workerInventoryHost) map[string]any {
 	}
 	if network := networkMap(host.Network); network != nil {
 		out[workerNetworkKey] = network
+	}
+	if hardware := inventoryHardwareMap(host.Hardware); hardware != nil {
+		out[workerHardwareKey] = hardware
 	}
 	return out
 }

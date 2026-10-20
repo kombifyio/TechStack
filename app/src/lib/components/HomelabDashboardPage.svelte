@@ -104,6 +104,7 @@
   import { SERVERS_HREF } from "#lib/navigation.js";
   import {
     addServerHref as addServerRoute,
+    addUseCasesHref,
     serverDetailHref,
   } from "#lib/server-links.js";
   import {
@@ -2394,6 +2395,17 @@
           <Plus class="h-4 w-4" />
           {tr("ui.homelab.newNode")}
         </Button>
+        {#if singleDeployment}
+          <Button
+            variant="secondary"
+            testId="add-use-cases-button"
+            onclick={() =>
+              singleDeployment && goto(addUseCasesHref(singleDeployment.id))}
+          >
+            <Plus class="h-4 w-4" />
+            {tr("layout.addUseCases.entry")}
+          </Button>
+        {/if}
         {/if}
         {#if deployments.length > 0 && showReviewStart}
           <Button

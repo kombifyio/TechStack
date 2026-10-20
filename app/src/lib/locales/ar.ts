@@ -633,6 +633,14 @@ export const ar: Record<string, string> = {
   "wizard.server.hypervisor.refresh": "تحديث",
   "wizard.server.hypervisor.resourcesMissing":
     "يلزم تخزين نشط يدعم الصور والاستيراد، وجسر LAN نشط.",
+  "wizard.server.hypervisor.gpuNeeded":
+    "تحتاج حالة الاستخدام هذه إلى وحدة GPU. اختر عقدة Proxmox تحتوي على واحدة.",
+  "wizard.server.hypervisor.gpuProposed":
+    "تحتاج حالة الاستخدام هذه إلى وحدة GPU. سيحصل الخادم الجديد على وحدة GPU ‏{address} الخاصة بهذه العقدة؛ لا حاجة لإدخال أي شيء.",
+  "wizard.server.hypervisor.gpuMissing":
+    "تحتاج حالة الاستخدام هذه إلى وحدة GPU، ولا تملك هذه العقدة أي وحدة يمكنها منحها لخادم. أصلح ما هو مذكور هنا ثم حدّث، أو اختر عقدة أخرى.",
+  "wizard.server.hypervisor.gpuUnreported":
+    "تحتاج حالة الاستخدام هذه إلى وحدة GPU، لكن هذه العقدة لم تُبلغ عن وحدات GPU الخاصة بها بعد. حدّث وكيل kombify على العقدة ثم أعد التحميل.",
   "wizard.server.hypervisor.scan": "ابحث عن Proxmox على شبكتي",
   "wizard.server.hypervisor.scanning": "جارٍ البحث…",
   "wizard.server.hypervisor.scanFailed":

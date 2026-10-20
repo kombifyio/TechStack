@@ -433,3 +433,32 @@ func TestEstimateServiceRequirements(t *testing.T) {
 		})
 	}
 }
+
+// A Guard that never reported its microarchitecture level reports 0, which
+// means "unknown": the wizard's capacity check already reads it that way. The
+// filter must not turn the missing report into a shortfall, or every node that
+// predates the probe disappears from every placement of a released workload
+// with a level floor, while a node that reports a level below the floor still
+// does.
+func TestFilterTreatsAnUnreportedMicroarchitectureLevelAsUnknown(t *testing.T) {
+	service := core.ServiceSpec{Name: "immich", Type: "photos"}
+	if floor := estimateServiceRequirements(service).HostFloor.MinAMD64MicroarchitectureLevel; floor < 2 {
+		t.Fatalf("the pinned catalog no longer gives immich a level floor (got %d); pick another released workload", floor)
+	}
+	node := func(id string, level int) core.Worker {
+		return core.Worker{
+			ID: id, Name: id, Type: "worker", Status: "online",
+			Capabilities: core.WorkerCapabilities{CPU: 16, RAM: 65536, Disk: 2000, Arch: "amd64", DockerVersion: "27.0.0", AMD64MicroarchitectureLevel: level},
+		}
+	}
+	workers := []core.Worker{node("unreported", 0), node("v1-cpu", 1), node("v3-cpu", 3)}
+	allocation := map[string]*core.WorkerUsage{"unreported": {}, "v1-cpu": {}, "v3-cpu": {}}
+
+	got := map[string]bool{}
+	for _, candidate := range NewPlacementEngine().filterWorkers(service, workers, allocation) {
+		got[candidate.ID] = true
+	}
+	if !got["unreported"] || !got["v3-cpu"] || got["v1-cpu"] {
+		t.Fatalf("candidates = %v, want the unreported and the v3 node, not the reported v1 node", got)
+	}
+}

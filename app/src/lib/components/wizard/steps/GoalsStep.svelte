@@ -3,6 +3,7 @@
   import CreationTemplates from "../CreationTemplates.svelte";
   import SmartHomeAdvice from "../SmartHomeAdvice.svelte";
   import WizardHintZone from "../WizardHintZone.svelte";
+  import LayoutRecommendationPanel from "../LayoutRecommendationPanel.svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr } from "#lib/i18n.svelte.js";
@@ -15,6 +16,7 @@
   } from "@kombiverselabs/ui/usecase";
   import type { UseCaseCatalogView } from "#lib/api/useCaseCatalog.js";
   import type { WizardPreviewState } from "#lib/wizard/WizardPreviewController.js";
+  import type { LayoutPreviewState } from "#lib/wizard/LayoutPreviewController.js";
   import type {
     BundleQuestionDefinition,
     GoalConfigKey,
@@ -32,6 +34,8 @@
     catalogState = "ready",
     onCatalogReload,
     onRecommendationOpen,
+    layoutState = { phase: "idle" },
+    onLayoutRetry,
     ondisclose,
   }: {
     config: StackConfig;
@@ -53,6 +57,9 @@
     catalogState?: "loading" | "ready" | "error";
     onCatalogReload?: () => void;
     onRecommendationOpen?: (recommendation: WizardRecommendation) => void;
+    /** The recommended distribution of the selection (existing deployments only). */
+    layoutState?: LayoutPreviewState;
+    onLayoutRetry?: () => void;
     ondisclose?: (event: {
       kind: "detail-level" | "drawer" | "group";
       id?: string;
@@ -142,6 +149,9 @@
     </CreationGoals>
   {/if}
   <WizardHintZone state={recommendationState} onopen={onRecommendationOpen} />
+  {#if layoutState.phase !== "idle"}
+    <LayoutRecommendationPanel state={layoutState} onretry={onLayoutRetry} />
+  {/if}
   {#if config.goals?.["smart-home"] && recommendationState.phase === "resolved"}
     <SmartHomeAdvice
       recommendation={recommendationState.result.smart_home_recommendation}

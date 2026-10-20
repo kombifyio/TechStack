@@ -192,3 +192,43 @@ echo "kombify: GPU $ADDR is not ready for guest $1" >&2
 exit 1
 `, guestID, accelerator.Address, accelerator.RootPort, accelerator.Subtree, accelerator.ThunderboltUniqueID)
 }
+
+// AcceleratorObservation is what the node-local Guard reports about the GPU a
+// guest on this node could receive. It travels with the inventory so the
+// creation flow fills the guest's accelerator in itself: nobody types a PCI
+// address, and no credential for the node leaves it. Proposed is absent when
+// the node has no isolated GPU; Findings then say what stands in the way.
+type AcceleratorObservation struct {
+	Observed bool                 `json:"observed"`
+	Proposed *PCIPassthrough      `json:"proposed,omitempty"`
+	Findings []AcceleratorFinding `json:"findings,omitempty"`
+}
+
+// AcceleratorFinding is one passthrough check that did not pass, in the
+// readiness report's own words.
+type AcceleratorFinding struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Summary string `json:"summary"`
+}
+
+// Sanitized keeps what the control plane may store from a Guard report: a
+// proposal only in the shape a placement accepts, and a bounded list of short
+// findings.
+func (o AcceleratorObservation) Sanitized() AcceleratorObservation {
+	clean := AcceleratorObservation{Observed: o.Observed}
+	if o.Proposed != nil && o.Proposed.validate() == nil {
+		proposed := *o.Proposed
+		clean.Proposed = &proposed
+	}
+	for _, finding := range o.Findings {
+		if len(clean.Findings) == 8 {
+			break
+		}
+		if finding.ID == "" || len(finding.ID) > 64 || len(finding.Status) > 16 || len(finding.Summary) > 300 {
+			continue
+		}
+		clean.Findings = append(clean.Findings, finding)
+	}
+	return clean
+}

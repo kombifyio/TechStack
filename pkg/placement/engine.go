@@ -192,7 +192,11 @@ func (p *PlacementEngine) filterWorkers(
 			float64(w.Capabilities.Disk) < svcReq.HostFloor.MinStorageGB {
 			continue
 		}
+		// A level of 0 is a Guard that did not report one: unknown, not a
+		// shortfall (the same reading as the wizard's capacity check). Only a
+		// reported level below the floor removes the worker.
 		if svcReq.HostFloor.MinAMD64MicroarchitectureLevel > 0 && w.Capabilities.Arch == "amd64" &&
+			w.Capabilities.AMD64MicroarchitectureLevel > 0 &&
 			w.Capabilities.AMD64MicroarchitectureLevel < svcReq.HostFloor.MinAMD64MicroarchitectureLevel {
 			continue
 		}
@@ -260,6 +264,9 @@ func (p *PlacementEngine) scoreWorkers(
 		var warnings []string
 		if svcReq.CPUReservationUnspecified {
 			warnings = append(warnings, "The released profile does not declare a complete CPU reservation")
+		}
+		if svcReq.HostFloor.MinAMD64MicroarchitectureLevel > 0 && w.Capabilities.Arch == "amd64" && w.Capabilities.AMD64MicroarchitectureLevel == 0 {
+			warnings = append(warnings, "The node did not report its CPU microarchitecture level, so the released profile's floor is unverified")
 		}
 
 		// Factor 1: Resource balance (prefer 40-70% utilization)

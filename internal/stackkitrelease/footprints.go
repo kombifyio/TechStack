@@ -2,6 +2,7 @@ package stackkitrelease
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -82,7 +83,15 @@ type WorkloadFootprint struct {
 	Recommended               *UseCaseResources        `json:"recommended,omitempty"`
 	Accelerator               *UseCaseAcceleratorFacts `json:"accelerator,omitempty"`
 	CPUReservationUnspecified bool                     `json:"cpuReservationUnspecified,omitempty"`
+	// ReservationProvenance is the release-declared source of the
+	// reservation: "measured", "upstream" or "policy" (empty when the
+	// release declares none).
+	ReservationProvenance string `json:"reservationProvenance,omitempty"`
 }
+
+// ErrWorkloadOmittedOnProfile reports that the release does not include the
+// workload on the requested compute profile.
+var ErrWorkloadOmittedOnProfile = errors.New("workload omitted on compute profile")
 
 // WorkloadFootprints reads the selected modules. A default alternative may be
 // substituted only by the release's own per-profile alternative declaration.
@@ -95,7 +104,7 @@ func (catalog UseCaseCatalog) WorkloadFootprints(workload, alternative, profile,
 		if useCase.ID == workload {
 			alternatives = useCase.Alternatives
 			if verdict, declared := useCase.ComputeTiers[profile]; declared && !verdict.Included {
-				return nil, fmt.Errorf("release %s omits %s on profile %s: %s", catalog.Release.Tag, workload, profile, verdict.Reason)
+				return nil, fmt.Errorf("release %s omits %s on profile %s: %s: %w", catalog.Release.Tag, workload, profile, verdict.Reason, ErrWorkloadOmittedOnProfile)
 			}
 			if alternative == "" {
 				alternative = useCase.DefaultAlternative
@@ -142,6 +151,9 @@ func (catalog UseCaseCatalog) WorkloadFootprints(workload, alternative, profile,
 			}
 			footprint := WorkloadFootprint{Workload: workload, Alternative: alternative, Module: module.ID, ComputeProfile: profile, HostFloor: floor, Reservation: reservation, Recommended: facts.Recommended}
 			footprint.CPUReservationUnspecified = !reservation.cpuDeclared
+			if provenance, declared := facts.Provenance["reservation"]; declared {
+				footprint.ReservationProvenance = provenance.Source
+			}
 			if accelerator != "" && accelerator != "cpu" && len(module.AcceleratorProfileFacts) > 0 {
 				gpu, declared := module.AcceleratorProfileFacts[accelerator]
 				if !declared || gpu.Vendor == "" || gpu.Reservation == nil || !validResourceQuantities(gpu.Reservation.CPUCores, gpu.Reservation.RAMGB, gpu.Reservation.StorageGB) {

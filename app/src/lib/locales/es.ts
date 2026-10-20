@@ -656,6 +656,14 @@ export const es: Record<string, string> = {
   "wizard.server.hypervisor.refresh": "Actualizar",
   "wizard.server.hypervisor.resourcesMissing":
     "Se necesitan un almacenamiento activo que admita imágenes e importaciones y un puente LAN activo.",
+  "wizard.server.hypervisor.gpuNeeded":
+    "Este caso de uso necesita una GPU. Elige un nodo Proxmox que tenga una.",
+  "wizard.server.hypervisor.gpuProposed":
+    "Este caso de uso necesita una GPU. El nuevo servidor recibe la GPU {address} de este nodo; no hay nada que introducir.",
+  "wizard.server.hypervisor.gpuMissing":
+    "Este caso de uso necesita una GPU y este nodo no tiene ninguna que pueda dar a un servidor. Corrige lo que se indica aquí y actualiza, o elige otro nodo.",
+  "wizard.server.hypervisor.gpuUnreported":
+    "Este caso de uso necesita una GPU, pero este nodo aún no ha informado de sus GPU. Actualiza el agente de kombify en el nodo y vuelve a cargar.",
   "wizard.server.hypervisor.scan": "Buscar Proxmox en mi red",
   "wizard.server.hypervisor.scanning": "Buscando…",
   "wizard.server.hypervisor.scanFailed":

@@ -20,6 +20,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/breakglass"
 	"github.com/kombifyio/techstack/internal/executionchannel"
+	"github.com/kombifyio/techstack/internal/layoutadvice"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
 	"github.com/kombifyio/techstack/internal/providercontrol"
@@ -28,6 +29,7 @@ import (
 	"github.com/kombifyio/techstack/internal/routes/auth"
 	stackroutes "github.com/kombifyio/techstack/internal/routes/stacks"
 	"github.com/kombifyio/techstack/internal/routes/trust"
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	storageauth "github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/backupstore"
@@ -882,6 +884,8 @@ func registerWizardRoutes(router *httpx.Router, deps routeDeps, featureSvc *feat
 		migrator = validator
 	}
 	routes.RegisterWizardRoutes(router, cfg)
+	layoutAdvice := newLayoutAdvice(deps, stores, cfg.Projector, validator)
+	routes.RegisterLayoutRecommendationRoutes(router, routes.LayoutRecommendationRouteConfig{Service: layoutAdvice})
 
 	var notificationOutbox productnotifications.ProductEventEnqueuer
 	if deps.monitor != nil {
@@ -908,6 +912,7 @@ func registerWizardRoutes(router *httpx.Router, deps routeDeps, featureSvc *feat
 		},
 		Wallet:        stores.Wallet,
 		KombifyWallet: deps.wallet,
+		LayoutAdvice:  layoutAdvice,
 	}
 	stackroutes.RegisterWizardRunRoutes(router, wizardRunConfig)
 	// The durable remote_enrollment job type runs through the queue; the
@@ -927,6 +932,31 @@ func registerWizardRoutes(router *httpx.Router, deps routeDeps, featureSvc *feat
 		ServiceAuthSecret: os.Getenv("SERVICE_AUTH_SECRET"),
 		ServiceAuthNext:   os.Getenv("SERVICE_AUTH_SECRET_NEXT"),
 	})
+}
+
+// newLayoutAdvice builds the layout recommendation service: the Unifier's
+// Layout Planner over the canonical servers, verified by the pinned StackKits
+// feasibility operation and recorded on the RIL action-card authority. It is
+// nil without the Postgres control plane, and the routes then answer 503.
+func newLayoutAdvice(deps routeDeps, stores stackroutes.ControlPlaneStores, projector specv2.Projector, validator *specv2.CLIValidator) *layoutadvice.Service {
+	servers := serverRuntimeControlPlaneStore(deps.v2)
+	if deps.v2 == nil || deps.v2.db == nil || deps.v2.db.DB == nil || stores.Stacks == nil || servers == nil {
+		return nil
+	}
+	workers, err := routes.NewLayoutWorkerInventory(workerControlPlaneStore(deps.v2))
+	if err != nil {
+		fmt.Printf("⚠️  Layout recommendations disabled: %v\n", err)
+		return nil
+	}
+	service := &layoutadvice.Service{
+		Stacks: stores.Stacks, Servers: servers, Workers: workers,
+		Catalog: stackkitrelease.ResolveUseCaseCatalog, Projector: projector,
+		Records: actions.NewPostgresAuthority(deps.v2.db.DB), Jobs: stores.Jobs,
+	}
+	if validator != nil {
+		service.Checker = validator
+	}
+	return service
 }
 
 func adaptWizardManagedRuntimeExpansion(expansion *routes.ManagedRuntimeExpansion) stackroutes.WizardManagedRuntimeExpansion {

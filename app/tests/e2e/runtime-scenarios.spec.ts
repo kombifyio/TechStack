@@ -27,6 +27,7 @@ import {
   approveWorkerViaApi,
   createPairingTokenViaApi,
   listWorkersViaApi,
+  selectUseCase,
 } from "../helpers/test-utils";
 import {
   authenticateRuntimeUser,
@@ -2772,6 +2773,147 @@ test.describe.serial("Runtime E2E scenarios", () => {
       });
     });
   }
+
+  // L0 Unifier layout journey (Beads kombify-Techstack-1cej, epic
+  // platform-wig6t.1). Two real user-owned servers enroll into one homelab;
+  // adding use cases shows one distribution checked against their exact
+  // inventory, with plain reasons; finishing the flow accepts it, the run
+  // revalidates on a fresh snapshot and the record reads back accepted.
+  // Needs two hosts at or above the 4 GB host floor (TECHSTACK_E2E_DO_SIZE
+  // s-2vcpu-8gb): a nominal 4 GB droplet reports less than 4 GB.
+  test("layout-two-node recommends a verified distribution across two owner servers and accepts it", async ({
+    page,
+  }) => {
+    const client = digitalOceanClientFromEnv();
+    const auth = await authenticateRuntimeUser(
+      "oneliner",
+      page,
+      RUNTIME_AUTH_OPTIONS,
+    );
+    const resources: ProvisionedDropletResource[] = [];
+    let stackId = "";
+    try {
+      const name = `layout-two-node-${runtimeRunId()}`;
+      const found = await createLayoutWizardRun(auth.token, {
+        intent: {
+          schema: "techstack.wizard-intent/v1",
+          run_kind: "first-run",
+          name,
+          goals: [],
+          server: { transport: "install-command" },
+          kit_assignment: { mode: "found", kit_slug: "basement-kit" },
+        },
+      });
+      stackId = String(found.kit_deployment_id ?? found.stack_id ?? "");
+      expect(stackId).not.toBe("");
+      resources.push(await provisionDroplet(client, "install-command"));
+      await enrollWithRunToken(auth.token, resources[0], found);
+
+      const join = await createLayoutWizardRun(auth.token, {
+        intent: {
+          schema: "techstack.wizard-intent/v1",
+          run_kind: "expansion",
+          name,
+          goals: [],
+          server: { transport: "install-command", roles: ["worker"] },
+          kit_assignment: {
+            mode: "join",
+            kit_deployment_id: stackId,
+            kit_slug: "basement-kit",
+          },
+        },
+      });
+      resources.push(await provisionDroplet(client, "install-command"));
+      await enrollWithRunToken(auth.token, resources[1], join);
+      await waitForConnectedStackServers(auth.token, stackId, 2);
+      await waitForStackSettled(auth.token, stackId);
+
+      await page.goto(`/stacks/${encodeURIComponent(stackId)}/use-cases/new`, {
+        waitUntil: "domcontentloaded",
+      });
+      await expect(page.getByTestId("add-use-cases-page")).toBeVisible({
+        timeout: 60_000,
+      });
+      await selectUseCase(page, "vault");
+      await selectUseCase(page, "media");
+      const panel = page.getByTestId("layout-recommendation-panel");
+      await expect(panel).toHaveAttribute(
+        "data-layout-verification",
+        "verified",
+        { timeout: 180_000 },
+      );
+      await attachScreenshot(page, "layout-two-node-panel.png");
+
+      const runResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          /\/(?:api\/v1|v1\/techstack)\/wizard\/runs$/.test(
+            new URL(response.url()).pathname,
+          ),
+        { timeout: CREATE_STACK_REQUEST_TIMEOUT_MS },
+      );
+      await page.getByTestId("wizard-create").click();
+      const response = await runResponse;
+      const runText = await response.text();
+      expect(response.status(), runText).toBe(202);
+      const run = (JSON.parse(runText).data ?? {}) as Record<string, unknown>;
+      const recordId = String(run.layout_recommendation_id ?? "");
+      expect(recordId).not.toBe("");
+      await expect(page.getByTestId("add-use-cases-result")).toBeVisible({
+        timeout: 60_000,
+      });
+      await attachScreenshot(page, "layout-two-node-accepted.png");
+
+      const recordResponse = await authorizedFetch(
+        auth.token,
+        runtimeApiUrl(
+          API_BASE,
+          `/api/v1/unifier/layout/recommendations/${encodeURIComponent(recordId)}`,
+        ),
+      );
+      const record = ((await recordResponse.json()).data ?? {}) as {
+        state?: string;
+        acceptance?: { revalidated_snapshot_digest?: string };
+        assignments?: Array<{
+          workload: string;
+          node_id: string;
+          reasons: Array<{ text: string }>;
+        }>;
+        verification?: { status?: string; cli_version?: string };
+      };
+      expect(["accepted", "executing", "done"]).toContain(record.state);
+      expect(record.verification?.status).toBe("verified");
+      const nodes = new Set(
+        (record.assignments ?? []).map((assignment) => assignment.node_id),
+      );
+      expect(nodes.size).toBeGreaterThan(1);
+      for (const assignment of record.assignments ?? []) {
+        expect(assignment.reasons[0]?.text ?? "").not.toBe("");
+      }
+      await attachJson("layout-two-node-evidence.json", {
+        stack_id: stackId,
+        recommendation_id: recordId,
+        state: record.state,
+        verification: record.verification,
+        assignments: (record.assignments ?? []).map((assignment) => ({
+          workload: assignment.workload,
+          node_id: assignment.node_id,
+          reason: assignment.reasons[0]?.text,
+        })),
+        run_state: run.state,
+        job_id: run.job_id,
+      });
+    } finally {
+      for (const resource of resources) {
+        await cleanupDropletResource(client, resource);
+      }
+      if (stackId) {
+        await destroyRuntimeStackViaApi(auth.token, stackId).catch(
+          () => undefined,
+        );
+      }
+    }
+  });
 });
 
 // Guard may still be completing its session when a rollout fails early, so
@@ -2843,6 +2985,143 @@ async function monthlyRuntimeRequest(
     );
   }
   return json.data ?? json;
+}
+
+async function createLayoutWizardRun(
+  token: string,
+  request: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(API_BASE, "/api/v1/wizard/runs"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": `layout-e2e-${randomUUID()}`,
+      },
+      body: JSON.stringify(request),
+    },
+  );
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `Wizard run failed (HTTP ${response.status}): ${redactText(text)}`,
+    );
+  }
+  const data = (JSON.parse(text).data ?? {}) as Record<string, unknown>;
+  await attachJson(
+    `layout-run-${String(data.kit_assignment_mode ?? "run")}.json`,
+    redactObject(data),
+  );
+  return data;
+}
+
+async function enrollWithRunToken(
+  token: string,
+  resource: ProvisionedDropletResource,
+  run: Record<string, unknown>,
+) {
+  const pairing = String(run.bootstrap_token ?? "");
+  if (!pairing) throw new Error("The wizard run returned no pairing token");
+  const hostname = (
+    await runSSH(
+      resource.ip,
+      resource.keyPair.privateKeyPath,
+      "hostname",
+      30_000,
+    )
+  ).stdout.trim();
+  const installCommand = [
+    `curl -fsSL ${shellQuote(`${API_BASE}/install.sh`)} |`,
+    `KOMBI_SERVER=${shellQuote(API_BASE)}`,
+    `KOMBI_TOKEN=${shellQuote(pairing)}`,
+    "TECHSTACK_AS_SERVICE=1 sh",
+  ].join(" ");
+  let result: Awaited<ReturnType<typeof runSSH>>;
+  try {
+    result = await runSSH(
+      resource.ip,
+      resource.keyPair.privateKeyPath,
+      installCommand,
+      300_000,
+    );
+  } catch (err) {
+    // The ssh command line carries the pairing token; never surface it.
+    throw new Error(
+      redactText(
+        (err instanceof Error ? err.message : String(err)).split(pairing).join("<pairing>"),
+      ),
+    );
+  }
+  await attachText(
+    `layout-install-${hostname}.log`,
+    redactText(`${result.stdout}\n${result.stderr}`),
+  );
+  const worker = await waitForWorkerByHostname(token, hostname, 180_000);
+  if (worker.approved !== true) {
+    await approveWorkerViaApi(token, worker.id, API_BASE);
+    await waitForApprovedWorker(token, worker.id);
+  }
+}
+
+// Use cases can be added once the first rollout finished (the extend run
+// refuses a deployment that is still provisioning).
+async function waitForStackSettled(
+  token: string,
+  stackId: string,
+  timeoutMs = 1_800_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let status = "";
+  while (Date.now() < deadline) {
+    const response = await authorizedFetch(
+      token,
+      runtimeApiUrl(API_BASE, `/api/v1/stacks/${encodeURIComponent(stackId)}`),
+    );
+    const body = (await response.json()) as { data?: Record<string, unknown> };
+    status = String(body.data?.status ?? "").toLowerCase();
+    if (status && status !== "provisioning" && status !== "pending") return status;
+    await delay(15_000);
+  }
+  throw new Error(`Timed out waiting for stack ${stackId} to settle; last status=${status}`);
+}
+
+async function waitForConnectedStackServers(
+  token: string,
+  stackId: string,
+  count: number,
+  timeoutMs = 600_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let last: unknown;
+  while (Date.now() < deadline) {
+    const response = await authorizedFetch(
+      token,
+      runtimeApiUrl(API_BASE, "/api/v1/servers"),
+    );
+    const body = (await response.json()) as { data?: unknown };
+    const data = body.data as
+      | Array<Record<string, any>>
+      | { servers?: Array<Record<string, any>> }
+      | undefined;
+    const servers = Array.isArray(data) ? data : (data?.servers ?? []);
+    const connected = servers.filter(
+      (server) =>
+        server.kit_deployment_id === stackId &&
+        server.connection?.state === "connected",
+    );
+    last = servers.map((server) => ({
+      id: server.id,
+      stack: server.kit_deployment_id,
+      connection: server.connection?.state,
+    }));
+    if (connected.length >= count) return connected;
+    await delay(10_000);
+  }
+  throw new Error(
+    `Timed out waiting for ${count} connected servers on ${stackId}; last=${JSON.stringify(last)}`,
+  );
 }
 
 test.afterAll(async () => {

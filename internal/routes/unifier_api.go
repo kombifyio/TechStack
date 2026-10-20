@@ -36,6 +36,22 @@ type UnifierAPI struct {
 	recommendations *unifier.WizardRecommendationAuthority
 	workers         controlplane.WorkerStore
 	selfDisclosures controlplane.OperatorSelfDisclosureStore
+	// servers and transitions are the canonical server rows and their
+	// connection history. They are the same store that backs the worker
+	// registry; without them workers carry no server identity or availability
+	// evidence.
+	servers     controlplane.ServerRuntimeStore
+	transitions serverTransitionWindowReader
+	// now is the clock the evidence windows and freshness read; nil is the
+	// wall clock.
+	now func() time.Time
+}
+
+func (api *UnifierAPI) clock() time.Time {
+	if api.now != nil {
+		return api.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // NewUnifierAPI creates a new UnifierAPI instance with full pipeline support.
@@ -50,6 +66,8 @@ func NewUnifierAPI(workers controlplane.WorkerStore) (*UnifierAPI, error) {
 	// The control-plane store that backs the worker registry also persists
 	// operator self-disclosures; both are tenant-scoped tables of one database.
 	selfDisclosures, _ := workers.(controlplane.OperatorSelfDisclosureStore)
+	servers, _ := workers.(controlplane.ServerRuntimeStore)
+	transitions, _ := workers.(serverTransitionWindowReader)
 
 	return &UnifierAPI{
 		engine:          engine,
@@ -58,6 +76,8 @@ func NewUnifierAPI(workers controlplane.WorkerStore) (*UnifierAPI, error) {
 		recommendations: unifier.NewWizardRecommendationAuthority(engine),
 		workers:         workers,
 		selfDisclosures: selfDisclosures,
+		servers:         servers,
+		transitions:     transitions,
 	}, nil
 }
 
@@ -78,50 +98,18 @@ func (api *UnifierAPI) fetchWorkers(ctx context.Context, tenantID, ownerID strin
 		return nil, err
 	}
 
-	workers := make([]kscore.Worker, 0, len(records))
-	for _, record := range records {
-		if strings.TrimSpace(record.OwnerSubjectID) != strings.TrimSpace(ownerID) {
-			continue
-		}
-		workers = append(workers, unifierWorkerFromRecord(record))
-	}
-
-	return workers, nil
+	return api.unifierWorkers(ctx, tenantID, ownerRecords(records, ownerID), api.clock()), nil
 }
 
-func unifierWorkerFromRecord(record controlplane.Worker) kscore.Worker {
-	tags := unifierWorkerTags(record.Tags)
-	if ip := strings.TrimSpace(record.IP); ip != "" {
-		tags["ip"] = ip
+// ownerRecords keeps the records of the exact owner.
+func ownerRecords(records []controlplane.Worker, ownerID string) []controlplane.Worker {
+	owned := make([]controlplane.Worker, 0, len(records))
+	for _, record := range records {
+		if strings.TrimSpace(record.OwnerSubjectID) == strings.TrimSpace(ownerID) {
+			owned = append(owned, record)
+		}
 	}
-	worker := kscore.Worker{
-		ID:       record.ID,
-		Name:     record.Hostname,
-		Type:     record.Type,
-		Provider: record.Provider,
-		Status:   record.Status,
-		Capabilities: kscore.WorkerCapabilities{
-			CPU:            record.CPUCores,
-			RAM:            record.RAMMB,
-			Disk:           record.DiskGB,
-			Arch:           record.Arch,
-			OS:             record.OS,
-			DockerVersion:  record.DockerVersion,
-			HasNVMe:        record.HasNVME,
-			HasHWTranscode: record.HasHWTranscode,
-		},
-		Tags: tags,
-	}
-	if gpu := strings.TrimSpace(record.GPU); gpu != "" {
-		worker.Capabilities.GPU = &kscore.GPUInfo{Model: gpu}
-	}
-	if worker.Type == "" {
-		worker.Type = "worker"
-	}
-	if worker.Provider == "" {
-		worker.Provider = "local"
-	}
-	return worker
+	return owned
 }
 
 const wizardRecommendationInventoryTTL = 10 * time.Minute
@@ -142,16 +130,13 @@ func (api *UnifierAPI) fetchRecommendationInventory(ctx context.Context, tenantI
 	if err != nil {
 		return inventory, err
 	}
-	inventory.Workers = make([]kscore.Worker, 0, len(records))
 	inventory.State = "fresh"
 	stale := false
 	var latest time.Time
-	now := time.Now().UTC()
-	for _, record := range records {
-		if strings.TrimSpace(record.OwnerSubjectID) != strings.TrimSpace(ownerID) {
-			continue
-		}
-		inventory.Workers = append(inventory.Workers, unifierWorkerFromRecord(record))
+	now := api.clock()
+	owned := ownerRecords(records, ownerID)
+	inventory.Workers = api.unifierWorkers(ctx, tenantID, owned, now)
+	for _, record := range owned {
 		if record.LastSeenAt == nil || now.Sub(record.LastSeenAt.UTC()) > wizardRecommendationInventoryTTL {
 			stale = true
 		}

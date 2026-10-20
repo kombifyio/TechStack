@@ -20,6 +20,11 @@
     type DiscoveryCapabilities,
   } from "#lib/api/substrates.js";
   import SubstrateEnrollment from "#lib/components/hub/SubstrateEnrollment.svelte";
+  import {
+    loadUseCaseCatalog,
+    type UseCaseCatalogView,
+  } from "#lib/api/useCaseCatalog.js";
+  import { useCasesRequireAccelerator } from "#lib/wizard/accelerator.js";
 
   let {
     config = $bindable(),
@@ -31,6 +36,7 @@
   let inventory = $state<SubstrateInventory>();
   let capabilities = $state<DiscoveryCapabilities>();
   let candidates = $state<DiscoveredDevice[]>([]);
+  let catalog = $state<Map<string, UseCaseCatalogView>>(new Map());
   let loading = $state(true);
   let scanning = $state(false);
   let error = $state("");
@@ -40,6 +46,19 @@
   let destroyed = false;
   let scanTimer: ReturnType<typeof setTimeout> | undefined;
   const guest = $derived(config.serverProvisioning.substrate);
+  // The catalog says whether a selected use case needs a GPU; the node's Guard
+  // says which GPU a guest can get. Together they fill the placement in, so
+  // nobody types a PCI address.
+  const needsGpu = $derived(useCasesRequireAccelerator(catalog, config));
+  const gpu = $derived(inventory?.accelerator);
+  $effect(() => {
+    if (!guest) return;
+    const proposed = needsGpu ? gpu?.proposed : undefined;
+    if (guest.requiresAccelerator !== needsGpu)
+      guest.requiresAccelerator = needsGpu;
+    if (guest.accelerator?.address !== proposed?.address)
+      guest.accelerator = proposed ? { ...proposed } : undefined;
+  });
   const wantsAppliance = $derived(
     config.goals?.["smart-home"] &&
       config.useCaseSettings?.["smart-home"]?.["operating-form"] === "haos" &&
@@ -100,9 +119,11 @@
       substrateProfiles(),
       discoveryCapabilities(),
       discoveredSubstrateDevices(),
+      loadUseCaseCatalog(),
     ]);
     if (destroyed) return;
-    const [hosts, profiles, discovery, devices] = results;
+    const [hosts, profiles, discovery, devices, useCases] = results;
+    catalog = useCases.status === "fulfilled" ? useCases.value : new Map();
     applianceProfile =
       profiles.status === "fulfilled"
         ? profiles.value.profiles.find(
@@ -143,6 +164,7 @@
     guest.bridge = "";
     guest.advisoryInventory = undefined;
     guest.appliance = undefined;
+    guest.accelerator = undefined;
     if (!id) return;
     if (
       !profile ||
@@ -270,6 +292,9 @@
     >
   </div>
   {#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
+  {#if needsGpu && !inventory}<p role="status" class="text-sm text-muted-foreground">
+      {tr("wizard.server.hypervisor.gpuNeeded")}
+    </p>{/if}
   {#if guest}
     <label class="block text-sm" for="hypervisor-server"
       >{tr("wizard.server.hypervisor.host")}</label
@@ -380,6 +405,35 @@
         >
           {tr("wizard.server.hypervisor.resourcesMissing")}
         </p>{/if}
+      {#if needsGpu}
+        {#if gpu?.proposed}
+          <div role="status" class="text-sm text-muted-foreground">
+            <p>
+              {tr("wizard.server.hypervisor.gpuProposed", {
+                address: gpu.proposed.address,
+              })}
+            </p>
+            {#if gpu.findings?.length}<ul class="mt-1 list-disc pl-5">
+                {#each gpu.findings as finding (finding.id)}<li>
+                    {finding.summary}
+                  </li>{/each}
+              </ul>{/if}
+          </div>
+        {:else}
+          <div role="alert" class="text-sm text-destructive">
+            <p>
+              {gpu
+                ? tr("wizard.server.hypervisor.gpuMissing")
+                : tr("wizard.server.hypervisor.gpuUnreported")}
+            </p>
+            {#if gpu?.findings?.length}<ul class="mt-1 list-disc pl-5">
+                {#each gpu.findings as finding (finding.id)}<li>
+                    {finding.summary}
+                  </li>{/each}
+              </ul>{/if}
+          </div>
+        {/if}
+      {/if}
       {#if wantsAppliance && guest.appliance && applianceProfile}
         <fieldset class="border-t border-border pt-4 space-y-3">
           <legend class="font-medium">{tr("ui.hypervisorSelection.homeAssistantOs")}</legend>

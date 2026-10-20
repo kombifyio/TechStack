@@ -184,6 +184,9 @@ type Inventory struct {
 	Storage                []Storage `json:"storage"`
 	Networks               []Network `json:"networks"`
 	Guests                 []Guest   `json:"guests"`
+	// Accelerator comes from the node-local Guard's own look at the PCI bus,
+	// not from the Proxmox API. It is absent from a Guard that predates it.
+	Accelerator *AcceleratorObservation `json:"accelerator,omitempty"`
 }
 
 func (c *Client) Inventory(ctx context.Context) (Inventory, error) {

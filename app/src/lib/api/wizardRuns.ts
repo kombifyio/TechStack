@@ -7,6 +7,7 @@
  * and fail closed without the Postgres control plane (503).
  */
 import { fetchApi, ApiRequestError } from "./client";
+import type { LayoutRecommendationAcceptance } from "./layout";
 
 import { tr } from "#lib/i18n.svelte.js";
 /** Wire schema literal the backend's closed intent contract requires. */
@@ -25,7 +26,8 @@ export interface WizardIntent {
       "install-command" | "connect-remote" | "kombify-cloud" | "hypervisor";
   };
   kit_assignment: {
-    mode: "found" | "join";
+    /** "extend" adds use cases to an existing deployment without a new server. */
+    mode: "found" | "join" | "extend";
     kit_slug?: string;
     kit_deployment_id?: string;
   };
@@ -43,6 +45,12 @@ export interface WizardIntent {
     profile: "solo" | "shared";
     planned_people?: { client_ref: string; name?: string; email?: string }[];
   };
+  /**
+   * The recommended distribution the owner was shown. The run revalidates it
+   * against a fresh snapshot before it applies anything; sent only for a
+   * recorded, verified recommendation.
+   */
+  layout_recommendation?: LayoutRecommendationAcceptance;
 }
 
 export interface WizardRunManagedParams {
@@ -80,6 +88,8 @@ export interface WizardRunRequest {
   services?: string[];
 }
 
+import type { SubstrateAccelerator } from "./substrates";
+
 export interface WizardRunSubstrateParams {
   appliance?: {
     profile_id: "haos";
@@ -96,6 +106,8 @@ export interface WizardRunSubstrateParams {
   cpu: number;
   memory_mib: number;
   disk_gib: number;
+  /** The node's own proposal, from its Guard inventory; never typed in. */
+  accelerator?: SubstrateAccelerator;
 }
 
 export interface WizardRunResponse {
@@ -105,7 +117,7 @@ export interface WizardRunResponse {
   requested_run_kind?: string;
   coerced?: boolean;
   homelab_id: string;
-  kit_assignment_mode: "found" | "join";
+  kit_assignment_mode: "found" | "join" | "extend";
   kit_slug?: string;
   kit_deployment_id: string;
   server_id?: string;
@@ -115,13 +127,19 @@ export interface WizardRunResponse {
   pairing_job_id?: string;
   planned_server_id?: string;
   existing_server_ids?: string[];
-  state: "provisioning" | "awaiting_pairing";
+  /**
+   * "accepted": an extend run saved the desired setup (and recorded the
+   * layout recommendation) without starting a rollout.
+   */
+  state: "provisioning" | "awaiting_pairing" | "accepted";
   auto_deploy?: boolean;
   operations_url?: string;
   idempotent_replay?: boolean;
   unmapped_goals?: string[];
   unmapped_purpose?: string;
   release_version?: string;
+  /** The layout recommendation an extend or join run accepted. */
+  layout_recommendation_id?: string;
   bootstrap_token?: string;
   bootstrap_token_expires_at?: string;
   owner_spec_endpoint?: string;

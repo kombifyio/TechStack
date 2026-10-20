@@ -18,6 +18,7 @@ import {
   type ServerProvisioningModeValue,
   type StackKitFoundationValue,
 } from "./standardBundle";
+import type { SubstrateAccelerator } from "#lib/api/substrates.js";
 import type { HouseholdDraft } from "./household-draft";
 import type { WizardIntent } from "#lib/api/wizardRuns.js";
 
@@ -225,6 +226,10 @@ export interface SubstrateGuestConfig {
   cpu: number;
   memoryMiB: number;
   diskGiB: number;
+  /** Set from the catalog: a selected use case cannot run without a GPU. */
+  requiresAccelerator?: boolean;
+  /** The GPU the node proposed for this guest; filled in, never typed. */
+  accelerator?: SubstrateAccelerator;
 }
 
 export function isValidSubstrateGuest(
@@ -242,7 +247,8 @@ export function isValidSubstrateGuest(
     Number.isInteger(guest.memoryMiB) &&
     guest.memoryMiB >= 2048 &&
     Number.isInteger(guest.diskGiB) &&
-    guest.diskGiB >= 32,
+    guest.diskGiB >= 32 &&
+    (!guest.requiresAccelerator || Boolean(guest.accelerator?.address)),
   );
 }
 

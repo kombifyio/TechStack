@@ -476,7 +476,129 @@ probe_accelerators() {
         "$iommu" "$groups" "$(emit_string "$security")" "$tb" "$gpus"
 }
 
+# -------------------------------------------------------------------- hardware
+
+# whole_disk prints the sysfs path of the disk behind a major:minor block device:
+# it follows device-mapper and RAID members down to a real disk and steps from a
+# partition to the disk that holds it. It prints nothing when the device is not
+# a disk the kernel describes (a network or overlay root, a btrfs subvolume).
+whole_disk() {
+    real=$(readlink -f "/sys/dev/block/$1" 2>/dev/null) || return 1
+    depth=0
+    while [ "$depth" -lt 4 ]; do
+        [ -d "$real" ] || return 1
+        member=""
+        [ -d "$real/slaves" ] && member=$(ls "$real/slaves" 2>/dev/null | head -n 1)
+        if [ -n "$member" ]; then
+            real=$(readlink -f "$real/slaves/$member" 2>/dev/null) || return 1
+            depth=$((depth + 1))
+            continue
+        fi
+        [ -e "$real/partition" ] && real=$(dirname "$real")
+        [ -r "$real/queue/rotational" ] || return 1
+        printf '%s' "$real"
+        return 0
+    done
+    return 1
+}
+
+# probe_hardware reads what the machine is, from procfs and sysfs only: the CPU
+# flags behind the x86-64 microarchitecture level, the GPUs on the bus and the
+# drivers bound to them, render nodes, the disk under the root filesystem and
+# the DMI chassis type. It reports raw observations and classifies nothing: the
+# rules live in Go, where they are tested. A fact the machine does not expose is
+# omitted, never reported as zero, so an absent member means "not observed".
+probe_hardware() {
+    if [ ! -r /proc/cpuinfo ] && [ ! -d /sys/bus/pci/devices ]; then
+        printf '"hardware":{"observed":false}'
+        return
+    fi
+    arch=$(uname -m 2>/dev/null || printf '')
+    cores=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+    case "$cores" in '' | *[!0-9]*) cores=0 ;; esac
+    cpu="\"arch\":$(emit_string "$arch"),\"cores\":$cores"
+    if [ "$arch" = x86_64 ] && [ -r /proc/cpuinfo ]; then
+        flags=$(awk -F: '/^flags/ {print $2; exit}' /proc/cpuinfo 2>/dev/null | tr ' ' '\n')
+        cpu="$cpu,\"flags\":$(printf '%s\n' "$flags" | emit_string_array)"
+    fi
+
+    gpus=""
+    gsep=""
+    seen=0
+    if [ -d /sys/bus/pci/devices ]; then
+        for path in /sys/bus/pci/devices/*; do
+            [ -e "$path" ] || continue
+            case "$(cat "$path/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+            seen=$((seen + 1))
+            [ "$seen" -le 8 ] || break
+            driver=""
+            [ -L "$path/driver" ] && driver=$(basename "$(readlink "$path/driver")")
+            gpus="$gpus$gsep$(printf '{"slot":%s,"vendorId":%s,"driver":%s}' \
+                "$(emit_string "$(basename "$path")")" \
+                "$(emit_string "$(sed 's/^0x//' "$path/vendor" 2>/dev/null)")" "$(emit_string "$driver")")"
+            gsep=","
+        done
+    fi
+
+    nvidia=""
+    [ -r /sys/module/nvidia/version ] && nvidia=$(cat /sys/module/nvidia/version 2>/dev/null)
+
+    nodes=""
+    nsep=""
+    seen=0
+    for path in /sys/class/drm/renderD*; do
+        [ -e "$path" ] || continue
+        seen=$((seen + 1))
+        [ "$seen" -le 8 ] || break
+        driver=""
+        [ -L "$path/device/driver" ] && driver=$(basename "$(readlink -f "$path/device/driver")")
+        nodes="$nodes$nsep$(printf '{"name":%s,"vendorId":%s,"driver":%s}' \
+            "$(emit_string "$(basename "$path")")" \
+            "$(emit_string "$(sed 's/^0x//' "$path/device/vendor" 2>/dev/null)")" "$(emit_string "$driver")")"
+        nsep=","
+    done
+
+    disk=""
+    mm=$(awk '$5 == "/" {m = $3} END {print m}' /proc/self/mountinfo 2>/dev/null)
+    if [ -n "$mm" ] && real=$(whole_disk "$mm"); then
+        case "$(cat "$real/queue/rotational" 2>/dev/null)" in
+            0) disk=",\"systemDisk\":{\"device\":$(emit_string "$(basename "$real")"),\"rotational\":false}" ;;
+            1) disk=",\"systemDisk\":{\"device\":$(emit_string "$(basename "$real")"),\"rotational\":true}" ;;
+        esac
+    fi
+
+    chassis=""
+    chassis_type=$(cat /sys/class/dmi/id/chassis_type 2>/dev/null)
+    case "$chassis_type" in '' | *[!0-9]*) ;; *) chassis=",\"chassisType\":$chassis_type" ;; esac
+
+    printf '"hardware":{"observed":true,"cpu":{%s},"gpus":[%s],"nvidiaDriverVersion":%s,"renderNodes":[%s]%s%s}' \
+        "$cpu" "$gpus" "$(emit_string "$nvidia")" "$nodes" "$disk" "$chassis"
+}
+
 # ------------------------------------------------------------------------ main
+
+# KOMBIFY_PROBE_SCOPE=accelerators is the node-local Guard asking only which
+# GPU a guest could receive. It reads sysfs and nothing else, so it is cheap
+# enough to repeat with the inventory.
+if [ "${KOMBIFY_PROBE_SCOPE:-}" = accelerators ]; then
+    printf '{"schemaVersion":"techstack.device-readiness/v1"'
+    printf ',%s' "$(probe_hypervisor)"
+    printf ',%s' "$(probe_accelerators)"
+    printf ',"probeErrors":%s' "$(emit_string_array < "$PROBE_ERROR_FILE")"
+    printf '}\n'
+    exit 0
+fi
+
+# KOMBIFY_PROBE_SCOPE=hardware is the node-local Guard asking only what the
+# machine is. It reads procfs and sysfs and nothing else, so it runs without
+# privileges and is cheap enough to repeat every few minutes.
+if [ "${KOMBIFY_PROBE_SCOPE:-}" = hardware ]; then
+    printf '{"schemaVersion":"techstack.device-readiness/v1"'
+    printf ',%s' "$(probe_hardware)"
+    printf ',"probeErrors":%s' "$(emit_string_array < "$PROBE_ERROR_FILE")"
+    printf '}\n'
+    exit 0
+fi
 
 printf '{"schemaVersion":"techstack.device-readiness/v1"'
 printf ',%s' "$(probe_os)"
@@ -493,5 +615,6 @@ printf ',%s' "$(probe_packages)"
 printf ',%s' "$(probe_cloudinit)"
 printf ',%s' "$(probe_hypervisor)"
 printf ',%s' "$(probe_accelerators)"
+printf ',%s' "$(probe_hardware)"
 printf ',"probeErrors":%s' "$(emit_string_array < "$PROBE_ERROR_FILE")"
 printf '}\n'

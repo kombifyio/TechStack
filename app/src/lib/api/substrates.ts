@@ -33,6 +33,27 @@ export interface SubstrateInventory {
     avail: number;
   }>;
   networks: Array<{ iface: string; type: string; active: number }>;
+  /**
+   * The node-local Guard's look at the PCI bus. Absent from a Guard that
+   * predates it, which is not the same as a node without a GPU.
+   */
+  accelerator?: SubstrateAcceleratorObservation;
+}
+
+/** The GPU a guest receives, in the shape the substrate placement names it. */
+export interface SubstrateAccelerator {
+  address: string;
+  root_port?: string;
+  subtree?: string;
+  thunderbolt_unique_id?: string;
+}
+
+export interface SubstrateAcceleratorObservation {
+  observed: boolean;
+  /** Absent when the node has no GPU in an IOMMU group of its own. */
+  proposed?: SubstrateAccelerator;
+  /** The passthrough checks that did not pass, in the readiness report's words. */
+  findings?: Array<{ id: string; status: string; summary: string }>;
 }
 export interface DiscoveryCapabilities {
   lan_executor_available: boolean;
