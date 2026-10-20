@@ -9,7 +9,7 @@ using Microsoft.Win32;
 namespace Kombify.Client.Shell;
 
 // kombify Connect installation enrollment for native Windows clients
-// (kombify-Core/standards/CONNECT-CONTRACT-STANDARD.md sections 2, 4 and 5).
+// (platform/standards/CONNECT-CONTRACT-STANDARD.md sections 2, 4 and 5).
 // The client proves possession of a non-exportable P-256 key with DPoP on
 // every Connect call; the key never leaves the Windows key storage provider.
 

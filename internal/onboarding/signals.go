@@ -14,7 +14,7 @@ import (
 )
 
 // Predicate ids assigned to this repository in
-// kombify-Core/standards/onboarding-step-registry.v1.json. The descriptor
+// platform/standards/onboarding-step-registry.v1.json. The descriptor
 // references them by name; nothing else may invent one.
 const (
 	PredicateIntentDraftExists   = "techstack.intent_draft_exists"

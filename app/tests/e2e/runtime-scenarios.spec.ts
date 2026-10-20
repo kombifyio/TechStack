@@ -777,7 +777,9 @@ async function waitForJobTerminal(
     timeoutMs,
     managedObservation ? MANAGED_RUNTIME_BUDGETS.rolloutMs : undefined,
     Date.now(),
-    managedObservation ? MANAGED_RUNTIME_BUDGETS.backendVerificationMs : undefined,
+    managedObservation
+      ? MANAGED_RUNTIME_BUDGETS.backendVerificationMs
+      : undefined,
   );
   let last: Record<string, unknown> | undefined;
   let lastProgressSignature = "";
@@ -1917,6 +1919,323 @@ async function cleanupDropletResource(
   );
 }
 
+// The layout journey's owner servers come from one supplier per run
+// (TECHSTACK_E2E_OWNER_SERVER_PROVIDER): DigitalOcean droplets or centron
+// ccloud VPS. Either way the test plays the owner bringing their own machine;
+// Techstack meets it only through the install command.
+interface OwnerServer {
+  ip: string;
+  keyPair: Awaited<ReturnType<typeof createSSHKeyPair>>;
+  release: () => Promise<void>;
+}
+
+function ownerServerSupplierFromEnv(): {
+  provider: string;
+  provision: (index: number) => Promise<OwnerServer>;
+} {
+  const provider = (
+    process.env.TECHSTACK_E2E_OWNER_SERVER_PROVIDER ?? "digitalocean"
+  )
+    .trim()
+    .toLowerCase();
+  if (provider === "centron") {
+    const client = centronClientFromEnv();
+    return {
+      provider,
+      provision: (index) => provisionCentronServer(client, index),
+    };
+  }
+  if (provider !== "digitalocean") {
+    throw new Error(`Unknown owner server provider: ${provider}`);
+  }
+  const client = digitalOceanClientFromEnv();
+  return {
+    provider,
+    provision: async () => {
+      const resource = await provisionDroplet(client, "install-command");
+      return {
+        ip: resource.ip,
+        keyPair: resource.keyPair,
+        release: () => cleanupDropletResource(client, resource),
+      };
+    },
+  };
+}
+
+// centron ccloud, as Techstack's verified adapter uses it
+// (internal/provideradapters/centron): ccloud ignores the requested hostname,
+// so a server is found again only by its unique tag (at most 20 characters),
+// and it is deleted by the hostname ccloud assigned.
+const CENTRON_API = "https://ccenter.centron.de/api/v1";
+const CENTRON_TAG = "techstack-e2e";
+// 4 vCPU / 8 GB per node: the 4 GB host floor plus the use cases.
+const CENTRON_SIZE = { cores: 4, memoryGB: 8, diskGB: 80 };
+
+interface CentronServer {
+  hostname: string;
+  building: boolean;
+  deleting: boolean;
+  ip: string;
+}
+
+class CentronRuntimeClient {
+  private token = "";
+  private tokenTill = 0;
+
+  constructor(
+    private readonly clientId: string,
+    private readonly clientSecret: string,
+    readonly pool: string,
+    readonly image: string,
+  ) {}
+
+  private async bearer() {
+    if (this.token && Date.now() < this.tokenTill - 60_000) return this.token;
+    const response = await fetch(`${CENTRON_API}/oauth/token`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+      }),
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      access_token?: string;
+      expires_in?: number;
+    };
+    if (!response.ok || !body.access_token) {
+      throw new Error(
+        `centron token request failed with HTTP ${response.status}`,
+      );
+    }
+    this.token = body.access_token;
+    this.tokenTill = Date.now() + Math.max(120, body.expires_in ?? 600) * 1000;
+    return this.token;
+  }
+
+  private async request(method: string, endpoint: string, body?: unknown) {
+    const response = await fetch(`${CENTRON_API}${endpoint}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${await this.bearer()}`,
+        accept: "application/json",
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    let json: any = {};
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = {};
+    }
+    return { status: response.status, json };
+  }
+
+  async createServer(tag: string, publicKey: string) {
+    const { status } = await this.request("POST", "/ccloud/servers", {
+      pool: this.pool,
+      hostname: tag,
+      cores: CENTRON_SIZE.cores,
+      memory: CENTRON_SIZE.memoryGB,
+      disks: [CENTRON_SIZE.diskGB],
+      image: this.image,
+      sshkey: publicKey.trim(),
+      type: "unmanaged",
+      tags: [CENTRON_TAG, tag],
+    });
+    if (status < 200 || status >= 300) {
+      throw new Error(`centron create for ${tag} failed with HTTP ${status}`);
+    }
+  }
+
+  async serversByTag(tag: string): Promise<CentronServer[]> {
+    const { status, json } = await this.request(
+      "GET",
+      `/ccloud/servers?tag=${encodeURIComponent(tag)}`,
+    );
+    if (status === 404) return [];
+    if (status < 200 || status >= 300) {
+      throw new Error(
+        `centron server read for ${tag} failed with HTTP ${status}`,
+      );
+    }
+    return ((json.data ?? []) as Array<Record<string, any>>)
+      .filter((server) => (server.tags ?? []).includes(tag))
+      .map((server) => ({
+        hostname: String(server.hostname ?? "").trim(),
+        building: Boolean(server.build_in_progress),
+        deleting: Boolean(server.deletion_in_progress),
+        ip: centronPublicIPv4(server),
+      }));
+  }
+
+  async deleteServer(hostname: string) {
+    const { status } = await this.request(
+      "DELETE",
+      `/ccloud/servers/${encodeURIComponent(hostname)}`,
+      { hostname },
+    );
+    if (status !== 404 && (status < 200 || status >= 300)) {
+      throw new Error(
+        `centron delete of ${hostname} failed with HTTP ${status}`,
+      );
+    }
+  }
+}
+
+function centronPublicIPv4(server: Record<string, any>) {
+  for (const adapter of server.network_adapters ?? []) {
+    for (const address of adapter.ip_addresses ?? []) {
+      const ip = String(address.ip ?? "").trim();
+      const octets = ip.split(".").map(Number);
+      if (
+        octets.length !== 4 ||
+        octets.some((octet) => !(octet >= 0 && octet <= 255))
+      )
+        continue;
+      const [a, b] = octets;
+      const privateRange =
+        a === 10 ||
+        a === 127 ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 100 && b >= 64 && b <= 127) ||
+        (a === 169 && b === 254);
+      if (!privateRange) return ip;
+    }
+  }
+  return "";
+}
+
+function centronClientFromEnv() {
+  const clientId = (process.env.KOMBISIM_CENTRON_CLIENT_ID ?? "").trim();
+  const clientSecret = (
+    process.env.KOMBISIM_CENTRON_CLIENT_SECRET ?? ""
+  ).trim();
+  const pool = (process.env.KOMBISIM_CENTRON_POOL ?? "").trim();
+  if (!clientId || !clientSecret || !pool) {
+    throw new Error(
+      "Missing centron credentials. Configure KOMBISIM_CENTRON_CLIENT_ID, KOMBISIM_CENTRON_CLIENT_SECRET and KOMBISIM_CENTRON_POOL.",
+    );
+  }
+  return new CentronRuntimeClient(
+    clientId,
+    clientSecret,
+    pool,
+    (process.env.TECHSTACK_E2E_CENTRON_IMAGE ?? "ubuntu-24").trim(),
+  );
+}
+
+// The lane passes its run tag (kte2e-<run id>); each server adds -<index>.
+function centronServerTag(index: number) {
+  if (
+    process.env.GITHUB_ACTIONS === "true" &&
+    !process.env.TECHSTACK_E2E_CENTRON_RUN_TAG
+  ) {
+    throw new Error(
+      "TECHSTACK_E2E_CENTRON_RUN_TAG is required in CI so the lane's cleanup finds these servers",
+    );
+  }
+  const prefix = (
+    process.env.TECHSTACK_E2E_CENTRON_RUN_TAG ??
+    `kte2e-${Date.now().toString(36)}`
+  ).trim();
+  const tag = `${prefix}-${index}`;
+  if (!/^[a-z0-9][a-z0-9-]{3,19}$/.test(tag)) {
+    throw new Error(
+      `centron tag ${tag} is not a ccloud tag of at most 20 characters`,
+    );
+  }
+  return tag;
+}
+
+async function deleteCentronServers(client: CentronRuntimeClient, tag: string) {
+  // ccloud creates asynchronously, so absence counts after two empty reads;
+  // the window lane's cleanup step is the authoritative readback.
+  const deadline = Date.now() + 180_000;
+  let empty = 0;
+  for (;;) {
+    let servers: CentronServer[] | undefined;
+    try {
+      servers = await client.serversByTag(tag);
+    } catch {
+      servers = undefined;
+    }
+    if (servers?.length === 0) {
+      empty += 1;
+      if (empty >= 2) return;
+    } else {
+      empty = 0;
+      for (const server of (servers ?? []).filter(
+        (item) => item.hostname && !item.deleting,
+      )) {
+        await client.deleteServer(server.hostname).catch(() => undefined);
+      }
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`centron servers tagged ${tag} remain after 3 minutes`);
+    }
+    await delay(20_000);
+  }
+}
+
+async function provisionCentronServer(
+  client: CentronRuntimeClient,
+  index: number,
+): Promise<OwnerServer> {
+  const tag = centronServerTag(index);
+  const keyPair = await createSSHKeyPair(`techstack-e2e-${tag}`);
+  const release = async () => {
+    await deleteCentronServers(client, tag).catch(() => undefined);
+    await rm(keyPair.dir, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+  };
+  try {
+    await client.createServer(tag, keyPair.publicKey);
+    const deadline = Date.now() + 1_200_000;
+    let server: CentronServer | undefined;
+    while (!server) {
+      const found = await client.serversByTag(tag);
+      if (found.length > 1) {
+        throw new Error(`centron created ${found.length} servers for ${tag}`);
+      }
+      if (found.length === 1 && !found[0].building && found[0].ip) {
+        server = found[0];
+        break;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`centron server ${tag} was not ready after 20 minutes`);
+      }
+      await delay(15_000);
+    }
+    logRuntimeE2E("centron owner server ready", {
+      tag,
+      hostname: server.hostname,
+    });
+    await waitForSSH(server.ip, keyPair.privateKeyPath, 600_000);
+    await runSSH(
+      server.ip,
+      keyPair.privateKeyPath,
+      [
+        "cloud-init status --wait >/dev/null 2>&1 || true",
+        "command -v curl >/dev/null 2>&1 || (apt-get update && apt-get install -y curl ca-certificates)",
+        "echo ready",
+      ].join(" && "),
+    );
+    return { ip: server.ip, keyPair, release };
+  } catch (err) {
+    await release();
+    throw err;
+  }
+}
+
 function digitalOceanClientFromEnv() {
   const token =
     process.env.DIGITALOCEAN_TOKEN ??
@@ -2787,13 +3106,13 @@ test.describe.serial("Runtime E2E scenarios", () => {
     // Two sequential provisions and enrollments plus the settle wait exceed
     // the 15-minute default; the window lane's cleanup step covers a timeout.
     test.setTimeout(60 * 60_000);
-    const client = digitalOceanClientFromEnv();
+    const supplier = ownerServerSupplierFromEnv();
     const auth = await authenticateRuntimeUser(
       "oneliner",
       page,
       RUNTIME_AUTH_OPTIONS,
     );
-    const resources: ProvisionedDropletResource[] = [];
+    const resources: OwnerServer[] = [];
     let stackId = "";
     try {
       const name = `layout-two-node-${runtimeRunId()}`;
@@ -2809,7 +3128,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       });
       stackId = String(found.kit_deployment_id ?? found.stack_id ?? "");
       expect(stackId).not.toBe("");
-      resources.push(await provisionDroplet(client, "install-command"));
+      resources.push(await supplier.provision(1));
       await enrollWithRunToken(auth.token, resources[0], found);
 
       const join = await createLayoutWizardRun(auth.token, {
@@ -2826,7 +3145,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
           },
         },
       });
-      resources.push(await provisionDroplet(client, "install-command"));
+      resources.push(await supplier.provision(2));
       await enrollWithRunToken(auth.token, resources[1], join);
       await waitForConnectedStackServers(auth.token, stackId, 2);
       await waitForStackSettled(auth.token, stackId);
@@ -2894,6 +3213,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
         expect(assignment.reasons[0]?.text ?? "").not.toBe("");
       }
       await attachJson("layout-two-node-evidence.json", {
+        owner_server_provider: supplier.provider,
         stack_id: stackId,
         recommendation_id: recordId,
         state: record.state,
@@ -2908,7 +3228,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       });
     } finally {
       for (const resource of resources) {
-        await cleanupDropletResource(client, resource);
+        await resource.release();
       }
       if (stackId) {
         await destroyRuntimeStackViaApi(auth.token, stackId).catch(
@@ -3022,7 +3342,7 @@ async function createLayoutWizardRun(
 
 async function enrollWithRunToken(
   token: string,
-  resource: ProvisionedDropletResource,
+  resource: { ip: string; keyPair: { privateKeyPath: string } },
   run: Record<string, unknown>,
 ) {
   const pairing = String(run.bootstrap_token ?? "");
@@ -3053,7 +3373,9 @@ async function enrollWithRunToken(
     // The ssh command line carries the pairing token; never surface it.
     throw new Error(
       redactText(
-        (err instanceof Error ? err.message : String(err)).split(pairing).join("<pairing>"),
+        (err instanceof Error ? err.message : String(err))
+          .split(pairing)
+          .join("<pairing>"),
       ),
     );
   }
@@ -3084,10 +3406,13 @@ async function waitForStackSettled(
     );
     const body = (await response.json()) as { data?: Record<string, unknown> };
     status = String(body.data?.status ?? "").toLowerCase();
-    if (status && status !== "provisioning" && status !== "pending") return status;
+    if (status && status !== "provisioning" && status !== "pending")
+      return status;
     await delay(15_000);
   }
-  throw new Error(`Timed out waiting for stack ${stackId} to settle; last status=${status}`);
+  throw new Error(
+    `Timed out waiting for stack ${stackId} to settle; last status=${status}`,
+  );
 }
 
 async function waitForConnectedStackServers(
