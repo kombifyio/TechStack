@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/netip"
 	"sort"
@@ -530,8 +531,42 @@ func (s *Service) evaluate(ctx context.Context, scope Scope, stack *controlplane
 		return computed{}, fmt.Errorf("%w: %v", ErrSelectionMismatch, err)
 	}
 	out.proposal = proposal
-	out.view.Verification = s.verify(ctx, proposal, inventoryDocument(computation.Snapshot), option.Digest)
+	out.view.Verification = withNodeNames(s.verify(ctx, proposal, inventoryDocument(computation.Snapshot), option.Digest), computation.Snapshot)
 	return out, nil
+}
+
+// withNodeNames states Techstack's own verification notes with the owner's
+// server names; StackKits names nodes by their spec node ref, and its reasons
+// keep that ref beside their English text. The cached value stays as is.
+func withNodeNames(verification Verification, snapshot layout.Snapshot) Verification {
+	names := map[string]string{}
+	for _, node := range snapshot.Nodes {
+		if node.SpecNodeRef != "" && node.Name != "" {
+			names[node.SpecNodeRef] = node.Name
+		}
+	}
+	if len(verification.Reasons) == 0 || len(names) == 0 {
+		return verification
+	}
+	reasons := make([]layout.Reason, 0, len(verification.Reasons))
+	for _, reason := range verification.Reasons {
+		if name := names[reason.Params["node"]]; name != "" && reason.Code == reasonDataBudgetUnset {
+			reason.Params = maps.Clone(reason.Params)
+			reason.Params["node"] = name
+			reason.Text = dataBudgetUnsetText(name)
+		}
+		reasons = append(reasons, reason)
+	}
+	verification.Reasons = reasons
+	return verification
+}
+
+// reasonDataBudgetUnset notes a verified distribution whose application data
+// has no declared budget, so free disk space was not checked for it.
+const reasonDataBudgetUnset = "data_budget_unset"
+
+func dataBudgetUnsetText(node string) string {
+	return "How much space your data needs on " + node + " isn't set yet, so free disk space was not checked for it."
 }
 
 func proposalSpec(projected map[string]any, assignments map[string]string) (map[string]any, error) {
@@ -607,6 +642,15 @@ func verificationFromReport(report specv2.FeasibilityReport) Verification {
 	}
 	for _, failure := range report.Errors {
 		verification.Reasons = append(verification.Reasons, layout.Reason{Code: "stackkits:" + failure.Code, Params: map[string]string{"path": failure.Path}, Text: firstNonEmpty(failure.Message, failure.Code)})
+	}
+	if verification.Status == VerificationVerified {
+		noted := map[string]bool{}
+		for _, advisory := range report.Advisories {
+			if advisory.Code == "DATA_CAPACITY_INTENT_MISSING" && advisory.NodeRef != "" && !noted[advisory.NodeRef] {
+				noted[advisory.NodeRef] = true
+				verification.Reasons = append(verification.Reasons, layout.Reason{Code: reasonDataBudgetUnset, Params: map[string]string{"node": advisory.NodeRef}, Text: dataBudgetUnsetText(advisory.NodeRef)})
+			}
+		}
 	}
 	return verification
 }

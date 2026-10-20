@@ -45,6 +45,12 @@
     !loading && acceptableLayoutRecommendation(view) !== undefined,
   );
   const verificationReasons = $derived(view?.verification.reasons ?? []);
+  // Notes beside a verified result are Techstack's own, localized codes.
+  const verifiedNotes = $derived(
+    verified
+      ? verificationReasons.filter((reason) => !reason.code.startsWith("stackkits:"))
+      : [],
+  );
   const nodeName = $derived(
     new Map((view?.nodes ?? []).map((node) => [node.id, node.name])),
   );
@@ -117,6 +123,11 @@
           />
           <span>{tr("layout.verification.verified")}</span>
         </p>
+        {#each verifiedNotes as note, index (index)}
+          <p class="ps-6 text-xs text-muted-foreground">
+            {layoutReasonText(note)}
+          </p>
+        {/each}
         <p class="ps-6 text-muted-foreground">
           {tr("layout.summary.applies")}
         </p>
@@ -316,6 +327,16 @@
           />
           <span>{tr("layout.verification.verified")}</span>
         </p>
+        {#if verifiedNotes.length > 0}
+          <ul
+            class="mt-1 list-disc space-y-1 ps-11 text-xs text-muted-foreground"
+            data-testid="layout-verification-notes"
+          >
+            {#each verifiedNotes as reason, index (index)}
+              <li>{layoutReasonText(reason)}</li>
+            {/each}
+          </ul>
+        {/if}
       {:else}
         <p class="flex items-start gap-2 text-muted-foreground" role="status">
           <Info class="mt-0.5 size-4 shrink-0" aria-hidden="true" />

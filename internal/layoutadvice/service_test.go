@@ -9,6 +9,7 @@ import (
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/core"
+	"github.com/kombifyio/techstack/pkg/layout"
 	"github.com/kombifyio/techstack/pkg/ril/actions"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/specv2"
@@ -224,5 +225,25 @@ func TestUnverifiedAdviceIsNotRecorded(t *testing.T) {
 	}
 	if view.ID != "" || len(records.records) != 0 || view.Verification.Status != VerificationInfeasible {
 		t.Fatalf("infeasible proposal recorded: %+v", view)
+	}
+}
+
+// An unbudgeted data binding leaves a verified distribution verified and says
+// on which of the owner's servers free disk space was not checked.
+func TestVerifiedAdviceNamesUnbudgetedData(t *testing.T) {
+	report := specv2.FeasibilityReport{Outcome: "feasible", Advisories: []specv2.FeasibilityAdvisory{
+		{Code: "MODULE_LOAD_UNDECLARED", NodeRef: "cloud-main"}, {Code: "DATA_CAPACITY_INTENT_MISSING", NodeRef: "cloud-main"},
+	}}
+	verification := verificationFromReport(report)
+	if verification.Status != VerificationVerified || len(verification.Reasons) != 1 || verification.Reasons[0].Code != reasonDataBudgetUnset {
+		t.Fatalf("verification = %+v", verification)
+	}
+	named := withNodeNames(verification, layout.Snapshot{Nodes: []layout.Node{{SpecNodeRef: "cloud-main", Name: "homelab-f0dd9c"}}})
+	if reason := named.Reasons[0]; reason.Params["node"] != "homelab-f0dd9c" || reason.Text != dataBudgetUnsetText("homelab-f0dd9c") ||
+		verification.Reasons[0].Params["node"] != "cloud-main" {
+		t.Fatalf("named = %+v, cached = %+v", named.Reasons, verification.Reasons)
+	}
+	if unknown := verificationFromReport(specv2.FeasibilityReport{Outcome: "unknown", Advisories: report.Advisories}); len(unknown.Reasons) != 0 {
+		t.Fatalf("an unverified outcome gained an advisory note: %+v", unknown.Reasons)
 	}
 }
