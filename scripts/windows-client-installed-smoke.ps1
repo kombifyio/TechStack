@@ -15,16 +15,18 @@ param(
     [string]$Installer = "portable",
     [string]$SetupPath = "",
     # Blocks non-loopback traffic of the client, runtime and WebView2 with
-    # Windows Firewall rules for the whole run. Requires elevation.
+    # Windows Firewall rules through the offline proof. Update acquisition
+    # subsequently removes only this smoke's rules. Requires elevation.
     [switch]$BlockOutbound,
     # Receives runtime and PostgreSQL logs before the isolated state is removed.
     [string]$DiagnosticsDir = "",
-    # Update proof (setup installer only): a newer Setup.exe and its update
-    # manifest signed with the production update key for the package URL
-    # https://127.0.0.1:18443/kombify-Techstack-Setup.exe. The installed client
-    # must stage it through its own update check, apply it on the next start
-    # and come back with the same identity and data.
+    # Public unsigned installers authenticated by production-signed manifests.
+    # Both versions/revisions must identify public releases; the installed
+    # verifier and shell perform acquisition, application and recovery.
+    [ValidateSet("none", "public-feed", "rollback")]
+    [string]$UpdateProof = "none",
     [string]$UpdateSetupPath = "",
+    # Retired: the current recovery consumer intentionally refuses loopback feeds.
     [string]$UpdateManifestPath = "",
     [string]$UpdateVersion = "",
     [string]$UpdateRevision = "",
@@ -155,19 +157,26 @@ if ([string]::IsNullOrWhiteSpace($SetupPath)) {
 $clientExe = Join-Path $InstallDir "kombify-techstack-client.exe"
 $runtimeExe = Join-Path $InstallDir "techstack.exe"
 $firewallGroup = "kombify-techstack-smoke-$smokeId"
-$updateRequested = ![string]::IsNullOrWhiteSpace($UpdateSetupPath)
+$updateRequested = $UpdateProof -ne "none"
+if ($UpdateManifestPath) { throw "Loopback update manifests are retired; use -UpdateProof public-feed or rollback with published releases." }
+if (!$updateRequested -and ($UpdateSetupPath -or $UpdateVersion -or $UpdateRevision)) {
+    throw "Update arguments require -UpdateProof public-feed or rollback."
+}
 if ($updateRequested) {
     if ($Installer -ne "setup") { throw "The update proof requires -Installer setup." }
-    foreach ($required in @($UpdateManifestPath, $UpdateVersion, $UpdateRevision)) {
-        if ([string]::IsNullOrWhiteSpace($required)) { throw "The update proof requires -UpdateManifestPath, -UpdateVersion and -UpdateRevision." }
+    foreach ($required in @($UpdateSetupPath, $UpdateVersion, $UpdateRevision)) {
+        if ([string]::IsNullOrWhiteSpace($required)) { throw "The public update proof requires -UpdateSetupPath, -UpdateVersion and -UpdateRevision." }
     }
     if ($UpdateRevision -notmatch '^[0-9a-f]{40}$') { throw "-UpdateRevision must be a full source revision." }
+    if ($Version -notmatch '^\d+\.\d+\.\d+$' -or $UpdateVersion -notmatch '^\d+\.\d+\.\d+$' -or
+        [version]$UpdateVersion -le [version]$Version) { throw "The update must be a newer numeric public release." }
     $UpdateSetupPath = (Resolve-Path -LiteralPath $UpdateSetupPath).Path
-    $UpdateManifestPath = (Resolve-Path -LiteralPath $UpdateManifestPath).Path
 }
-$updateChannelPort = 18443
-$updateChannel = $null
-$updateCertificate = $null
+$publicUpdateFeed = "https://github.com/kombifyio/TechStack/releases/latest/download/kombify-techstack-windows-update.json"
+$clientConfigPath = Join-Path $StateDir "client.json"
+$updatesDir = Join-Path $StateDir "updates"
+$pendingPath = Join-Path $updatesDir "pending.json"
+$updateObservations = $null
 $reenableFirewallProfiles = @()
 if ([string]::IsNullOrWhiteSpace($DiagnosticsDir)) {
     $DiagnosticsDir = Join-Path ([IO.Path]::GetTempPath()) "kombify-techstack-smoke-$smokeId"
@@ -553,56 +562,130 @@ function Disable-OutboundBlock {
     }
 }
 
-function Start-UpdateChannel {
-    $channelDir = Join-Path $DiagnosticsDir "update-channel"
-    New-Item -ItemType Directory -Force -Path $channelDir | Out-Null
-    Copy-Item -LiteralPath $UpdateSetupPath -Destination (Join-Path $channelDir "kombify-Techstack-Setup.exe") -Force
-    Copy-Item -LiteralPath $UpdateManifestPath -Destination (Join-Path $channelDir "kombify-techstack-windows-update.json") -Force
-    # A loopback HTTPS origin trusted only on this disposable host; the
-    # manifest signature, not the transport, carries the update's authenticity.
-    $script:updateCertificate = New-SelfSignedCertificate -Subject "CN=127.0.0.1" `
-        -TextExtension @("2.5.29.17={text}IPAddress=127.0.0.1") `
-        -CertStoreLocation Cert:\LocalMachine\My -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(1)
-    $pfx = Join-Path ([IO.Path]::GetTempPath()) "kombify-update-channel-$smokeId.pfx"
-    $cer = Join-Path ([IO.Path]::GetTempPath()) "kombify-update-channel-$smokeId.cer"
-    Export-PfxCertificate -Cert $script:updateCertificate -FilePath $pfx `
-        -Password (ConvertTo-SecureString -String $smokeId -Force -AsPlainText) | Out-Null
-    Export-Certificate -Cert $script:updateCertificate -FilePath $cer | Out-Null
-    Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-    $server = Join-Path ([IO.Path]::GetTempPath()) "kombify-update-channel-$smokeId.cjs"
-    @'
-const https = require("node:https");
-const { readFileSync } = require("node:fs");
-const path = require("node:path");
-const dir = process.env.CHANNEL_DIR;
-https.createServer({ pfx: readFileSync(process.env.CHANNEL_PFX), passphrase: process.env.CHANNEL_PASSPHRASE }, (req, res) => {
-  const name = path.basename(new URL(req.url, "https://127.0.0.1").pathname);
-  try { const body = readFileSync(path.join(dir, name)); res.writeHead(200); res.end(body); }
-  catch { res.writeHead(404); res.end(); }
-}).listen(Number(process.env.CHANNEL_PORT), "127.0.0.1");
-'@ | Set-Content -LiteralPath $server -Encoding UTF8
-    $env:CHANNEL_DIR = $channelDir
-    $env:CHANNEL_PFX = $pfx
-    $env:CHANNEL_PASSPHRASE = $smokeId
-    $env:CHANNEL_PORT = "$updateChannelPort"
-    $script:updateChannel = Start-Process -FilePath node -ArgumentList @($server) -WindowStyle Hidden -PassThru
-    foreach ($name in @("CHANNEL_DIR", "CHANNEL_PFX", "CHANNEL_PASSPHRASE", "CHANNEL_PORT")) {
-        [Environment]::SetEnvironmentVariable($name, $null)
-    }
-    Wait-Endpoint "https://127.0.0.1:$updateChannelPort/kombify-techstack-windows-update.json" -TimeoutSeconds 30 | Out-Null
-    Write-Host "[windows-client-installed-smoke] update channel serves $UpdateVersion on loopback HTTPS"
+# Atomic changes preserve unrelated settings and prevent the install
+# coordinator's shell reading a partial isolated configuration.
+function Set-SmokeClientConfig([hashtable]$Changes) {
+    $config = if (Test-Path -LiteralPath $clientConfigPath) {
+        Get-Content -Raw -LiteralPath $clientConfigPath | ConvertFrom-Json -AsHashtable
+    } else { @{} }
+    foreach ($key in $Changes.Keys) { $config[$key] = $Changes[$key] }
+    $temporary = "$clientConfigPath.$smokeId.tmp"
+    try {
+        [IO.File]::WriteAllText($temporary, ($config | ConvertTo-Json -Depth 20))
+        [IO.File]::Move($temporary, $clientConfigPath, $true)
+    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
 }
 
-function Stop-UpdateChannel {
-    if ($script:updateChannel) {
-        Stop-Process -Id $script:updateChannel.Id -Force -ErrorAction SilentlyContinue
+function Assert-PublicUpdateFeed {
+    $manifest = Invoke-RestMethod -Uri $publicUpdateFeed -TimeoutSec 30
+    $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $UpdateSetupPath).Hash.ToLowerInvariant()
+    if ($manifest.version -ne $UpdateVersion -or $manifest.channel -ne 'stable' -or
+        $manifest.package_url -ne "https://github.com/kombifyio/TechStack/releases/download/v$UpdateVersion/kombify-Techstack-Setup.exe" -or
+        $manifest.package_sha256 -ne $digest -or $manifest.package_size -ne (Get-Item -LiteralPath $UpdateSetupPath).Length) {
+        throw "The public feed drifted from pinned update v$UpdateVersion; no other release is admitted."
     }
-    if ($script:updateCertificate) {
-        $thumbprint = $script:updateCertificate.Thumbprint
-        foreach ($store in @("Cert:\LocalMachine\My", "Cert:\LocalMachine\Root")) {
-            Get-ChildItem -Path $store | Where-Object Thumbprint -eq $thumbprint | Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
+function Get-InstalledShellVersion {
+    if (!(Test-Path -LiteralPath $clientExe)) { return '' }
+    return [Diagnostics.FileVersionInfo]::GetVersionInfo($clientExe).ProductVersion
+}
+
+function Wait-SmokeRuntimeStopped {
+    $deadline = (Get-Date).AddSeconds(45)
+    $statePrefix = (Get-NormalizedPath $StateDir) + [IO.Path]::DirectorySeparatorChar
+    do {
+        $ports = @(Get-NetTCPConnection -LocalPort $LocalPort, $localGrpcPort -State Listen -ErrorAction SilentlyContinue)
+        $postgres = @(Get-CimInstance Win32_Process -Filter "Name = 'postgres.exe'" | Where-Object {
+            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($statePrefix, [StringComparison]::OrdinalIgnoreCase)
+        })
+        if (!$ports.Count -and !$postgres.Count) { return }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    throw 'The local runtime or embedded PostgreSQL still runs; update admission would defer.'
+}
+
+function Read-SmokePendingUpdate {
+    # Cursor replacement is atomic, and successful recovery deletes it. A
+    # deletion between existence check and read is a normal commit transition.
+    try { $raw = [IO.File]::ReadAllText($pendingPath) }
+    catch [IO.FileNotFoundException] { return $null }
+    catch [IO.DirectoryNotFoundException] { return $null }
+    $pending = $raw | ConvertFrom-Json
+    if ($pending.from -ne $Version -or $pending.to -ne $UpdateVersion -or
+        $pending.phase -notin @('applying', 'rolling-back')) {
+        throw 'The recovery cursor does not bind the pinned public releases.'
+    }
+    return $pending
+}
+
+function Wait-InstalledRollback {
+    $snapshot = Join-Path $updatesDir 'snapshot'
+    $sentinel = Join-Path $StateDir "runtime\rollback-sentinel-$smokeId.txt"
+    $added = Join-Path $StateDir "runtime\rollback-added-$smokeId.txt"
+    $original = "before-update-$smokeId"
+    # This non-log sidecar proves snapshot restoration without modifying SQL.
+    [IO.File]::WriteAllText($sentinel, $original)
+    Set-SmokeClientConfig @{ autoStartRuntime = $false }
+    $script:updateObservations.fault = 'autoStartRuntime=false in isolated client configuration'
+    Start-Process -FilePath $clientExe -WindowStyle Hidden | Out-Null
+    $applying = $false
+    $rollingBack = $false
+    $deadline = (Get-Date).AddMinutes(15)
+    do {
+        $pending = Read-SmokePendingUpdate
+        if ($pending -and !$applying) {
+            if ($pending.phase -ne 'applying' -or !(Test-Path -LiteralPath (Join-Path $snapshot (Split-Path -Leaf $sentinel)))) {
+                throw 'Applying cursor and pre-update snapshot were not observed; restoration proof is inconclusive.'
+            }
+            [IO.File]::WriteAllText($sentinel, 'changed-after-snapshot')
+            [IO.File]::WriteAllText($added, 'created-after-snapshot')
+            $afterMutation = Read-SmokePendingUpdate
+            if (!$afterMutation -or ($afterMutation.phase -eq 'rolling-back' -and
+                (Get-InstalledShellVersion).Split('+')[0] -ne $UpdateVersion)) {
+                throw 'Snapshot mutation was not proven to precede recovery of the original installation.'
+            }
+            $applying = $true
+            $script:updateObservations.phases += 'applying'
         }
-    }
+        if ($pending.phase -eq 'rolling-back' -and !$rollingBack) {
+            $shellVersion = Get-InstalledShellVersion
+            if ($shellVersion.Split('+')[0] -ne $UpdateVersion) {
+                throw 'The updated installed shell was not observed when it committed rollback.'
+            }
+            Assert-PublicUpdateFeed
+            $rollingBack = $true
+            $script:updateObservations.phases += 'rolling-back'
+            $script:updateObservations.updatedShellProductVersion = $shellVersion
+        }
+        $rollbackLine = "client update rolled back to $Version; runtime data restored from the pre-update snapshot"
+        $committed = $applying -and $rollingBack -and !$pending -and
+            (Get-InstalledShellVersion).Split('+')[0] -eq $Version -and
+            !(Test-Path -LiteralPath $snapshot) -and
+            (Test-Path -LiteralPath $runtimeLog) -and
+            (Select-String -LiteralPath $runtimeLog -Pattern $rollbackLine -SimpleMatch -Quiet)
+        if ($committed) {
+            if ((Get-Content -Raw -LiteralPath $sentinel) -cne $original -or (Test-Path -LiteralPath $added)) {
+                throw 'Rollback did not restore the pre-update sentinel and remove the post-snapshot file.'
+            }
+            if (!(Test-Path -LiteralPath (Join-Path $updatesDir "$UpdateVersion\failed"))) {
+                throw 'Rollback did not mark the failed update.'
+            }
+            Assert-PublicUpdateFeed
+            $script:updateObservations.phases += 'recovery-committed'
+            $script:updateObservations.snapshotSentinelRestored = $true
+            $script:updateObservations.postSnapshotFileRemoved = $true
+            $script:updateObservations.rollbackLog = $rollbackLine
+            # Preserve the fault through original reinstall AND recovery commit.
+            # Explicitly relaunch after stopping the coordinator-launched shell.
+            Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
+            Wait-SmokeRuntimeStopped
+            Set-SmokeClientConfig @{ autoStartRuntime = $true }
+            return Start-Process -FilePath $clientExe -WindowStyle Hidden -PassThru
+        }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+    throw 'The installed client did not commit automatic rollback of the pinned update.'
 }
 
 function Get-InstalledClientProcess {
@@ -658,10 +741,19 @@ try {
     }
     $installed = $true
     if ($updateRequested) {
-        Start-UpdateChannel
         New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
-        @{ mode = "local"; updateManifestUrl = "https://127.0.0.1:$updateChannelPort/kombify-techstack-windows-update.json"; updateChannel = "stable" } |
-            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $StateDir "client.json") -Encoding UTF8
+        Set-SmokeClientConfig @{ mode = 'local'; updateManifestUrl = $publicUpdateFeed; updateChannel = 'stable'; autoUpdate = $false }
+        $updateObservations = [ordered]@{
+            result = 'PENDING'; mode = $UpdateProof; repository = 'kombifyio/TechStack'
+            workflowRun = $env:GITHUB_RUN_ID; workflowAttempt = $env:GITHUB_RUN_ATTEMPT; harnessRevision = $env:GITHUB_SHA
+            from = @{ tag = "v$Version"; version = $Version; publicSource = $ExpectedRevision
+                setupSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $SetupPath).Hash.ToLowerInvariant() }
+            to = @{ tag = "v$UpdateVersion"; version = $UpdateVersion; publicSource = $UpdateRevision
+                setupSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $UpdateSetupPath).Hash.ToLowerInvariant() }
+            phases = @(); startedAt = (Get-Date).ToUniversalTime().ToString('o')
+            scope = if ($UpdateProof -eq 'rollback') { 'installed recovery with runtime startup disabled; no migration rollback claim' }
+                else { 'installed public-feed upgrade and retained owner/Wallet state' }
+        }
     }
     if (!(Test-Path -LiteralPath $clientExe) -or !(Test-Path -LiteralPath $runtimeExe)) {
         throw "The $Installer installer did not install the client and runtime into $InstallDir"
@@ -705,28 +797,69 @@ try {
     if ($firstIdentity.subject -ne $expectedSubject) {
         throw "Native WebView identity does not match this installation's device credential."
     }
+    if ($updateRequested) {
+        $updateObservations.originalShellProductVersion = Get-InstalledShellVersion
+        if ($updateObservations.originalShellProductVersion.Split('+')[0] -ne $Version) {
+            throw 'The original installed shell does not match the pinned public release.'
+        }
+        Assert-PublicUpdateFeed
+        Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
+        Wait-SmokeRuntimeStopped
+        # Offline first start has passed. Only this run's outbound rules are
+        # removed; the real public feed and signed recovery packages stay reachable.
+        if ($BlockOutbound) { Get-NetFirewallRule -Group $firewallGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule }
+        Set-SmokeClientConfig @{ autoUpdate = $true }
+        $process = Start-Process -FilePath $clientExe -WindowStyle Hidden -PassThru
+        Wait-Endpoint "$localOrigin/api/v1/auth/mode" | Out-Null
+        Assert-InstalledRuntime
+    }
 
     $restartVersion = $Version
     $restartRevision = $ExpectedRevision
     if ($updateRequested) {
         $stageDescriptor = Join-Path $StateDir "updates\$UpdateVersion\stage.json"
-        $stageDeadline = (Get-Date).AddMinutes(5)
-        while (!(Test-Path -LiteralPath $stageDescriptor) -and (Get-Date) -lt $stageDeadline) {
+        $stagedManifest = Join-Path $StateDir "updates\$UpdateVersion\manifest.json"
+        $stageDeadline = (Get-Date).AddMinutes(10)
+        while ((!(Test-Path -LiteralPath $stageDescriptor) -or !(Test-Path -LiteralPath $stagedManifest)) -and (Get-Date) -lt $stageDeadline) {
             Start-Sleep -Seconds 2
         }
-        if (!(Test-Path -LiteralPath $stageDescriptor)) {
+        if (!(Test-Path -LiteralPath $stageDescriptor) -or !(Test-Path -LiteralPath $stagedManifest)) {
             throw "The installed client did not stage the signed update $UpdateVersion."
         }
+        Assert-PublicUpdateFeed
+        $verifiedUpdate = & $runtimeExe client-update --staging-dir $updatesDir --channel stable --verify-staged-version $UpdateVersion | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or $verifiedUpdate.status -ne 'verified-update' -or
+            $verifiedUpdate.package_sha256 -ne $updateObservations.to.setupSha256) {
+            throw 'The installed verifier did not authenticate the pinned public update package.'
+        }
+        $verifiedRecovery = & $runtimeExe client-update --staging-dir (Join-Path $updatesDir 'rollback') --channel stable `
+            --verify-staged-version $Version --recovery-version $Version | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or $verifiedRecovery.status -ne 'verified-recovery' -or
+            $verifiedRecovery.package_sha256 -ne $updateObservations.from.setupSha256) {
+            throw 'The installed verifier did not authenticate the original public recovery package.'
+        }
+        $updateObservations.signedPackageVerification = @{
+            update = @{ status = $verifiedUpdate.status; sha256 = $verifiedUpdate.package_sha256; size = $verifiedUpdate.package_size }
+            recovery = @{ status = $verifiedRecovery.status; sha256 = $verifiedRecovery.package_sha256; size = $verifiedRecovery.package_size }
+        }
+        $updateObservations.phases += 'signed-update-and-recovery-staged'
         Write-Host "[windows-client-installed-smoke] installed client verified and staged update $UpdateVersion"
         $restartVersion = $UpdateVersion
         $restartRevision = $UpdateRevision
     }
 
     Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
+    if ($updateRequested) { Wait-SmokeRuntimeStopped }
     Move-Item -LiteralPath $runtimeLog -Destination (Join-Path $StateDir "runtime\techstack-runtime-first-start.log")
-    $process = Start-Process -FilePath $clientExe -WindowStyle Hidden -PassThru
+    if ($UpdateProof -eq 'rollback') {
+        $process = Wait-InstalledRollback
+        $restartVersion = $Version
+        $restartRevision = $ExpectedRevision
+    } else {
+        $process = Start-Process -FilePath $clientExe -WindowStyle Hidden -PassThru
+    }
     Write-Host "[windows-client-installed-smoke] restarted client pid=$($process.Id)"
-    if ($updateRequested) {
+    if ($UpdateProof -eq 'public-feed') {
         # The previous version applies the staged installer and restarts as
         # the new version; its runtime must come back on the retained data.
         $updateDeadline = (Get-Date).AddMinutes(10)
@@ -750,12 +883,14 @@ try {
     Wait-Endpoint "$localOrigin/api/v1/auth/mode" | Out-Null
     Assert-InstalledRuntime -ExpectVersion $restartVersion -ExpectRevision $restartRevision
     Wait-LogLine -Path $runtimeLog -Pattern "local device session restored"
-    if ($updateRequested) {
+    if ($UpdateProof -eq 'public-feed') {
         Wait-LogLine -Path $runtimeLog -Pattern "client update applied: $Version -> $UpdateVersion"
         if (Test-Path -LiteralPath (Join-Path $StateDir "updates\pending.json")) {
             throw "The applied update left its pending marker behind."
         }
         Write-Host "[windows-client-installed-smoke] update $Version -> $UpdateVersion applied by the installed client"
+        Assert-PublicUpdateFeed
+        $updateObservations.phases += 'update-committed'
     }
     $restartedIdentity = Invoke-LocalUiSmoke -ClientProcessId $process.Id
     if ($restartedIdentity.subject -ne $firstIdentity.subject -or
@@ -769,7 +904,21 @@ try {
     Write-Host "[windows-client-installed-smoke] restart retained the operator identity and encrypted Wallet state"
 
     if ($updateRequested) {
-        $SetupPath = $UpdateSetupPath
+        if (Test-Path -LiteralPath $pendingPath) { throw 'Recovery remains pending after the final runtime start.' }
+        if ($UpdateProof -eq 'rollback' -and !(Test-Path -LiteralPath (Join-Path $updatesDir "$UpdateVersion\failed"))) {
+            throw 'The recovered installation did not retain its failed-update marker.'
+        }
+        $updateObservations.finalShellProductVersion = Get-InstalledShellVersion
+        if ($updateObservations.finalShellProductVersion.Split('+')[0] -ne $restartVersion) {
+            throw 'The final installed shell and runtime versions differ.'
+        }
+        $updateObservations.finalRuntime = @{ version = $restartVersion; publicSource = $restartRevision }
+        $updateObservations.identityRetained = $true
+        $updateObservations.encryptedWalletMarkerRetained = $true
+        $updateObservations.pendingConsumed = $true
+        $updateObservations.result = 'PASS'
+        $updateObservations.finishedAt = (Get-Date).ToUniversalTime().ToString('o')
+        if ($UpdateProof -eq 'public-feed') { $SetupPath = $UpdateSetupPath }
     }
     if ($Installer -eq "setup" -and !$KeepInstall) {
         Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
@@ -787,11 +936,19 @@ try {
         Write-Host "[windows-client-installed-smoke] uninstall removed the binaries and retained local data and credentials"
     }
     Write-Host "[windows-client-installed-smoke] ok"
+} catch {
+    if ($updateObservations) {
+        $updateObservations.result = 'FAIL'
+        $updateObservations.failure = ($_.Exception.Message -split "`r?`n")[0]
+        $updateObservations.finishedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    throw
 } finally {
     Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
     Save-SmokeDiagnostics
-    if ($updateRequested) {
-        Stop-UpdateChannel
+    if ($updateObservations) {
+        $updateObservations | ConvertTo-Json -Depth 10 |
+            Set-Content -LiteralPath (Join-Path $DiagnosticsDir 'update-observations.json') -Encoding UTF8
     }
     if ($BlockOutbound) {
         Disable-OutboundBlock
