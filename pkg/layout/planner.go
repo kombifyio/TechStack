@@ -89,10 +89,14 @@ func (p BestFit) Plan(ctx context.Context, snapshot Snapshot, problem Problem) (
 		return sealResult(result), nil
 	}
 	pins := map[string]string{}
+	reasons := map[string]string{}
 	for _, pin := range problem.Pins {
-		pins[pin.Workload] = pin.NodeID
+		pins[pin.Workload], reasons[pin.Workload] = pin.NodeID, pin.Reason
 	}
 	demands := orderedDemands(problem.Demands, pins)
+	for i := range demands {
+		demands[i].pinReason = reasons[demands[i].Workload]
+	}
 
 	placements, failed := p.greedy(states, demands, pins)
 	if len(failed) > 0 {
@@ -529,7 +533,7 @@ func buildOption(states []*nodeState, placements []placement) Option {
 	for _, placed := range placements {
 		state := states[placed.node]
 		option.Assignments = append(option.Assignments, Assignment{
-			Workload: placed.demand.Workload, Goal: placed.demand.Goal, Modules: placed.demand.Modules,
+			Workload: placed.demand.Workload, Workloads: placed.demand.Workloads, Goal: placed.demand.Goal, Modules: placed.demand.Modules,
 			NodeID: state.node.ID, SpecNodeRef: state.node.SpecNodeRef, Band: placed.demand.Band,
 			Provenance: placed.demand.Provenance, Reservation: placed.demand.Reservation,
 			Reasons: explainPlacement(placed, state, states),

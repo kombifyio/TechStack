@@ -92,6 +92,8 @@ export interface LayoutNodeView {
 
 export interface LayoutAssignmentView {
   workload: string;
+  /** The StackSpec workloads of this unit (the use case and its add-ons). */
+  workloads?: string[];
   title: string;
   goal: string;
   node_id: string;

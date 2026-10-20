@@ -36,6 +36,7 @@ type InventoryDocument struct {
 // InventoryNodeFact carries only facts Techstack observed; absent facts stay
 // absent so StackKits reports them as unverified rather than satisfied.
 type InventoryNodeFact struct {
+	SiteAddress                 string                 `json:"siteAddress,omitempty"`
 	Arch                        string                 `json:"arch,omitempty"`
 	AMD64MicroarchitectureLevel int                    `json:"amd64MicroarchitectureLevel,omitempty"`
 	CPUCores                    int                    `json:"cpuCores,omitempty"`

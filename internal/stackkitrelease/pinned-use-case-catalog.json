@@ -1,14 +1,14 @@
 {
   "schemaVersion": "stackkits-use-case-catalog/v1",
   "release": {
-    "tag": "v0.53.16",
-    "version": "0.53.16",
-    "sourceSha": "77bb8e9dcbb24235e39d8ce8bc1c7ab5b64b4d3e",
-    "publicSourceSha": "e562732e59a41616fe13ade755187c04c7fe9b5d",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.53.16"
+    "tag": "v0.53.17",
+    "version": "0.53.17",
+    "sourceSha": "f69086790085307609d99b907a9477b9e7a171ef",
+    "publicSourceSha": "777505c489be4c8c2e39507b385bb1376750b4ab",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.53.17"
   },
-  "generatedAt": "2026-10-19T16:50:27Z",
-  "generatorVersion": "0.53.16",
+  "generatedAt": "2026-10-20T00:49:49Z",
+  "generatorVersion": "0.53.17",
   "catalog": {
     "useCases": [
       {
@@ -3723,7 +3723,7 @@
                     },
                     "reservation": {
                       "cpuCores": 0.05,
-                      "ramGB": 0.125
+                      "ramGB": 0.0625
                     },
                     "recommended": {
                       "cpuCores": 0.25,
@@ -3747,8 +3747,8 @@
                         "source": "measured"
                       },
                       "reservation": {
-                        "ref": "Kombify reservation policy; declared, not a sum of component limits",
-                        "source": "policy"
+                        "ref": "docs/data/resource-evidence/stackkits-adguard-home-runtime/high.json",
+                        "source": "measured"
                       }
                     }
                   },
@@ -3787,8 +3787,8 @@
                         "source": "measured"
                       },
                       "reservation": {
-                        "ref": "Kombify reservation policy; declared, not a sum of component limits",
-                        "source": "policy"
+                        "ref": "docs/data/resource-evidence/stackkits-adguard-home-runtime/low.json",
+                        "source": "measured"
                       }
                     }
                   },
@@ -3803,7 +3803,7 @@
                     },
                     "reservation": {
                       "cpuCores": 0.05,
-                      "ramGB": 0.125
+                      "ramGB": 0.0625
                     },
                     "recommended": {
                       "cpuCores": 0.25,
@@ -3827,8 +3827,8 @@
                         "source": "measured"
                       },
                       "reservation": {
-                        "ref": "Kombify reservation policy; declared, not a sum of component limits",
-                        "source": "policy"
+                        "ref": "docs/data/resource-evidence/stackkits-adguard-home-runtime/standard.json",
+                        "source": "measured"
                       }
                     }
                   }
@@ -4459,7 +4459,7 @@
                         "source": "measured"
                       },
                       "reservation": {
-                        "ref": "docs/plans/2026-10-11-stream-a/a6-remote-cold-latency-observation.json",
+                        "ref": "docs/data/resource-evidence/stackkits-guacamole-runtime/high.json",
                         "source": "measured"
                       }
                     }
@@ -4499,7 +4499,7 @@
                         "source": "measured"
                       },
                       "reservation": {
-                        "ref": "docs/plans/2026-10-11-stream-a/a6-remote-cold-latency-observation.json",
+                        "ref": "docs/data/resource-evidence/stackkits-guacamole-runtime/low.json",
                         "source": "measured"
                       }
                     }
@@ -5817,5 +5817,5 @@
       }
     ]
   },
-  "contentDigest": "sha256:e8deb787c1af50610d2c3d2d7e35652d824607119fe814e3247b794cb716ef8e"
+  "contentDigest": "sha256:4e8f39e54d088ab4f624c0d683c456a07c2ab40eeb43b3ff4af59dfb55ef2849"
 }

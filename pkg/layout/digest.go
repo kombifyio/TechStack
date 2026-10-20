@@ -23,7 +23,7 @@ func SealSnapshot(snapshot Snapshot) Snapshot {
 	semantic.Digest = ""
 	semantic.Nodes = make([]Node, len(snapshot.Nodes))
 	for i, node := range snapshot.Nodes {
-		node.ObservedAt = time.Time{}
+		node.ObservedAt, node.Address = time.Time{}, ""
 		node.Missing = sortedStrings(node.Missing)
 		semantic.Nodes[i] = node
 	}

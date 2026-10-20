@@ -58,20 +58,31 @@ func ComputeLayout(ctx context.Context, catalog stackkitrelease.UseCaseCatalog, 
 	if err != nil {
 		return LayoutComputation{}, err
 	}
-	demands := footprintDemands(catalog, footprints)
-	existing := map[string]bool{}
+	existingNode := map[string]string{}
 	for _, component := range input.Existing {
-		existing[component.Workload] = true
+		existingNode[component.Workload] = component.NodeID
 	}
+	// Deployed workloads stay where they are (no migration in L0); only the
+	// new ones are planned, grouped per use case.
+	fresh := make([]stackkitrelease.WorkloadFootprint, 0, len(footprints))
+	for _, footprint := range footprints {
+		if _, deployed := existingNode[footprint.Workload]; !deployed {
+			fresh = append(fresh, footprint)
+		}
+	}
+	demands := footprintDemands(catalog, fresh)
 	var planned []layout.Demand
 	var pins []layout.Pin
 	primary := primaryNodeID(snapshot)
 	for _, demand := range demands {
-		if existing[demand.Workload] {
-			continue // already deployed; no migration in L0
+		for _, workload := range demand.Workloads {
+			demand.RequiresRoles = appendMissing(demand.RequiresRoles, input.RequiresRoles[workload]...)
 		}
-		demand.RequiresRoles = append([]string(nil), input.RequiresRoles[demand.Workload]...)
-		if demand.Provenance != "measured" && primary != "" {
+		switch node := existingNode[demand.Goal]; {
+		case node != "":
+			// An add-on joins its use case on the node that already runs it.
+			pins = append(pins, layout.Pin{Workload: demand.Workload, NodeID: node, Reason: "with_use_case"})
+		case demand.Provenance != "measured" && primary != "":
 			pins = append(pins, layout.Pin{Workload: demand.Workload, NodeID: primary, Reason: "profile_not_measured"})
 		}
 		planned = append(planned, demand)
@@ -114,6 +125,7 @@ func layoutSnapshot(input LayoutInput) layout.Snapshot {
 		node.Primary = input.PrimaryServerID != "" && node.ID == input.PrimaryServerID
 		node.SpecNodeRef = input.SpecNodeRefs[node.ID]
 		node.Roles = append([]string(nil), input.NodeRoles[node.ID]...)
+		node.Address = strings.TrimSpace(worker.Tags["ip"])
 		snapshot.Nodes = append(snapshot.Nodes, node)
 	}
 	snapshot.Nodes = append(snapshot.Nodes, input.Planned...)
@@ -192,22 +204,28 @@ func quantize(value, step float64) float64 {
 	return math.Ceil(value/step) * step
 }
 
-// footprintDemands groups release footprints into one demand per workload:
-// in L0 a workload's modules land together.
+// footprintDemands groups release footprints into one demand per use case:
+// in L0 a use case's workloads (its own and its add-ons) and their modules
+// land on one node together, so every add-on runs beside its primary.
 func footprintDemands(catalog stackkitrelease.UseCaseCatalog, footprints []stackkitrelease.WorkloadFootprint) []layout.Demand {
-	byWorkload := map[string]*layout.Demand{}
+	byGoal := map[string]*layout.Demand{}
 	var order []string
 	for _, footprint := range footprints {
-		demand := byWorkload[footprint.Workload]
+		goal, title := workloadGoal(catalog, footprint.Workload)
+		demand := byGoal[goal]
 		if demand == nil {
-			goal, title := workloadGoal(catalog, footprint.Workload)
+			_, goalTitle := workloadGoal(catalog, goal)
 			demand = &layout.Demand{
-				Workload: footprint.Workload, Title: title, Goal: goal, Alternative: footprint.Alternative,
+				Workload: goal, Title: firstNonEmptyRecommendation(goalTitle, title), Goal: goal,
 				ComputeProfile: footprint.ComputeProfile, Provenance: "measured", Band: layout.DefaultBand(goal),
 			}
-			byWorkload[footprint.Workload] = demand
-			order = append(order, footprint.Workload)
+			byGoal[goal] = demand
+			order = append(order, goal)
 		}
+		if footprint.Workload == goal {
+			demand.Alternative = footprint.Alternative
+		}
+		demand.Workloads = appendMissing(demand.Workloads, footprint.Workload)
 		demand.Modules = append(demand.Modules, footprint.Module)
 		demand.HostFloor = layout.Floor{
 			CPUCores:   math.Max(demand.HostFloor.CPUCores, footprint.HostFloor.MinCPUCores),
@@ -228,11 +246,21 @@ func footprintDemands(catalog stackkitrelease.UseCaseCatalog, footprints []stack
 	}
 	sort.Strings(order)
 	demands := make([]layout.Demand, 0, len(order))
-	for _, workload := range order {
-		sort.Strings(byWorkload[workload].Modules)
-		demands = append(demands, *byWorkload[workload])
+	for _, goal := range order {
+		sort.Strings(byGoal[goal].Modules)
+		sort.Strings(byGoal[goal].Workloads)
+		demands = append(demands, *byGoal[goal])
 	}
 	return demands
+}
+
+func appendMissing(values []string, candidates ...string) []string {
+	for _, candidate := range candidates {
+		if candidate != "" && !containsString(values, candidate) {
+			values = append(values, candidate)
+		}
+	}
+	return values
 }
 
 // workloadGoal returns the use case a workload belongs to and its title.
@@ -261,7 +289,7 @@ func maxInt(a, b int) int {
 // allocations and adds their reservations where the planner placed them.
 // It is the wizard's capacity check behind the Layout Planner port; the
 // allocations are planned, not yet deployed, so they add to observed usage.
-func reserveFootprints(footprints []stackkitrelease.WorkloadFootprint, workers []core.Worker, allocations map[string]stackkitrelease.UseCaseResources) bool {
+func reserveFootprints(catalog stackkitrelease.UseCaseCatalog, footprints []stackkitrelease.WorkloadFootprint, workers []core.Worker, allocations map[string]stackkitrelease.UseCaseResources) bool {
 	if len(footprints) == 0 {
 		return true
 	}
@@ -281,7 +309,7 @@ func reserveFootprints(footprints []stackkitrelease.WorkloadFootprint, workers [
 		snapshot.Nodes = append(snapshot.Nodes, node)
 	}
 	snapshot = layout.SealSnapshot(snapshot)
-	demands := footprintDemands(stackkitrelease.UseCaseCatalog{}, footprints)
+	demands := footprintDemands(catalog, footprints)
 	problem := layout.SealProblem(layout.Problem{SnapshotDigest: snapshot.Digest, Demands: demands, PolicyProfile: layout.DefaultPolicyProfile})
 	result, err := layout.BestFit{}.Plan(context.Background(), snapshot, problem)
 	if err != nil || result.Outcome != layout.OutcomeFeasible || len(result.Options) == 0 {

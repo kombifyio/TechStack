@@ -9,7 +9,7 @@
   is shown to be confirmed again.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { EasyWizard } from "#lib/components/wizard/index.js";
@@ -40,11 +40,13 @@
 
   interface Props {
     stackId: string;
+    /** Use cases to start with, from a deep link; canonical ids only. */
+    initialGoals?: string[];
     /** Remove page-owned chrome and spacing when mounted by a host. */
     embedded?: boolean;
   }
 
-  let { stackId, embedded = false }: Props = $props();
+  let { stackId, embedded = false, initialGoals = [] }: Props = $props();
 
   interface Notice {
     tone: "warning" | "error" | "info";
@@ -53,7 +55,10 @@
     details?: string;
   }
 
-  let config = $state<StackConfig>(createExpansionConfig());
+  // The deep link seeds the first selection only; later edits are the owner's.
+  let config = $state<StackConfig>(
+    createExpansionConfig(untrack(() => initialGoals)),
+  );
   let homelabName = $state("");
   let loading = $state(true);
   let loadError = $state<string | null>(null);

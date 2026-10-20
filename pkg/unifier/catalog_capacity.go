@@ -204,7 +204,7 @@ func catalogCapacityReasons(request core.WizardRecommendationRequest, inventory 
 			reasons = append(reasons, core.WizardRecommendationReason{Code: "module_capacity_unverified", Message: footprint.Module + ": missing capacity evidence for " + strings.Join(missing, ", "), Source: source})
 		}
 	}
-	if !reserveFootprints(footprints, workers, map[string]stackkitrelease.UseCaseResources{}) {
+	if !reserveFootprints(catalog, footprints, workers, map[string]stackkitrelease.UseCaseResources{}) {
 		reasons = append(reasons, core.WizardRecommendationReason{Code: "selection_capacity_shortfall", Message: "Selected released module reservations do not fit the unallocated worker capacity", Source: source})
 	}
 	return reasons, unknown
