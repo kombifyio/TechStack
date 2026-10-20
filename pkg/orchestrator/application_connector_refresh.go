@@ -16,9 +16,6 @@ func (o *Orchestrator) RefreshApplicationConnector(ctx context.Context, tenantID
 	if o == nil || o.jobStore == nil {
 		return "", ErrStackKitLifecycleUnavailable
 	}
-	if _, err := jobs.ApplicationConnectorRelease(); err != nil {
-		return "", err
-	}
 	services, ok := o.cfg.StackStore.(interface {
 		controlplane.ServiceRuntimeStore
 		controlplane.ServiceEventReader
@@ -56,16 +53,23 @@ func (o *Orchestrator) RefreshApplicationConnector(ctx context.Context, tenantID
 	if competing != "" {
 		return "", fmt.Errorf("%w: service operation remains fenced", controlplane.ErrConflict)
 	}
+	// Admitting the release digests the StackKits bundle; do it only for a
+	// refresh that is actually enqueued.
+	if _, err = jobs.ApplicationConnectorRelease(); err != nil {
+		return "", err
+	}
 	return o.EnqueueStackKitLifecycle(ctx, req)
 }
 
 // ReconcileApplicationConnectors runs after the existing authenticated canonical
-// inventory commit. It introduces no scheduler and cannot reissue setup.
+// inventory commit. It introduces no scheduler and cannot reissue setup. It
+// runs on every Guard inventory, so it reads the cached release admission:
+// resolving the release afresh costs seconds of CPU per call.
 func (o *Orchestrator) ReconcileApplicationConnectors(ctx context.Context, tenantID, ownerID, stackID, serverID string) {
 	if o == nil {
 		return
 	}
-	if _, err := jobs.ApplicationConnectorRelease(); err != nil {
+	if err := jobs.CachedApplicationConnectorAvailable(); err != nil {
 		return
 	}
 	services, ok := o.cfg.StackStore.(controlplane.ServiceRuntimeStore)
