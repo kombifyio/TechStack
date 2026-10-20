@@ -429,6 +429,18 @@ func localExecutionBindingForNode(stackKit, nodeRef string) (localExecutionBindi
 	)
 }
 
+// StackKitNodeRefForAgent resolves the node of a kit that the agent known by
+// hostname owns, by the rule dispatch uses (localExecutionBindingForNode): a
+// one-node kit has one node whatever its host is called, a multi-node kit
+// needs the host name to spell the node. A node it cannot resolve is refused.
+func StackKitNodeRefForAgent(stackKit, hostname string) (string, error) {
+	binding, err := localExecutionBindingForNode(stackKit, hostname)
+	if err != nil {
+		return "", err
+	}
+	return binding.NodeRef, nil
+}
+
 // RequireStackKitNode reports whether nodeRef is a node the kit can dispatch
 // to. It is the admission form of localExecutionBindingForNode.
 func RequireStackKitNode(stackKit, nodeRef string) error {

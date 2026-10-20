@@ -1848,12 +1848,16 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 			if o.cfg.StackKitCommander == nil {
 				return "", fmt.Errorf("snapshot port claims before local destroy: typed StackKits dispatcher is not configured")
 			}
-			bindings, bindingErr := o.localStackKitTeardownNodeBindings(ctx, stack)
+			applied, appliedErr := o.teardownRuntimeSummary(ctx, stack)
+			if appliedErr != nil {
+				return "", fmt.Errorf("read applied workloads before local destroy: %w", appliedErr)
+			}
+			bindings, bindingErr := o.localStackKitTeardownNodeBindings(ctx, stack, stringFromAny(applied[runtimeFieldStackKitRef]))
 			if bindingErr != nil {
 				return "", fmt.Errorf("bind local StackKits teardown nodes: %w", bindingErr)
 			}
 			authority, authorityErr := jobs.BuildLocalStackKitTeardownAuthority(
-				stack.id, stack.stackKitInstanceID, stack.tenantID, stack.ownerID, stack.runtimeSummary, snapshot, bindings,
+				stack.id, stack.stackKitInstanceID, stack.tenantID, stack.ownerID, applied, snapshot, bindings,
 			)
 			if authorityErr != nil {
 				return "", fmt.Errorf("bind local StackKits teardown authority: %w", authorityErr)
