@@ -52,7 +52,8 @@ func isSealedImport(operation agentpb.StackKitOperation) bool {
 // validateBackupTargetDeliveryFields keeps the delivery inputs on exactly the
 // operations that consume them.
 func validateBackupTargetDeliveryFields(command *agentpb.StackKitCommand) error {
-	walletImport := command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT
+	walletImport := command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT ||
+		command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY
 	if !isSealedImport(command.Operation) && !walletImport && len(command.SealedDelivery) != 0 {
 		return fmt.Errorf("StackKit sealed_delivery is only valid for a sealed backup target or Wallet item import")
 	}

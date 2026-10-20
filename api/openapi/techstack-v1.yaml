@@ -817,6 +817,13 @@ paths:
         provider's API key) to the node, which must be listed as a host target
         of that item, the node binds it to ai_provider_base_url, and a drift
         reconcile applies the setting. ai_provider_disable removes it.
+        ssh_trust_recipient and ssh_trust_apply let the server trust the
+        owner's kombify Wallet SSH CA: ssh_trust_recipient has the node answer
+        the owner's recipient_challenge with its owner-signed recipient
+        statement and returns it with the host target the owner lists on the
+        CA item; the owner then asks the Wallet for the ssh-ca-trust delivery
+        and ssh_trust_apply hands its sealed_delivery to the node, which
+        installs TrustedUserCAKeys and the principals of each local user.
         Restore activation requires exactly one Idempotency-Key header, while
         other operations have no replay guarantee. Acceptance is not execution
         success; read the returned job and its scoped result to observe effects.
@@ -10681,7 +10688,7 @@ components:
         agent_id: { type: string, minLength: 1 }
         operation:
           type: string
-          enum: [plan, apply, verify, upgrade, drift_detect, drift_reconcile, advanced_change_set, rollback, restore_drill, backup_run, backup_configure, backup_status, backup_restore, backup_restore_activate, backup_restore_recover, ai_provider]
+          enum: [plan, apply, verify, upgrade, drift_detect, drift_reconcile, advanced_change_set, rollback, restore_drill, backup_run, backup_configure, backup_status, backup_restore, backup_restore_activate, backup_restore_recover, ai_provider, ssh_trust_recipient, ssh_trust_apply]
         owner_approved: { type: boolean }
         target_release: { type: string }
         dry_run:
@@ -10717,6 +10724,14 @@ components:
         ai_provider_disable:
           type: boolean
           description: Remove the external provider instead of setting it.
+        recipient_challenge:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{16,128}$'
+          description: The owner's fresh challenge the node's recipient statement answers; ssh_trust_recipient only.
+        sealed_delivery:
+          type: string
+          maxLength: 65536
+          description: The kombify Wallet's sealed ssh-ca-trust, ssh-ca-revoke or ssh-host-certificate envelope (JSON text, public material only); ssh_trust_apply only.
 
     StackKitLifecycleAccepted:
       type: object

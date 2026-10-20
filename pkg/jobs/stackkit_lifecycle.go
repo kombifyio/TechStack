@@ -193,7 +193,7 @@ func managedStackKitOperationTimeout(operation string) time.Duration {
 	case StackKitLifecycleInit, StackKitLifecycleAdvancedTrustImport, StackKitLifecycleAddressBind,
 		StackKitLifecycleGenerate, StackKitLifecyclePlan,
 		StackKitLifecycleFederationHandoff, StackKitLifecycleBackupTargetRecipient, StackKitLifecycleBackupTargetImport,
-		stackKitStepHostDeliveryRecipient, stackKitStepWalletItemImport, stackKitStepAIProviderSetup:
+		stackKitStepHostDeliveryRecipient, stackKitStepWalletItemImport, stackKitStepAIProviderSetup, stackKitStepHostSSHApply:
 		// Pre-apply commands share one cap instead of per-command caps: those
 		// made a healthy first-run init fail while it populated its release
 		// cache. Each is bounded by what is left of the shared pre-apply
@@ -650,8 +650,10 @@ func validateStackKitLifecycleOperation(req *StackKitLifecycleRequest) error {
 		}
 	case StackKitLifecycleAIProvider, stackKitStepAIProviderSetup:
 		return validateAIProviderRequest(req)
+	case StackKitLifecycleSSHTrustRecipient, StackKitLifecycleSSHTrustApply:
+		return validateSSHTrustRequest(req)
 	case StackKitLifecycleBackupTargetRecipient, StackKitLifecycleBackupTargetImport, StackKitLifecycleBackupTargetRebind,
-		stackKitStepHostDeliveryRecipient, stackKitStepWalletItemImport:
+		stackKitStepHostDeliveryRecipient, stackKitStepWalletItemImport, stackKitStepHostSSHApply:
 		if !req.OwnerApproved {
 			return fmt.Errorf("%s requires explicit Owner approval", req.Operation)
 		}
@@ -751,7 +753,18 @@ func StackKitLifecyclePayload(req StackKitLifecycleRequest) map[string]interface
 		"wallet_item_rotate":             req.WalletItemRotate,
 		"ai_provider_disable":            req.AIProviderDisable,
 		"origin_hosts":                   append([]string(nil), req.OriginHosts...),
+		// Only the SSH CA trust operations take these from a caller; the
+		// SSH delivery carries public material only (stackkit_ssh_trust.go).
+		"recipient_challenge": sshTrustPayload(req, req.RecipientChallenge),
+		"sealed_delivery":     sshTrustPayload(req, string(req.SealedDelivery)),
 	}
+}
+
+func sshTrustPayload(req StackKitLifecycleRequest, value string) string {
+	if !IsSSHTrustOperation(req.Operation) {
+		return ""
+	}
+	return value
 }
 
 // StackKitServiceActionJobID derives a tenant/owner-scoped durable identity
@@ -927,6 +940,9 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 		}
 		if req.Operation == StackKitLifecycleAIProvider {
 			return runAIProviderJob(ctx, cfg, job, q, req, *release)
+		}
+		if IsSSHTrustOperation(req.Operation) {
+			return runSSHTrustJob(ctx, cfg, job, q, req, *release)
 		}
 		if req.Operation == StackKitLifecycleAdvancedTrustImport {
 			if cfg.AdvancedIssuer == nil {
@@ -1299,6 +1315,8 @@ func stackKitLifecycleRequestFromJob(job *Job) (StackKitLifecycleRequest, error)
 		WalletItemRotate:            boolFromInterface(job.Payload["wallet_item_rotate"]),
 		AIProviderDisable:           boolFromInterface(job.Payload["ai_provider_disable"]),
 		OriginHosts:                 stringListFromInterface(job.Payload["origin_hosts"]),
+		RecipientChallenge:          stringFromInterface(job.Payload["recipient_challenge"]),
+		SealedDelivery:              []byte(stringFromInterface(job.Payload["sealed_delivery"])),
 		StackKit: firstNonEmpty(
 			stringFromInterface(job.Payload["stackkit"]),
 			stringFromInterface(job.Payload["stackkit_catalog_ref"]),
@@ -1391,7 +1409,7 @@ func stackKitLifecycleCommand(commandID string, req StackKitLifecycleRequest, re
 		case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT:
 			command.RecipientChallenge = req.RecipientChallenge
 			command.DeliveryAuthorityKey, command.DeliveryAuthorityKeyId = req.DeliveryAuthorityKey, req.DeliveryAuthorityKeyID
-		case agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT:
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT, agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
 			command.SealedDelivery = append([]byte(nil), req.SealedDelivery...)
 			command.DeliveryTenantRef = req.DeliveryTenantRef
 		case agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
@@ -1549,6 +1567,8 @@ func stackKitLifecycleAgentOperation(operation string) (agentpb.StackKitOperatio
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT, nil
 	case stackKitStepAIProviderSetup:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP, nil
+	case stackKitStepHostSSHApply:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY, nil
 	case stackKitStepRelocatePlan:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_PLAN, nil
 	case stackKitStepRelocateCheck:

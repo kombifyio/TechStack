@@ -2784,6 +2784,9 @@ test.describe.serial("Runtime E2E scenarios", () => {
   test("layout-two-node recommends a verified distribution across two owner servers and accepts it", async ({
     page,
   }) => {
+    // Two sequential provisions and enrollments plus the settle wait exceed
+    // the 15-minute default; the window lane's cleanup step covers a timeout.
+    test.setTimeout(60 * 60_000);
     const client = digitalOceanClientFromEnv();
     const auth = await authenticateRuntimeUser(
       "oneliner",

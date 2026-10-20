@@ -34,7 +34,8 @@ func IsWalletItemDeliveryOperation(operation agentpb.StackKitOperation) bool {
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
 		return true
 	default:
 		return false
@@ -108,10 +109,11 @@ func validateWalletItemDeliveryCommand(command *agentpb.StackKitCommand) error {
 				return fmt.Errorf("StackKit delivery authority must be an Ed25519 public key and a bare key id")
 			}
 		}
-	case agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT:
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
 		tenant := command.DeliveryTenantRef
 		if len(command.SealedDelivery) == 0 || len(command.SealedDelivery) > MaxSealedDeliveryBytes || tenant == "" || tenant != strings.TrimSpace(tenant) || len(tenant) > MaxDeliveryTenantRefBytes {
-			return fmt.Errorf("StackKit Wallet item import requires one sealed delivery within %d bytes and its tenant", MaxSealedDeliveryBytes)
+			return fmt.Errorf("%s requires one sealed delivery within %d bytes and its tenant", walletItemDeliveryCommandName(command.Operation), MaxSealedDeliveryBytes)
 		}
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
 		if command.AiProviderDisable {
@@ -146,6 +148,8 @@ func WalletItemDeliveryArgs(command *agentpb.StackKitCommand) ([]string, error) 
 		return append(args, "--owner-approve"), nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT:
 		return []string{"wallet-item", "import", "--tenant-ref", command.DeliveryTenantRef, "--owner-approve"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
+		return []string{"host", "ssh", "apply", "--tenant-ref", command.DeliveryTenantRef, "--owner-approve"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
 		if command.AiProviderDisable {
 			return []string{"setup", "ai-provider", "--disable", "--json"}, nil
@@ -164,6 +168,8 @@ func walletItemDeliveryCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit wallet-item import"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
 		return "stackkit setup ai-provider"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
+		return "stackkit host ssh apply"
 	default:
 		return ""
 	}
@@ -288,6 +294,48 @@ func validateWalletItemDeliveryResult(command *agentpb.StackKitCommand, result *
 		_, err = ParseWalletItemImportEvidence(command, result)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
 		_, err = ParseAIProviderEvidence(command, result)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
+		_, err = ParseSSHApplyEvidence(command, result)
 	}
 	return err
+}
+
+// SSHApplyEvidence is the secret-free outcome of `stackkit host ssh apply`:
+// the SSH delivery the node applied and the state its sshd is now in.
+type SSHApplyEvidence struct {
+	Operation      string   `json:"operation"`
+	State          string   `json:"state"`
+	TrustedCAKeys  int      `json:"trusted_ca_keys"`
+	Users          []string `json:"users,omitempty"`
+	CleanupPending []string `json:"cleanup_pending,omitempty"`
+}
+
+var sshApplyStates = map[string]map[string]bool{
+	"ssh-ca-trust":         {"trusted": true, "revoked": true},
+	"ssh-ca-revoke":        {"revoked": true},
+	"ssh-host-certificate": {"installed": true},
+}
+
+// ParseSSHApplyEvidence admits a successful SSH delivery: a known operation in
+// a state that operation can reach, and a CA trust that names its users.
+func ParseSSHApplyEvidence(command *agentpb.StackKitCommand, result *agentpb.StackKitResult) (SSHApplyEvidence, error) {
+	data, err := decodeWalletItemEnvelope(command, result, agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY)
+	if err != nil {
+		return SSHApplyEvidence{}, err
+	}
+	var outcome struct {
+		Operation      string   `json:"operation"`
+		State          string   `json:"state"`
+		TrustedCAKeys  int      `json:"trustedCaKeys"`
+		Users          []string `json:"users"`
+		CleanupPending []string `json:"cleanupPending"`
+	}
+	if json.Unmarshal(data, &outcome) != nil || !sshApplyStates[outcome.Operation][outcome.State] || outcome.TrustedCAKeys < 0 ||
+		(outcome.State == "trusted" && (outcome.TrustedCAKeys == 0 || len(outcome.Users) == 0)) {
+		return SSHApplyEvidence{}, fmt.Errorf("StackKit host ssh apply evidence is invalid")
+	}
+	return SSHApplyEvidence{
+		Operation: outcome.Operation, State: outcome.State, TrustedCAKeys: outcome.TrustedCAKeys,
+		Users: outcome.Users, CleanupPending: outcome.CleanupPending,
+	}, nil
 }
