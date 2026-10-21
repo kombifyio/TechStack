@@ -1537,6 +1537,10 @@ export const screenMessages = {
     "ui.settings.deleteThisDeployment": "Delete this homelab",
     "ui.settings.deleting": "Deleting...",
     "ui.settings.deletionFailed": "Deletion failed",
+    "ui.settings.removeWithoutServer": "The server is gone, remove it",
+    "ui.settings.serverGoneBody":
+      "{servers} has not reported for several minutes. If you deleted it, confirm below: Techstack ends its access and removes the stack without it.",
+    "ui.settings.serverGoneTitle": "Its server does not answer",
     "ui.settings.failedToLoadDeployments": "Failed to load homelabs",
     "ui.settings.failedToLoadHomelabIdentity":
       "Failed to load Homelab identity",
@@ -4311,6 +4315,10 @@ export const screenMessages = {
     "ui.settings.deleteThisDeployment": "Dieses Homelab löschen",
     "ui.settings.deleting": "Wird gelöscht...",
     "ui.settings.deletionFailed": "Löschen fehlgeschlagen",
+    "ui.settings.removeWithoutServer": "Der Server ist weg, entfernen",
+    "ui.settings.serverGoneBody":
+      "{servers} hat sich seit mehreren Minuten nicht gemeldet. Wenn du ihn gelöscht hast, bestätige unten: Techstack beendet seinen Zugriff und entfernt den Stack ohne ihn.",
+    "ui.settings.serverGoneTitle": "Sein Server antwortet nicht",
     "ui.settings.failedToLoadDeployments":
       "Homelabs konnten nicht geladen werden",
     "ui.settings.failedToLoadHomelabIdentity":

@@ -1274,6 +1274,37 @@ paths:
         annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: true, openWorldHint: true }
       tags: [Stacks]
       summary: Decommission one StackKit deployment and its infrastructure
+      description: >-
+        Removes the stack through its nodes: StackKits removes every applied workload on the
+        server that runs it, then the control plane releases the stack. When a server holding
+        the stack was deleted, the node cannot answer; the request is then refused with
+        `server_absence_confirmation_required` and the offline servers, and is sent again with
+        `offline_removal.confirm_server_ids` naming exactly those servers. The control plane
+        accepts that confirmation only for a server it can prove offline (no heartbeat for
+        longer than the stale window), without a lease and not operated by kombify or a
+        provider: leased and provider-operated servers are proven absent by their provider.
+        A confirmed server is never dispatched to; its agent credential is revoked and the
+        server is retired. A server that reported recently is removed through its node.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                offline_removal:
+                  type: object
+                  additionalProperties: false
+                  required: [confirm_server_ids]
+                  properties:
+                    confirm_server_ids:
+                      type: array
+                      minItems: 1
+                      maxItems: 64
+                      uniqueItems: true
+                      items: { type: string, minLength: 1, maxLength: 128 }
+                      description: Every offline server of the stack, by id.
       parameters:
         - $ref: "#/components/parameters/stackId"
       responses:
@@ -1283,12 +1314,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AsyncJobResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            A server of the stack is offline and needs the owner's confirmation
+            (`server_absence_confirmation_required`, with `servers`), a confirmed server is
+            online, leased or provider-operated, or an offline server was left out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   # ============================================================
   # STACKS - SPECS

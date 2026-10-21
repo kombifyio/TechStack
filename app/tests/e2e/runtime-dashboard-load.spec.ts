@@ -31,10 +31,14 @@ const ROLE = (["remote", "oneliner"] as RuntimeAuthRole[]).find(
   (role) => SELECTED_ROLES.length === 0 || SELECTED_ROLES.includes(role),
 );
 // The dashboard polls every ~15 s; three rounds overlap reads still running.
+// The signed-in page stays on /dashboard meanwhile and polls as well.
 const ROUNDS = 3;
 const ROUND_INTERVAL_MS = 15_000;
-// The server waits at most 8 s for a running identity snapshot.
+// The server waits at most 4 s for a running identity snapshot.
 const IDENTITY_ANSWER_BUDGET_MS = 12_000;
+// The dashboard's own client abandons a read after 10 s (2026-10-21: most
+// operations reads on stable were abandoned and polled again).
+const OPERATIONS_ANSWER_BUDGET_MS = 10_000;
 // A snapshot keeps working detached for up to 45 s after the read that
 // started it, and it starts before that read answers, so readiness is watched
 // for that long after the last identity answer.
@@ -70,13 +74,9 @@ test("the dashboard's per-stack polling keeps the product ready", async ({
     }
   })();
 
-  const identityReads: Promise<{
-    status: number;
-    ms: number;
-    endedAt: number;
-    owner: string;
-  }>[] = [];
-  const operationReads: Promise<unknown>[] = [];
+  type TimedRead = Awaited<ReturnType<typeof timedRead>>;
+  const identityReads: Promise<TimedRead>[] = [];
+  const operationReads: Promise<TimedRead>[] = [];
   for (let round = 0; round < ROUNDS; round += 1) {
     for (const id of stackIDs) {
       identityReads.push(
@@ -91,7 +91,7 @@ test("the dashboard's per-stack polling keeps the product ready", async ({
     }
   }
   const identities = await Promise.all(identityReads);
-  await Promise.allSettled(operationReads);
+  const operations = await Promise.all(operationReads);
   const lastAnswerAt = Math.max(...identities.map((read) => read.endedAt));
   const settleMs = lastAnswerAt + SNAPSHOT_BUDGET_MS - Date.now();
   if (settleMs > 0) {
@@ -107,7 +107,11 @@ test("the dashboard's per-stack polling keeps the product ready", async ({
       .map((read) => read.ms)
       .join(",")} identity_owner=${JSON.stringify(
       countBy(identities.map((read) => read.owner)),
-    )} readiness=${readiness
+    )} operations_ms=${operations
+      .map(
+        (read) => `${read.ms}${read.status === 200 ? "" : `/${read.status}`}`,
+      )
+      .join(",")} readiness=${readiness
       .map((sample) => sample.status)
       .join(",")} pool=${JSON.stringify(pool)}`,
   );
@@ -123,6 +127,11 @@ test("the dashboard's per-stack polling keeps the product ready", async ({
   for (const read of identities) {
     expect(read.status).toBe(200);
     expect(read.ms).toBeLessThan(IDENTITY_ANSWER_BUDGET_MS);
+  }
+  // Every operations read answered before the dashboard would abandon it.
+  for (const read of operations) {
+    expect(read.status).toBe(200);
+    expect(read.ms).toBeLessThan(OPERATIONS_ANSWER_BUDGET_MS);
   }
   expect(pool).not.toBeNull();
 });

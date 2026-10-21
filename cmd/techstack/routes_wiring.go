@@ -571,6 +571,9 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 	if nextSecret != "" && nextKeyID != keyID {
 		maintenanceKeys[nextKeyID] = nextSecret
 	}
+	// A server retired because the owner confirmed it gone loses its agent connection
+	// the way a detached one does.
+	deps.orch.ConfigureOfflineServerDisconnect(deps.grpc.server.RemoveAgent)
 	maintenanceRoutes := routes.RegisterServerRuntimeRoutes(router, routes.ServerRuntimeRouteConfig{
 		Store: serverRuntimeStore, PortInventory: deps.portInventory, Detacher: serverRuntimeStore,
 		Policy: inventoryPolicy, AgentDisconnect: deps.grpc.server.RemoveAgent,

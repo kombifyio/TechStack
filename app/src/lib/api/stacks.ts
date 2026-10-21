@@ -1291,16 +1291,59 @@ export async function repairStackComponent(
   );
 }
 
+export interface DestroyStackOptions {
+  /** Every offline server of the stack, by id, after the API asked for it. */
+  confirmServerIds?: string[];
+}
+
 // destroyStack tears down the stack's runtime resources and removes the entry
 // from the dashboard. The backend rejects it for the protected demo anchor.
+// When a server of the stack was deleted, the first request is refused with
+// `server_absence_confirmation_required` (see offlineServersFromDestroyError);
+// the owner's confirmation of those servers goes in `confirmServerIds`.
 export async function destroyStack(
   stackId: string,
+  options?: DestroyStackOptions,
 ): Promise<StackJobAcceptedResponse> {
   const encoded = encodeURIComponent(stackId);
+  const confirm = options?.confirmServerIds ?? [];
   return apiRequest<StackJobAcceptedResponse>(
     "POST",
     `/api/v1/stacks/${encoded}/destroy`,
+    confirm.length > 0
+      ? JSON.stringify({ offline_removal: { confirm_server_ids: confirm } })
+      : undefined,
   );
+}
+
+export interface OfflineStackServer {
+  id: string;
+  name: string;
+}
+
+// offlineServersFromDestroyError returns the servers a refused destroy asks the
+// owner to confirm as gone (the first request names them, and a confirmation
+// that left one out names it again); empty for any other error.
+export function offlineServersFromDestroyError(
+  details: unknown,
+): OfflineStackServer[] {
+  if (typeof details !== "object" || details === null) return [];
+  const { reason_code: reason, servers } = details as {
+    reason_code?: unknown;
+    servers?: unknown;
+  };
+  if (
+    reason !== "server_absence_confirmation_required" &&
+    reason !== "offline_removal_unconfirmed_server"
+  )
+    return [];
+  if (!Array.isArray(servers)) return [];
+  return servers.flatMap((server): OfflineStackServer[] => {
+    if (typeof server !== "object" || server === null) return [];
+    const { id, name } = server as { id?: unknown; name?: unknown };
+    if (typeof id !== "string" || id === "") return [];
+    return [{ id, name: typeof name === "string" && name !== "" ? name : id }];
+  });
 }
 
 export async function getStackOperations(

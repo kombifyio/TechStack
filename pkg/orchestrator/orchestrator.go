@@ -106,6 +106,8 @@ type Orchestrator struct {
 	leaseLister              ManagedRuntimeLeaseLister
 	routingStore             stackrouting.Store
 	stackKitCommander        jobs.StackKitCommandSender
+	offlineServers           OfflineServerAuthority
+	offlineDisconnect        func(agentID string) error
 	applicationAuthorize     func(context.Context, string, string, string) error
 	connectorReadAuthorize   func(context.Context, string, string, string) error
 	managedStackKitInventory jobs.ManagedStackKitInventoryBuilder
@@ -198,6 +200,10 @@ type Config struct {
 	FederationFabric        jobs.FederationFabric
 	ManagedRestoreAdmission jobs.BackupAdmission
 	PortInventory           portinventory.LifecycleAuthority
+	// OfflineServers reads the canonical server projection and ends the custody of a
+	// server the owner confirmed gone when a destroy removes its stack. Nil keeps
+	// the destroy of every stack on the node-side removal.
+	OfflineServers OfflineServerAuthority
 	// RemoteEnrollment drives the durable connect-remote enrollment job. It is
 	// late-bound by ConfigureRemoteEnrollment once route custody is wired.
 	RemoteEnrollment jobs.RemoteEnrollmentExecutor
@@ -236,6 +242,7 @@ type ProvisionStackOptions struct {
 	RequiredServerID         string
 	RoutingRevision          int64
 	RoutingIdempotencyKey    string
+	OfflineRemoval           *OfflineRemovalRequest
 	enrollmentResumeJobID    string
 	enrollmentResumeAt       string
 	enrollmentResumeKind     string
@@ -326,6 +333,7 @@ func New(cfg *Config, log *logger.Logger) *Orchestrator {
 		leaseLister:              cfg.LeaseLister,
 		routingStore:             cfg.RoutingStore,
 		stackKitCommander:        cfg.StackKitCommander,
+		offlineServers:           cfg.OfflineServers,
 		managedStackKitInventory: cfg.ManagedStackKitInventory,
 		now:                      cfg.Now,
 		ctx:                      ctx,
@@ -368,6 +376,7 @@ func (o *Orchestrator) provisionConfig(actions jobs.RuntimeActions) *jobs.Provis
 		BackupDecommissioner:         o.cfg.BackupDecommissioner,
 		OriginCertificates:           o.cfg.OriginCertificates,
 		NoWorkspaceDestroyReconciler: o.reconcileNoWorkspaceDestroy,
+		OfflineServerRetirer:         o.retireOfflineServer,
 		RemoteEnrollment:             o.cfg.RemoteEnrollment,
 	}
 }
@@ -1852,6 +1861,12 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 		return "", fmt.Errorf("classify managed runtime before destroy: %w", err)
 	}
 
+	// A refusal about the stack's servers is answered before anything is cancelled:
+	// refusing is the normal first step of an offline removal and changes nothing.
+	if err := o.precheckOfflineRemoval(ctx, stack, managedRuntimeDecommissionRequired, opts.OfflineRemoval); err != nil {
+		return "", err
+	}
+
 	destroyResult := map[string]any{}
 	if managedRuntimeDecommissionRequired {
 		destroyResult[managedDecommissionRecoveryMarkerKey] = managedProviderDecommissionRecoveryMarker(stack.tenantID, stack.id)
@@ -1884,24 +1899,37 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 		}
 		destroyResult[jobs.PortTeardownSnapshotResultField] = snapshot
 		if !managedRuntimeDecommissionRequired && len(snapshot.Generations) > 0 {
-			if o.cfg.StackKitCommander == nil {
-				return "", fmt.Errorf("snapshot port claims before local destroy: typed StackKits dispatcher is not configured")
+			// A server whose Guard is silent for good is proven gone by the owner's
+			// confirmation, never by a dispatch that cannot arrive: its node-side
+			// removal is replaced by evidence, while every reachable server keeps
+			// the typed removal on its node.
+			offline, offlineErr := o.offlineRemovalEvidence(ctx, stack, snapshot, opts.OfflineRemoval)
+			if offlineErr != nil {
+				return "", offlineErr
 			}
-			applied, appliedErr := o.teardownRuntimeSummary(ctx, stack)
-			if appliedErr != nil {
-				return "", fmt.Errorf("read applied workloads before local destroy: %w", appliedErr)
+			if offline != nil {
+				destroyResult[jobs.OfflineRemovalEvidenceResultField] = *offline
 			}
-			bindings, bindingErr := o.localStackKitTeardownNodeBindings(ctx, stack, stringFromAny(applied[runtimeFieldStackKitRef]))
-			if bindingErr != nil {
-				return "", fmt.Errorf("bind local StackKits teardown nodes: %w", bindingErr)
+			if offline == nil || !offline.CoversEveryGeneration(snapshot) {
+				if o.cfg.StackKitCommander == nil {
+					return "", fmt.Errorf("snapshot port claims before local destroy: typed StackKits dispatcher is not configured")
+				}
+				applied, appliedErr := o.teardownRuntimeSummary(ctx, stack)
+				if appliedErr != nil {
+					return "", fmt.Errorf("read applied workloads before local destroy: %w", appliedErr)
+				}
+				bindings, bindingErr := o.localStackKitTeardownNodeBindings(ctx, stack, stringFromAny(applied[runtimeFieldStackKitRef]))
+				if bindingErr != nil {
+					return "", fmt.Errorf("bind local StackKits teardown nodes: %w", bindingErr)
+				}
+				authority, authorityErr := jobs.BuildLocalStackKitTeardownAuthority(
+					stack.id, stack.stackKitInstanceID, stack.tenantID, stack.ownerID, applied, snapshot, bindings,
+				)
+				if authorityErr != nil {
+					return "", fmt.Errorf("bind local StackKits teardown authority: %w", authorityErr)
+				}
+				destroyResult[jobs.LocalStackKitTeardownAuthorityResultField] = authority
 			}
-			authority, authorityErr := jobs.BuildLocalStackKitTeardownAuthority(
-				stack.id, stack.stackKitInstanceID, stack.tenantID, stack.ownerID, applied, snapshot, bindings,
-			)
-			if authorityErr != nil {
-				return "", fmt.Errorf("bind local StackKits teardown authority: %w", authorityErr)
-			}
-			destroyResult[jobs.LocalStackKitTeardownAuthorityResultField] = authority
 		}
 	}
 	jobID, err := o.createJobRecordForStack(ctx, stack, "destroy", "Queued for destruction")

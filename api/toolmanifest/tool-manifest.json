@@ -930,7 +930,7 @@
     {
       "name": "destroy_stack",
       "title": "Decommission one StackKit deployment and its infrastructure",
-      "description": "Decommission one StackKit deployment and its infrastructure",
+      "description": "Removes the stack through its nodes: StackKits removes every applied workload on the server that runs it, then the control plane releases the stack. When a server holding the stack was deleted, the node cannot answer; the request is then refused with `server_absence_confirmation_required` and the offline servers, and is sent again with `offline_removal.confirm_server_ids` naming exactly those servers. The control plane accepts that confirmation only for a server it can prove offline (no heartbeat for longer than the stale window), without a lease and not operated by kombify or a provider: leased and provider-operated servers are proven absent by their provider. A confirmed server is never dispatched to; its agent credential is revoked and the server is retired. A server that reported recently is removed through its node.",
       "requiredCapability": "techstack.inventory.operate",
       "operationId": "destroyStack",
       "http": {
@@ -940,6 +940,27 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "offline_removal": {
+            "additionalProperties": false,
+            "properties": {
+              "confirm_server_ids": {
+                "description": "Every offline server of the stack, by id.",
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "confirm_server_ids"
+            ],
+            "type": "object"
+          },
           "stack_id": {
             "description": "Stack ID",
             "type": "string"

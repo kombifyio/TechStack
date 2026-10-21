@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/readcoalesce"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -27,6 +28,26 @@ import (
 	"github.com/kombifyio/techstack/pkg/vmleases"
 	"github.com/prometheus/prometheus/promql"
 )
+
+// The dashboard polls GET /api/v1/stacks/{id}/operations for every stack every
+// 5 s while a rollout runs and every 15 s otherwise. One read is a dozen tenant
+// transactions plus metric queries. On 2026-10-21 one dashboard sent 280 of
+// them in 3.5 minutes to the one-CPU stable instance; reads past the browser's
+// 10 s timeout were abandoned and polled again, the CPU sat at 100 % and Guard
+// heartbeats and command polls waited for the pool. Each stack's operations
+// are now computed once at a time, shared by every waiting read and kept
+// briefly, and only a few computations run at once.
+const (
+	// operationsReadFreshFor covers the dashboard's fastest poll, so an
+	// abandoned read still answers the next one.
+	operationsReadFreshFor = 5 * time.Second
+	// operationsReadBudget bounds one computation, including its slot wait.
+	operationsReadBudget = 30 * time.Second
+	// operationsComputeSlots leaves the CPU and the pool to Guard traffic.
+	operationsComputeSlots = 6
+)
+
+var errOperationsInventoryUnavailable = errors.New("managed runtime inventory unavailable")
 
 type StackOperationsRouteStores struct {
 	Stacks   controlplane.StackStore
@@ -56,6 +77,10 @@ func RegisterStackOperationsRoutesWithStores(r *httpx.Router, backend monitoring
 		alerts:               alerts,
 		ingestHealth:         ingestHealth,
 		managedRuntimeLeases: leaseLister,
+		operationsReads: readcoalesce.New[stackOperationsPayload](readcoalesce.Options{
+			FreshFor: operationsReadFreshFor, Budget: operationsReadBudget,
+			Slots: make(chan struct{}, operationsComputeSlots),
+		}),
 	}
 	r.GET("/api/v1/stacks/{id}/operations", h.operations)
 	r.GET("/api/v1/stacks/{id}/servers/{serverId}", h.serverDetails)
@@ -76,6 +101,8 @@ type stackOperationsRouteHandlers struct {
 	alerts               *monitoring.AlertEngine
 	ingestHealth         monitoring.IngestHealthProvider
 	managedRuntimeLeases managedRuntimeLeaseLister
+	// operationsReads coalesces the dashboard's per-stack operations reads.
+	operationsReads *readcoalesce.Group[stackOperationsPayload]
 }
 
 type stackOperationsPayload struct {
@@ -327,11 +354,31 @@ func (h stackOperationsRouteHandlers) operationsFromStore(e *httpx.Event) error 
 	if err != nil {
 		return err
 	}
+	// Ownership is checked per request above; the computation is shared only
+	// with reads of the same tenant, owner and stack.
+	key := tenantID + "\x00" + ownerID + "\x00" + stack.ID
+	payload, err := h.operationsReads.Do(e.Request.Context(), key, func(ctx context.Context) (stackOperationsPayload, error) {
+		return h.stackOperationsFromStore(ctx, stack, ownerID, tenantID)
+	})
+	switch {
+	case errors.Is(err, errOperationsInventoryUnavailable):
+		return managedRuntimeInventoryUnavailable(e)
+	case err != nil:
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack operations are busy", map[string]any{
+				"reason_code": "stack_operations_busy",
+				"retryable":   true,
+			})
+	}
+	return httpx.Success(e, http.StatusOK, payload)
+}
 
-	ctx := e.Request.Context()
+// stackOperationsFromStore computes one stack's operations payload. Its
+// result is shared between readers and must not be changed after it returns.
+func (h stackOperationsRouteHandlers) stackOperationsFromStore(ctx context.Context, stack *controlplane.Stack, ownerID, tenantID string) (stackOperationsPayload, error) {
 	inventory, err := h.operationServerInventoryFromStore(ctx, ownerID, tenantID, stack.ID)
 	if err != nil {
-		return managedRuntimeInventoryUnavailable(e)
+		return stackOperationsPayload{}, fmt.Errorf("%w: %v", errOperationsInventoryUnavailable, err)
 	}
 	servers := inventory.Servers
 	custodyLeases := inventory.CustodyLeases
@@ -348,7 +395,7 @@ func (h stackOperationsRouteHandlers) operationsFromStore(e *httpx.Event) error 
 	monitoring := h.monitoringSummary(ctx)
 	monitoring.UnscopedAlerts = unscopedAlerts
 
-	return httpx.Success(e, http.StatusOK, stackOperationsPayload{
+	return stackOperationsPayload{
 		Stack:            stackListItemFromControlPlane(stack),
 		Readiness:        readiness,
 		NextSteps:        buildStackNextStepsFromStore(stack, readiness),
@@ -362,7 +409,7 @@ func (h stackOperationsRouteHandlers) operationsFromStore(e *httpx.Event) error 
 		RuntimeLifecycle: runtimeLifecycle,
 		LatestFailure:    latestFailure,
 		CustodyLeases:    custodyLeases,
-	})
+	}, nil
 }
 
 func (h stackOperationsRouteHandlers) monitorCockpitFromStore(e *httpx.Event) error {
@@ -694,6 +741,7 @@ func (h stackOperationsRouteHandlers) assignWorkerFromStore(e *httpx.Event) erro
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to assign worker", nil)
 	}
+	h.operationsReads.Forget(tenantID + "\x00" + ownerID + "\x00" + stack.ID)
 	server := h.operationServerFromControlPlaneWorker(ctx, ownerID, stack.ID, updated)
 	return httpx.Success(e, http.StatusOK, map[string]any{
 		"kit_deployment_id": stack.ID,

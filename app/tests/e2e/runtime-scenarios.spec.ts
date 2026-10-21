@@ -1956,6 +1956,8 @@ interface OwnerServer {
   ip: string;
   keyPair: Awaited<ReturnType<typeof createSSHKeyPair>>;
   release: () => Promise<void>;
+  // Reads the supplier: true once no machine of this server remains.
+  isAbsent?: () => Promise<boolean>;
 }
 
 function ownerServerSupplierFromEnv(): {
@@ -2258,7 +2260,12 @@ async function provisionCentronServer(
         "echo ready",
       ].join(" && "),
     );
-    return { ip: server.ip, keyPair, release };
+    return {
+      ip: server.ip,
+      keyPair,
+      release,
+      isAbsent: async () => (await client.serversByTag(tag)).length === 0,
+    };
   } catch (err) {
     await release();
     throw err;
@@ -3106,17 +3113,21 @@ test.describe.serial("Runtime E2E scenarios", () => {
           session.apiBase,
         );
         expect(status.enrollment_status).toBe("enrolled");
+        const provisionResult = job.result as
+          Record<string, unknown> | undefined;
         expect(
           Number.isFinite(
             Date.parse(
-              String(job.result?.auto_deploy_guard_wait_started_at ?? ""),
+              String(provisionResult?.auto_deploy_guard_wait_started_at ?? ""),
             ),
           ),
           "Managed enrollment must retain the original provider-ready timestamp",
         ).toBe(true);
         expect(
           Number.isFinite(
-            Date.parse(String(job.result?.auto_deploy_guard_verified_at ?? "")),
+            Date.parse(
+              String(provisionResult?.auto_deploy_guard_verified_at ?? ""),
+            ),
           ),
           "Enrolled provision must retain its successful canonical Guard admission",
         ).toBe(true);
@@ -3385,90 +3396,23 @@ test.describe.serial("Runtime E2E scenarios", () => {
     let serverId = "";
     let destroyed = false;
     try {
-      const name = `stack-lifecycle-${runtimeRunId()}`;
-      const created = await createLifecycleWizardRun(
+      const enrolled = await enrollAndDeployLifecycleStack(
+        page,
         auth.token,
+        supplier,
         {
-          intent: {
-            schema: "techstack.wizard-intent/v1",
-            run_kind: "first-run",
-            name,
-            goals: [],
-            // The owner server is a rented VPS: explicit placement evidence
-            // lets the product classify it as a customer-operated cloud server.
-            server: {
-              transport: "install-command",
-              environment_class: "cloud",
-            },
-            kit_assignment: { mode: "found", kit_slug: "basement-kit" },
+          onStack: (id) => {
+            stackId = id;
+          },
+          onResource: (server) => {
+            resource = server;
+          },
+          onServer: (id) => {
+            serverId = id;
           },
         },
-        (id) => {
-          stackId = id;
-        },
       );
-      stackId = String(created.run.stack_id ?? created.run.kit_deployment_id);
-      expect(stackId).not.toBe("");
-      const pairingJobId = String(created.run.pairing_job_id ?? "");
-      expect(pairingJobId, "the run names its registration job").not.toBe("");
-
-      // Enroll: the owner brings one server and runs the install command with
-      // the registration token the run prepared.
-      const registrationToken = await mintRegistrationToken(
-        auth.token,
-        stackId,
-        pairingJobId,
-      );
-      resource = await supplier.provision(1);
-      await enrollOwnerServer(auth.token, resource, registrationToken);
-      const connected = await waitForConnectedOwnerServer(auth.token, stackId);
-      serverId = String(connected.id);
-
-      // Deploy: a rollout saves its credentials in the owner's kombify Wallet,
-      // so the owner first allows Techstack to do that (the consent the
-      // product asks for once), then starts the rollout once the product says
-      // it can.
-      const walletConsent = await allowTechstackWalletCreate(page);
-      await attachJson("stack-lifecycle-wallet-consent.json", walletConsent);
-      await waitForRolloutReadiness(auth.token, stackId);
-      let deploy = await startStackRollout(auth.token, stackId);
-      let deployJob = await waitForJobTerminal(
-        auth.token,
-        deploy.job_id,
-        40 * 60_000,
-      );
-      // A rollout that failed on an answer of the platform itself (the node
-      // downloads its StackKits release from the control plane, which a
-      // Delivery redeploys now and then) is started again by its owner, as the
-      // product offers for a failed rollout; any other failure ends the journey.
-      for (
-        let restart = 1;
-        restart <= 2 &&
-        deployJob.state === "failed" &&
-        /HTTP 5\d\d|timed out|temporarily unavailable|Orphaned by process restart/i.test(
-          runtimeJobFailureSummary(deployJob),
-        );
-        restart += 1
-      ) {
-        logRuntimeE2E("rollout failed on a platform answer, restarting", {
-          restart,
-          summary: runtimeJobFailureSummary(deployJob).slice(0, 300),
-        });
-        await waitForRolloutReadiness(auth.token, stackId);
-        deploy = await startStackRollout(auth.token, stackId);
-        deployJob = await waitForJobTerminal(
-          auth.token,
-          deploy.job_id,
-          40 * 60_000,
-        );
-      }
-      await attachJson(
-        "stack-lifecycle-deploy-job.json",
-        redactObject(deployJob),
-      );
-      expect(deployJob.state, runtimeJobFailureSummary(deployJob)).toBe(
-        "completed",
-      );
+      const deploy = enrolled.deploy;
 
       // Monitor: the deployed node and its services read back healthy through
       // the stack operations API, the server aggregate and the monitoring UI.
@@ -3605,6 +3549,128 @@ test.describe.serial("Runtime E2E scenarios", () => {
       if (serverId) {
         await detachOwnerServer(auth.token, serverId).catch(
           cleanupFailed("detach"),
+        );
+      }
+      await resource?.release();
+    }
+  });
+
+  // The owner deletes the server a stack runs on, then removes the stack. The
+  // node can never answer a removal, so the product proves the server gone
+  // itself (silent beyond the stale window, no lease, owner-operated) and takes
+  // the owner's confirmation as the evidence for a host only its owner can
+  // vouch for: the first request is refused with the servers to confirm, a
+  // confirmation naming another server is refused, and the exact confirmation
+  // removes the stack and ends the server's custody without a node. Backup and
+  // update are covered by the scenario above and not repeated here.
+  test("stack-lifecycle-offline removes a stack after its owner server is deleted", async ({
+    page,
+  }) => {
+    test.setTimeout(90 * 60_000);
+    const supplier = ownerServerSupplierFromEnv();
+    const auth = await authenticateRuntimeUser(
+      "oneliner",
+      page,
+      RUNTIME_AUTH_OPTIONS,
+    );
+    let resource: OwnerServer | undefined;
+    let stackId = "";
+    let serverId = "";
+    let removed = false;
+    try {
+      await enrollAndDeployLifecycleStack(page, auth.token, supplier, {
+        onStack: (id) => {
+          stackId = id;
+        },
+        onResource: (server) => {
+          resource = server;
+        },
+        onServer: (id) => {
+          serverId = id;
+        },
+      });
+      const deployed = await waitForDeployedStack(auth.token, stackId);
+      expect(deployed.server.status).toBe("connected");
+      expect(deployed.runningServices).toBeGreaterThan(0);
+
+      // The owner deletes the server at its supplier; the supplier reads it
+      // back absent, and the product sees the node go silent.
+      const gone = resource!;
+      await gone.release();
+      if (gone.isAbsent) {
+        expect(
+          await gone.isAbsent(),
+          "the supplier no longer lists the server",
+        ).toBe(true);
+      }
+      const offline = await waitForServerOffline(auth.token, serverId);
+      expect(offline.connection?.state).toBe("offline");
+
+      // Without the owner's word the product refuses and names the server.
+      const refused = await requestStackDestroy(auth.token, stackId);
+      expect(refused.status, refused.text).toBe(409);
+      const refusal = lifecycleRecord(
+        lifecycleRecord(refused.json.error).details,
+      );
+      expect(refusal.reason_code).toBe("server_absence_confirmation_required");
+      const refusedServers = (refusal.servers ?? []) as LifecycleRecord[];
+      expect(refusedServers.map((server) => server.id)).toEqual([serverId]);
+
+      // A confirmation of a server this stack does not hold is refused: the
+      // confirmation names exactly the offline servers.
+      const wrong = await requestStackDestroy(auth.token, stackId, [
+        "server_000000000000000000000000",
+      ]);
+      expect(wrong.status, wrong.text).toBe(422);
+      expect(
+        lifecycleRecord(lifecycleRecord(wrong.json.error).details).reason_code,
+      ).toBe("offline_removal_confirmation_invalid");
+
+      // The exact confirmation removes the stack without its node.
+      const accepted = await requestStackDestroy(auth.token, stackId, [
+        serverId,
+      ]);
+      expect(accepted.status, accepted.text).toBe(202);
+      const jobId = String(lifecycleRecord(accepted.json.data).job_id ?? "");
+      expect(jobId, "the removal is accepted as a job").not.toBe("");
+      const job = await waitForJobTerminal(auth.token, jobId, 300_000);
+      await attachJson(
+        "stack-lifecycle-offline-removal-job.json",
+        redactObject(job),
+      );
+      expect(job.state, runtimeJobFailureSummary(job)).toBe("completed");
+      const result = lifecycleRecord(job.result);
+      const evidence = lifecycleRecord(result.offline_removal_evidence);
+      expect(evidence.basis).toBe("owner_confirmation");
+      expect(
+        ((evidence.servers ?? []) as LifecycleRecord[]).map(
+          (server) => server.server_id,
+        ),
+      ).toEqual([serverId]);
+      expect(result.offline_removal_retired).toEqual([serverId]);
+      await waitForStackAbsent(auth.token, stackId);
+      removed = true;
+
+      // Read back: the stack is gone for the owner and so is the server's
+      // custody (the aggregate is a tombstone, not in the inventory).
+      const retired = await waitForServerRetired(auth.token, serverId);
+      await attachJson("stack-lifecycle-offline-removed.json", {
+        stack_id: stackId,
+        server_id: serverId,
+        removal_job_id: jobId,
+        removal_job_state: job.state,
+        evidence_basis: evidence.basis,
+        server_lifecycle: retired,
+        stack_absent_for_owner: true,
+      });
+    } finally {
+      const cleanupFailed = (step: string) => (error: unknown) =>
+        logRuntimeE2E(`stack-lifecycle-offline cleanup ${step} failed`, {
+          message: redactText(String(error)).slice(0, 600),
+        });
+      if (stackId && !removed) {
+        await removeLifecycleStackWithOwnerWord(auth.token, stackId).catch(
+          cleanupFailed("removal"),
         );
       }
       await resource?.release();
@@ -3878,6 +3944,101 @@ async function waitForConnectedStackServers(
 }
 
 // ---- stack-lifecycle journey helpers ------------------------------------
+
+interface LifecycleHooks {
+  onStack: (stackId: string) => void;
+  onResource: (resource: OwnerServer) => void;
+  onServer: (serverId: string) => void;
+}
+
+// The owner brings one server, runs the install command with the registration
+// token a first-run wizard prepared, allows Techstack to save in the Wallet and
+// starts the rollout; the rollout is started again (twice at most) when the
+// platform itself answered it with an error. What the run created is reported
+// through the hooks as soon as it exists, so the caller's cleanup sees it even
+// when a later step fails.
+async function enrollAndDeployLifecycleStack(
+  page: Page,
+  token: string,
+  supplier: ReturnType<typeof ownerServerSupplierFromEnv>,
+  hooks: LifecycleHooks,
+) {
+  const name = `stack-lifecycle-${runtimeRunId()}`;
+  const created = await createLifecycleWizardRun(
+    token,
+    {
+      intent: {
+        schema: "techstack.wizard-intent/v1",
+        run_kind: "first-run",
+        name,
+        goals: [],
+        // The owner server is a rented VPS: explicit placement evidence
+        // lets the product classify it as a customer-operated cloud server.
+        server: {
+          transport: "install-command",
+          environment_class: "cloud",
+        },
+        kit_assignment: { mode: "found", kit_slug: "basement-kit" },
+      },
+    },
+    hooks.onStack,
+  );
+  const stackId = String(created.run.stack_id ?? created.run.kit_deployment_id);
+  hooks.onStack(stackId);
+  expect(stackId).not.toBe("");
+  const pairingJobId = String(created.run.pairing_job_id ?? "");
+  expect(pairingJobId, "the run names its registration job").not.toBe("");
+
+  // Enroll: the owner brings one server and runs the install command with
+  // the registration token the run prepared.
+  const registrationToken = await mintRegistrationToken(
+    token,
+    stackId,
+    pairingJobId,
+  );
+  const resource = await supplier.provision(1);
+  hooks.onResource(resource);
+  await enrollOwnerServer(token, resource, registrationToken);
+  const connected = await waitForConnectedOwnerServer(token, stackId);
+  const serverId = String(connected.id);
+  hooks.onServer(serverId);
+
+  // Deploy: a rollout saves its credentials in the owner's kombify Wallet,
+  // so the owner first allows Techstack to do that (the consent the
+  // product asks for once), then starts the rollout once the product says
+  // it can.
+  const walletConsent = await allowTechstackWalletCreate(page);
+  await attachJson("stack-lifecycle-wallet-consent.json", walletConsent);
+  await waitForRolloutReadiness(token, stackId);
+  let deploy = await startStackRollout(token, stackId);
+  let deployJob = await waitForJobTerminal(token, deploy.job_id, 40 * 60_000);
+  // A rollout that failed on an answer of the platform itself (the node
+  // downloads its StackKits release from the control plane, which a
+  // Delivery redeploys now and then) is started again by its owner, as the
+  // product offers for a failed rollout; any other failure ends the journey.
+  for (
+    let restart = 1;
+    restart <= 2 &&
+    deployJob.state === "failed" &&
+    /HTTP 5\d\d|timed out|temporarily unavailable|Orphaned by process restart/i.test(
+      runtimeJobFailureSummary(deployJob),
+    );
+    restart += 1
+  ) {
+    logRuntimeE2E("rollout failed on a platform answer, restarting", {
+      restart,
+      summary: runtimeJobFailureSummary(deployJob).slice(0, 300),
+    });
+    await waitForRolloutReadiness(token, stackId);
+    deploy = await startStackRollout(token, stackId);
+    deployJob = await waitForJobTerminal(token, deploy.job_id, 40 * 60_000);
+  }
+  await attachJson("stack-lifecycle-deploy-job.json", redactObject(deployJob));
+  expect(deployJob.state, runtimeJobFailureSummary(deployJob)).toBe(
+    "completed",
+  );
+  return { stackId, serverId, deploy };
+}
 
 type LifecycleRecord = Record<string, any>;
 
@@ -4353,6 +4514,122 @@ async function detachOwnerServer(token: string, serverId: string) {
   if (!response.ok) {
     throw new Error(`Detach HTTP ${response.status}: ${redactText(text)}`);
   }
+}
+
+// The product's answer to a destroy request, as the API sends it. The owner's
+// confirmation that servers are gone goes in the optional body.
+async function requestStackDestroy(
+  token: string,
+  stackId: string,
+  confirmServerIds?: string[],
+) {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(
+      API_BASE,
+      `/api/v1/stacks/${encodeURIComponent(stackId)}/destroy`,
+    ),
+    {
+      method: "POST",
+      ...(confirmServerIds
+        ? {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              offline_removal: { confirm_server_ids: confirmServerIds },
+            }),
+          }
+        : {}),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  const raw = await response.text();
+  return {
+    status: response.status,
+    json: lifecycleRecord(raw),
+    text: redactText(raw),
+  };
+}
+
+// A server whose supplier deleted it stops heartbeating; the product shows it
+// offline once the heartbeat is older than its stale window.
+async function waitForServerOffline(
+  token: string,
+  serverId: string,
+  timeoutMs = 20 * 60_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const aggregate = await readServerAggregate(token, serverId);
+    if (aggregate.connection?.state === "offline") return aggregate;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Server ${serverId} still reads ${String(aggregate.connection?.state)} after its supplier deleted it`,
+      );
+    }
+    await delay(15_000);
+  }
+}
+
+// The server's custody ended: its aggregate is the decommissioned tombstone
+// and the owner's inventory no longer lists it.
+async function waitForServerRetired(
+  token: string,
+  serverId: string,
+  timeoutMs = 120_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const aggregate = await readServerAggregate(token, serverId).catch(
+      (error) => {
+        if (/HTTP 404/.test(String(error))) return undefined;
+        throw error;
+      },
+    );
+    const listed = (
+      await retryTransient("server list", () =>
+        fetchRuntimeApi<LifecycleRecord[]>(token, "/api/v1/servers"),
+      )
+    ).some((server) => server.id === serverId);
+    if (
+      !listed &&
+      (aggregate === undefined ||
+        aggregate.lifecycle?.state === "decommissioned")
+    ) {
+      return aggregate?.lifecycle ?? { state: "absent" };
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Server ${serverId} was not retired: listed=${listed}, lifecycle=${String(aggregate?.lifecycle?.state)}`,
+      );
+    }
+    await delay(5_000);
+  }
+}
+
+// Best-effort removal for a run that stopped half way: the plain destroy, and
+// when the product asks which servers are gone, the owner's confirmation of
+// exactly those.
+async function removeLifecycleStackWithOwnerWord(
+  token: string,
+  stackId: string,
+) {
+  const first = await requestStackDestroy(token, stackId);
+  if (first.status === 404 || first.status === 202) return;
+  const details = lifecycleRecord(lifecycleRecord(first.json.error).details);
+  if (
+    first.status === 409 &&
+    details.reason_code === "server_absence_confirmation_required"
+  ) {
+    const ids = ((details.servers ?? []) as LifecycleRecord[]).map((server) =>
+      String(server.id),
+    );
+    const second = await requestStackDestroy(token, stackId, ids);
+    if (second.status === 202) return;
+    throw new Error(
+      `Removal with confirmation: HTTP ${second.status}: ${second.text}`,
+    );
+  }
+  throw new Error(`Removal: HTTP ${first.status}: ${first.text}`);
 }
 
 test.afterAll(async () => {

@@ -336,6 +336,18 @@ func removeLocalStackKitWorkloadsWithRelease(ctx context.Context, cfg *Provision
 	if err != nil {
 		return err
 	}
+	// A server the owner confirmed gone has no node to remove from: its
+	// custody ends through the offline removal evidence, so it is neither
+	// dispatched to nor expected in the persisted removal evidence.
+	if offline := offlineRemovalServerIDs(job); len(offline) > 0 {
+		reachable := make([]LocalStackKitTeardownServerAuthority, 0, len(authority.Servers))
+		for _, server := range authority.Servers {
+			if _, gone := offline[server.ServerID]; !gone {
+				reachable = append(reachable, server)
+			}
+		}
+		authority.Servers = reachable
+	}
 	if persisted, exists := job.Snapshot().Result[LocalStackKitRemovalEvidenceResultField]; exists {
 		return validatePersistedLocalRemovalEvidence(authority, persisted)
 	}
@@ -470,7 +482,11 @@ func boundLocalStackKitTeardownAuthority(job *Job, snapshot portinventory.Teardo
 	if authority.ResolvedPlanHash != "" {
 		generationPlanHash = authority.ResolvedPlanHash
 	}
+	offline := offlineRemovalServerIDs(job)
 	for _, generation := range snapshot.Generations {
+		if _, gone := offline[generation.ServerID]; gone {
+			continue
+		}
 		server, exists := servers[generation.ServerID]
 		if generation.ResolvedPlanHash != generationPlanHash || !exists {
 			return LocalStackKitTeardownAuthority{}, errors.New("local StackKits teardown authority does not cover every port-claim generation")
