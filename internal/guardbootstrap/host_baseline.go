@@ -3,6 +3,8 @@ package guardbootstrap
 import (
 	"errors"
 	"strings"
+
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 )
 
 const ubuntuHostPackages = "ca-certificates curl docker.io docker-compose-v2 nftables fail2ban unattended-upgrades openssh-server ufw"
@@ -37,7 +39,7 @@ func UbuntuHostBaselinePackages() []string {
 // The caller supplies the immutable OS choice and executes the script as root.
 func RenderNeutralUbuntuHostBaseline(version, operation string) (string, error) {
 	if UbuntuHostPrepProfile(version) == "" {
-		return "", errors.New("host baseline requires Ubuntu 26.04 or 24.04")
+		return "", errors.New("host baseline requires Ubuntu " + guardcompat.ProfileReleaseVersion + " or " + guardcompat.ProfileCompatibilityReleaseVersion)
 	}
 	if operation != "prepare" && operation != "verify" && operation != "check-os" {
 		return "", errors.New("host baseline operation must be prepare, verify or check-os")

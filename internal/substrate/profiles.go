@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 )
 
 type Profile struct {
@@ -25,12 +27,14 @@ type Profile struct {
 }
 
 // IsUbuntuProfile admits the current default and explicit compatibility intent.
-func IsUbuntuProfile(id string) bool { return id == "ubuntu-26.04" || id == "ubuntu-24.04" }
+func IsUbuntuProfile(id string) bool {
+	return id == guardcompat.ProfileReleaseID || id == guardcompat.ProfileCompatibilityReleaseID
+}
 
 func Profiles() []Profile {
 	return []Profile{
-		{ID: "ubuntu-26.04", Title: "Ubuntu 26.04 LTS", Architecture: "amd64", MinCPU: 2, MinMemoryMiB: 2048, MinDiskGiB: 32, CloudInit: true},
-		{ID: "ubuntu-24.04", Title: "Ubuntu 24.04 LTS", Architecture: "amd64", MinCPU: 2, MinMemoryMiB: 2048, MinDiskGiB: 32, CloudInit: true},
+		{ID: guardcompat.ProfileReleaseID, Title: guardcompat.ProfileReleaseTitle, Architecture: guardcompat.ProfileArchitecture, MinCPU: 2, MinMemoryMiB: 2048, MinDiskGiB: 32, CloudInit: true},
+		{ID: guardcompat.ProfileCompatibilityReleaseID, Title: guardcompat.ProfileCompatibilityReleaseTitle, Architecture: guardcompat.ProfileArchitecture, MinCPU: 2, MinMemoryMiB: 2048, MinDiskGiB: 32, CloudInit: true},
 		{ID: "haos", Title: "Home Assistant OS", Architecture: "amd64", MinCPU: 2, MinMemoryMiB: 4096, MinDiskGiB: 32, Appliance: true},
 	}
 }
@@ -41,9 +45,9 @@ func Profiles() []Profile {
 // digest. Updating these defaults never updates an existing customer's VM.
 func DefaultImage(profileID string) (Image, error) {
 	switch profileID {
-	case "ubuntu-26.04":
+	case guardcompat.ProfileReleaseID:
 		return Image{ProfileID: profileID, Version: "20260823", URL: "https://cloud-images.ubuntu.com/releases/resolute/release-20260823/ubuntu-26.04-server-cloudimg-amd64.img", SHA256: "8196be9d7958059cb56c6c75c80fdf6cee8a8885bc149ea791d7db1c7ef93035"}, nil
-	case "ubuntu-24.04":
+	case guardcompat.ProfileCompatibilityReleaseID:
 		return Image{ProfileID: profileID, Version: "20260826", URL: "https://cloud-images.ubuntu.com/releases/noble/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img", SHA256: "d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30"}, nil
 	case "haos":
 		return Image{ProfileID: profileID, Version: "18.2", URL: "https://github.com/home-assistant/operating-system/releases/download/18.2/haos_ova-18.2.qcow2.xz", SHA256: "254e53f354df0739e3afc09be5431a07df53f0df6b703885404f665c454f254e", Compression: "xz"}, nil
@@ -88,12 +92,12 @@ func (i Image) Validate() error {
 	}
 	if IsUbuntuProfile(i.ProfileID) {
 		codename := "noble"
-		if i.ProfileID == "ubuntu-26.04" {
+		if i.ProfileID == guardcompat.ProfileReleaseID {
 			codename = "resolute"
 		}
 		version := strings.TrimPrefix(i.ProfileID, "ubuntu-")
-		if u.Host != "cloud-images.ubuntu.com" || u.Path != "/releases/"+codename+"/release-"+i.Version+"/ubuntu-"+version+"-server-cloudimg-amd64.img" || i.Compression != "" {
-			return errors.New("substrate: pinned official Ubuntu amd64 cloud image required")
+		if u.Host != "cloud-images.ubuntu.com" || u.Path != "/releases/"+codename+"/release-"+i.Version+"/ubuntu-"+version+"-server-cloudimg-"+guardcompat.ProfileArchitecture+".img" || i.Compression != "" {
+			return errors.New("substrate: pinned official Ubuntu " + guardcompat.ProfileArchitecture + " cloud image required")
 		}
 	} else if u.Host != "github.com" || u.Path != "/home-assistant/operating-system/releases/download/"+i.Version+"/haos_ova-"+i.Version+".qcow2.xz" || i.Compression != "xz" {
 		return errors.New("substrate: official versioned HAOS KVM image required")

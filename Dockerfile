@@ -14,7 +14,7 @@ COPY app/ .
 ENV PUBLIC_KOMBIFY_EDITION=selfhost-oss
 RUN pnpm build
 
-FROM golang:1.27.2-alpine AS backend
+FROM golang:1.27.3-alpine AS backend
 WORKDIR /build
 ENV GOTOOLCHAIN=local
 COPY go.mod go.sum ./

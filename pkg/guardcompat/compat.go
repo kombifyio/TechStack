@@ -11,6 +11,12 @@
 // their values from here, so a change to one limit is a reviewed change to the
 // contract rather than a drifting local default.
 //
+// The same package pins the first-delivery managed profile: operating system,
+// default and compatibility Ubuntu release, architecture, init system and
+// transport. The substrate default guest profile and Ubuntu host-prep
+// selection read that pin. No filesystem is named, because neither the Ubuntu
+// cloud image pin nor the host baseline states one.
+//
 // The package imports only the standard library so the control plane, the
 // Guard daemon, its journal and its privileged executor can all depend on it.
 // Mixed-version admission (what a peer that does not speak these versions may
@@ -18,6 +24,32 @@
 package guardcompat
 
 import "time"
+
+// First-delivery managed profile. A change here changes the substrate default
+// guest profile and the Ubuntu host-prep profile selected for that release.
+// gRPC with mTLS is not this transport.
+const (
+	// ProfileOS is the operating system of the initial admitted profile.
+	ProfileOS = "linux"
+	// ProfileReleaseVersion is the Ubuntu version of the default release.
+	ProfileReleaseVersion = "26.04"
+	// ProfileReleaseID is the substrate guest profile id of the default release.
+	ProfileReleaseID = "ubuntu-" + ProfileReleaseVersion
+	// ProfileReleaseTitle is the title of the default guest profile.
+	ProfileReleaseTitle = "Ubuntu " + ProfileReleaseVersion + " LTS"
+	// ProfileCompatibilityReleaseVersion is the retained Ubuntu compatibility version.
+	ProfileCompatibilityReleaseVersion = "24.04"
+	// ProfileCompatibilityReleaseID is the substrate guest profile id of that release.
+	ProfileCompatibilityReleaseID = "ubuntu-" + ProfileCompatibilityReleaseVersion
+	// ProfileCompatibilityReleaseTitle is the title of the compatibility guest profile.
+	ProfileCompatibilityReleaseTitle = "Ubuntu " + ProfileCompatibilityReleaseVersion + " LTS"
+	// ProfileArchitecture is the machine architecture of the initial profile.
+	ProfileArchitecture = "amd64"
+	// ProfileInit is the init system the initial profile admits.
+	ProfileInit = "systemd"
+	// ProfileTransport is the first transport: outbound HTTPS polling.
+	ProfileTransport = "https-poll"
+)
 
 // Contract versions. A change to any of them is a wire change: add a new
 // version next to the old one, never edit one in place.
