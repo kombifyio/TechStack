@@ -8,9 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/advancedissuer"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
+
+	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
 )
 
 const ManagedBackupAdmissionField = "managed_backup_admission"
@@ -72,7 +73,7 @@ func prepareManagedRestore(ctx context.Context, cfg StackKitLifecycleConfig, job
 	if err != nil {
 		return req, nil, err
 	}
-	req.BackupRenewal = &advancedissuer.BackupRenewal{AgentID: req.AgentID, BindingHash: prior["bindingHash"], CustodyAttestationRef: prior["custodyAttestationRef"], DeploymentID: req.StackID, FreshAttestationRef: fresh, JobID: job.ID, MeasuredAt: stringFromInterface(admission["measured_at"]), PlanHash: planHash, QuotaBytes: admittedBackupBytes(admission["quota_bytes"]), RepositoryID: "kopia:local:cloud", TargetRef: prior["backupTargetRef"], TenantID: req.TenantID, UsedBytes: admittedBackupBytes(admission["used_bytes"])}
+	req.BackupRenewal = &wire.BackupRenewal{AgentID: req.AgentID, BindingHash: prior["bindingHash"], CustodyAttestationRef: prior["custodyAttestationRef"], DeploymentID: req.StackID, FreshAttestationRef: fresh, JobID: job.ID, MeasuredAt: stringFromInterface(admission["measured_at"]), PlanHash: planHash, QuotaBytes: admittedBackupBytes(admission["quota_bytes"]), RepositoryID: "kopia:local:cloud", TargetRef: prior["backupTargetRef"], TenantID: req.TenantID, UsedBytes: admittedBackupBytes(admission["used_bytes"])}
 	if err := req.BackupRenewal.Validate(time.Now().UTC()); err != nil {
 		return req, nil, err
 	}
@@ -109,15 +110,15 @@ func admittedBackupBytes(value any) string {
 
 // A successful receipt must acknowledge the exact renewal dispatched, not a
 // rollout-time drill or an unrelated staged snapshot.
-func verifyManagedDrillReceipt(raw []byte, renewal *advancedissuer.BackupRenewal, jobID, capabilityID string) error {
+func verifyManagedDrillReceipt(raw []byte, renewal *wire.BackupRenewal, jobID, capabilityID string) error {
 	var report struct {
-		Renewal      *advancedissuer.BackupRenewal `json:"backupRenewal"`
-		DrillID      string                        `json:"drillId"`
-		CapabilityID string                        `json:"capabilityId"`
-		AnchorID     string                        `json:"anchorId"`
-		RestoreID    string                        `json:"restoreResultId"`
-		Activated    *bool                         `json:"activated"`
-		Removed      bool                          `json:"stagingRemoved"`
+		Renewal      *wire.BackupRenewal `json:"backupRenewal"`
+		DrillID      string              `json:"drillId"`
+		CapabilityID string              `json:"capabilityId"`
+		AnchorID     string              `json:"anchorId"`
+		RestoreID    string              `json:"restoreResultId"`
+		Activated    *bool               `json:"activated"`
+		Removed      bool                `json:"stagingRemoved"`
 	}
 	digest := regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	if json.Unmarshal(raw, &report) != nil || report.Renewal == nil || *report.Renewal != *renewal || report.DrillID != jobID || report.CapabilityID != capabilityID || report.Activated == nil || *report.Activated || !report.Removed || !digest.MatchString(report.AnchorID) || !digest.MatchString(report.RestoreID) {

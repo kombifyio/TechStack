@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
 )
 
 func TestBackupRenewalIssuedOnlyForExactAdmittedRestore(t *testing.T) {
@@ -21,7 +23,7 @@ func TestBackupRenewalIssuedOnlyForExactAdmittedRestore(t *testing.T) {
 	}
 	digest := "sha256:" + strings.Repeat("a", 64)
 	ref := func(prefix string) string { return prefix + "://sha256/" + strings.Repeat("b", 64) }
-	renewal := &BackupRenewal{AgentID: "agent-1", BindingHash: digest, CustodyAttestationRef: ref("backup-custody-attestation"), DeploymentID: "deployment-1", FreshAttestationRef: ref("backup-custody-attestation"), JobID: "job-drill-1", MeasuredAt: now.Format(time.RFC3339), PlanHash: digest, QuotaBytes: "100", RepositoryID: "kopia:local:cloud", TargetRef: ref("backup-target"), TenantID: "tenant-1", UsedBytes: "20"}
+	renewal := &wire.BackupRenewal{AgentID: "agent-1", BindingHash: digest, CustodyAttestationRef: ref("backup-custody-attestation"), DeploymentID: "deployment-1", FreshAttestationRef: ref("backup-custody-attestation"), JobID: "job-drill-1", MeasuredAt: now.Format(time.RFC3339), PlanHash: digest, QuotaBytes: "100", RepositoryID: "kopia:local:cloud", TargetRef: ref("backup-target"), TenantID: "tenant-1", UsedBytes: "20"}
 	request := Request{TenantID: "tenant-1", DeploymentID: "deployment-1", StackID: "cloud-stack", OwnerRef: "owner/local/00112233445566778899aabbccddeeff", Operations: []string{OperationRestoreDrill}, BackupRenewal: renewal}
 	capability, err := issuer.Issue(t.Context(), request)
 	if err != nil {
@@ -32,11 +34,11 @@ func TestBackupRenewalIssuedOnlyForExactAdmittedRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var vector envelope
-	if json.Unmarshal(raw, &vector) != nil || !bytes.Equal(raw, canonicalDocument(vector)) {
+	var vector wire.Capability
+	if json.Unmarshal(raw, &vector) != nil || !bytes.Equal(raw, vector.Canonical()) {
 		t.Fatal("renewal conformance serialization diverged")
 	}
-	if !ed25519.Verify(key.Public().(ed25519.PublicKey), SigningDigest(canonicalUnsigned(vector)), decodeTestSignature(t, vector.Signature)) {
+	if !ed25519.Verify(key.Public().(ed25519.PublicKey), wire.SigningDigest(vector.CanonicalUnsigned()), decodeTestSignature(t, vector.Signature)) {
 		t.Fatal("cross-repository renewal signature diverged")
 	}
 	if len(capability.Raw) == 0 || recorder.issuances[0].CapabilityID != capability.ID {

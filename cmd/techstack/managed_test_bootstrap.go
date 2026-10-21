@@ -23,7 +23,7 @@ import (
 // provider runner or production migration fallback. Root supplies credentials
 // from existing sealed custody after immutable review and Delivery admission.
 func runManagedTestBootstrap(parent context.Context, args []string) error {
-	if len(args) != 1 || (args[0] != "inspect" && args[0] != "inspect-issuer" && args[0] != "issuer-open" && args[0] != "prepare" && args[0] != "prepare-issuer" && args[0] != "verify-issuer" && args[0] != "migrate" && args[0] != "admit" && args[0] != "verify" && args[0] != "ril-scope" && args[0] != "ril-scope-recover" && args[0] != "ril-scope-cancel") {
+	if len(args) != 1 || (args[0] != "inspect" && args[0] != "inspect-forward" && args[0] != "inspect-issuer" && args[0] != "issuer-open" && args[0] != "prepare" && args[0] != "prepare-issuer" && args[0] != "verify-issuer" && args[0] != "migrate" && args[0] != "admit" && args[0] != "verify" && args[0] != "ril-scope" && args[0] != "ril-scope-recover" && args[0] != "ril-scope-cancel") {
 		return fmt.Errorf("managed-test-bootstrap requires inspect, inspect-issuer, issuer-open, prepare, prepare-issuer, verify-issuer, migrate, admit, verify, ril-scope, ril-scope-cancel or ril-scope-recover")
 	}
 	if args[0] == "inspect" {
@@ -131,13 +131,14 @@ func runManagedTestBootstrap(parent context.Context, args []string) error {
 		if err := db.PrepareManagedTest(ctx, p); err != nil {
 			return err
 		}
-	case "migrate":
+	case "migrate", "inspect-forward":
 		forwardDigest := os.Getenv("TECHSTACK_MANAGED_TEST_DRIFT_FORWARD_SHA256")
 		pendingDigest := os.Getenv("TECHSTACK_MANAGED_TEST_PENDING_FORWARD_SHA256")
 		executionDigest := os.Getenv("TECHSTACK_MANAGED_TEST_EXECUTION_FORWARD_SHA256")
 		directoryDigest := os.Getenv("TECHSTACK_MANAGED_TEST_SUBJECT_DIRECTORY_FORWARD_SHA256")
+		batchDigest := os.Getenv("TECHSTACK_MANAGED_TEST_FORWARD_BATCH_SHA256")
 		purposes := 0
-		for _, d := range []string{forwardDigest, pendingDigest, executionDigest, directoryDigest} {
+		for _, d := range []string{forwardDigest, pendingDigest, executionDigest, directoryDigest, batchDigest} {
 			if d != "" {
 				purposes++
 			}
@@ -155,7 +156,17 @@ func runManagedTestBootstrap(parent context.Context, args []string) error {
 		if directoryDigest != "" {
 			selectedDigest = directoryDigest
 		}
-		if os.Getenv(db.EnvDatabaseMigrationMode) != "apply" ||
+		if batchDigest != "" {
+			selectedDigest = batchDigest
+		}
+		mode := "apply"
+		if operation == "inspect-forward" {
+			mode = "verify"
+			if batchDigest == "" {
+				return fmt.Errorf("forward inspection requires the exact managed test batch")
+			}
+		}
+		if os.Getenv(db.EnvDatabaseMigrationMode) != mode ||
 			(selectedDigest == "" && os.Getenv(db.EnvAllowDBGenesis) != "true") ||
 			(selectedDigest != "" && os.Getenv(db.EnvAllowDBGenesis) != "false") {
 			return fmt.Errorf("assigned migration requires explicit apply and purpose-bound genesis mode")
@@ -171,6 +182,9 @@ func runManagedTestBootstrap(parent context.Context, args []string) error {
 		defer owner.Close()
 		if err := db.VerifyManagedTestSession(ctx, owner.DB, *a, db.ManagedTestOwner); err != nil {
 			return err
+		}
+		if batchDigest != "" {
+			return runManagedTestForwardBatch(ctx, *a, owner, batchDigest, operation == "migrate")
 		}
 		if directoryDigest != "" {
 			return runManagedTestSubjectDirectoryForward(ctx, *a, owner, directoryDigest)

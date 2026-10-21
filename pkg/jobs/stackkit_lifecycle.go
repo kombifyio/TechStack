@@ -19,6 +19,8 @@ import (
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 	"github.com/kombifyio/stackkits/pkg/workloadremoval"
 	"google.golang.org/protobuf/proto"
+
+	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
 )
 
 const (
@@ -215,7 +217,7 @@ func managedStackKitOperationTimeout(operation string) time.Duration {
 type StackKitLifecycleRequest struct {
 	Connector          *ApplicationConnectorBinding
 	Application        *ApplicationLifecycleBinding
-	BackupRenewal      *advancedissuer.BackupRenewal
+	BackupRenewal      *wire.BackupRenewal
 	StackID            string
 	StackKitInstanceID string
 	TenantID           string

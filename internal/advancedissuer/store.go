@@ -16,6 +16,8 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/db"
+
+	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
 )
 
 // EnvIssuerKey overrides the stored installation key with an unpadded
@@ -89,7 +91,7 @@ func (store *PostgresStore) LoadOrCreateKey(ctx context.Context) (string, ed2551
 		INSERT INTO advanced_issuer_keys (singleton, issuer_id, key_id, public_key, private_key_enc)
 		VALUES (true, $1, $2, $3, $4)
 		ON CONFLICT (singleton) DO NOTHING`,
-		issuerID, KeyID(publicKey), base64.RawStdEncoding.EncodeToString(publicKey), encrypted,
+		issuerID, wire.KeyID(publicKey), base64.RawStdEncoding.EncodeToString(publicKey), encrypted,
 	); err != nil {
 		return "", nil, fmt.Errorf("store advanced issuer key: %w", err)
 	}
@@ -118,7 +120,7 @@ func (store *PostgresStore) loadKey(ctx context.Context) (string, ed25519.Privat
 	if err != nil {
 		return "", nil, err
 	}
-	if KeyID(key.Public().(ed25519.PublicKey)) != keyID {
+	if wire.KeyID(key.Public().(ed25519.PublicKey)) != keyID {
 		return "", nil, errors.New("stored advanced issuer key does not match its key id")
 	}
 	return issuerID, key, nil

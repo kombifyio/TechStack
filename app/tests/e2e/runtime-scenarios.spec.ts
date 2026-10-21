@@ -3213,6 +3213,9 @@ test.describe.serial("Runtime E2E scenarios", () => {
       page,
       RUNTIME_AUTH_OPTIONS,
     );
+    // Sign-in ends on the dashboard, which polls every homelab of the shared
+    // persona; park the page while the servers provision.
+    await page.goto("about:blank");
     const resources: OwnerServer[] = [];
     let stackId = "";
     try {
@@ -3251,6 +3254,22 @@ test.describe.serial("Runtime E2E scenarios", () => {
       await waitForConnectedStackServers(auth.token, stackId, 2);
       await waitForStackSettled(auth.token, stackId);
 
+      // The panel's preview response carries the StackKits reasons when the
+      // check does not verify.
+      let preview: unknown = null;
+      page.on("response", (response) => {
+        if (
+          response.request().method() === "POST" &&
+          /\/(?:api\/v1|v1\/techstack)\/unifier\/layout\/recommendations$/.test(
+            new URL(response.url()).pathname,
+          )
+        ) {
+          void response
+            .json()
+            .then((body) => (preview = body))
+            .catch(() => undefined);
+        }
+      });
       await page.goto(`/stacks/${encodeURIComponent(stackId)}/use-cases/new`, {
         waitUntil: "domcontentloaded",
       });
@@ -3260,11 +3279,15 @@ test.describe.serial("Runtime E2E scenarios", () => {
       await selectUseCase(page, "vault");
       await selectUseCase(page, "media");
       const panel = page.getByTestId("layout-recommendation-panel");
-      await expect(panel).toHaveAttribute(
-        "data-layout-verification",
-        "verified",
-        { timeout: 180_000 },
-      );
+      try {
+        await expect(panel).toHaveAttribute(
+          "data-layout-verification",
+          "verified",
+          { timeout: 180_000 },
+        );
+      } finally {
+        await attachJson("layout-two-node-preview.json", redactObject(preview));
+      }
       await attachScreenshot(page, "layout-two-node-panel.png");
 
       const runResponse = page.waitForResponse(

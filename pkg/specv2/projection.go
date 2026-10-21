@@ -31,6 +31,9 @@ type GoalAuthoring struct {
 	// TLSMinVersion is the minimum emitted by the release init. It applies
 	// only to a new platform installation in a first-run projection.
 	TLSMinVersion string
+	// Capabilities are the kit capabilities the release enables with the
+	// authored routes, for example internal-pki for a route with internal TLS.
+	Capabilities []string
 }
 
 // GoalAuthor resolves shipped use cases from a published compatibility
@@ -496,6 +499,7 @@ func applyAuthoredWorkloads(spec map[string]any, authored GoalAuthoring) error {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	routed := false
 	for _, id := range ids {
 		if existing, exists := workloads[id]; exists {
 			entry, ok := existing.(map[string]any)
@@ -523,6 +527,7 @@ func applyAuthoredWorkloads(spec map[string]any, authored GoalAuthoring) error {
 		if err := mergeAuthoredWorkloadAccess(accessIntent, id, authored); err != nil {
 			return err
 		}
+		routed = routed || len(authored.Routes[id]) > 0
 		if len(authored.DataBindings[id]) > 0 {
 			data, _ := accessIntent["data"].(map[string]any)
 			if data == nil {
@@ -551,6 +556,13 @@ func applyAuthoredWorkloads(spec map[string]any, authored GoalAuthoring) error {
 	}
 	for section, value := range accessIntent {
 		spec[section] = value
+	}
+	// StackKits enables a route's capabilities together with the route; a
+	// carried route without them does not compile.
+	if routed {
+		for _, capability := range authored.Capabilities {
+			enableCapability(spec, capability)
+		}
 	}
 	return nil
 }
