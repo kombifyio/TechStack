@@ -573,8 +573,21 @@ func goalAuthoringFromDocument(document []byte, kitSlug string, mappedGoals, unm
 	network, _ := authoredSpec["network"].(map[string]any)
 	tls, _ := network["tls"].(map[string]any)
 	minimumTLS, _ := tls["minVersion"].(string)
+	// At the pinned release only route contracts write capabilities.enable
+	// (every kit's initial spec enables none), so the routed selection's list
+	// is exactly what its routes need.
+	authoredCapabilities, _ := authoredSpec["capabilities"].(map[string]any)
+	var capabilities []string
+	if enabled, _ := authoredCapabilities["enable"].([]any); len(routes) > 0 {
+		for _, raw := range enabled {
+			if capability, _ := raw.(string); capability != "" {
+				capabilities = append(capabilities, capability)
+			}
+		}
+	}
 	return GoalAuthoring{
 		TLSMinVersion:  minimumTLS,
+		Capabilities:   capabilities,
 		UseCases:       authoredUseCases(authoredSpec, mappedGoals),
 		Workloads:      selected,
 		ModuleProfiles: profiles,

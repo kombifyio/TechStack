@@ -13,6 +13,8 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/db"
+
+	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
 )
 
 // Regression (platform-hm8lo): installations created before the StackKits
@@ -41,7 +43,7 @@ func TestLegacyInstallationSignsAsThePinnedIssuer(t *testing.T) {
 	for range 2 {
 		mock.ExpectQuery("SELECT issuer_id, key_id, private_key_enc FROM advanced_issuer_keys").
 			WillReturnRows(sqlmock.NewRows([]string{"issuer_id", "key_id", "private_key_enc"}).
-				AddRow(legacyLabel, KeyID(publicKey), encrypted))
+				AddRow(legacyLabel, wire.KeyID(publicKey), encrypted))
 	}
 
 	store, err := NewPostgresStore(&db.DB{DB: database}, encryptor)
@@ -69,7 +71,7 @@ func TestLegacyInstallationSignsAsThePinnedIssuer(t *testing.T) {
 	if issuer.IssuerID() != "techstack" || len(bundle.Keys) != 1 || bundle.Keys[0].IssuerID != "techstack" {
 		t.Fatalf("legacy installation signs as %q with bundle %+v, want the pinned issuer techstack", issuer.IssuerID(), bundle.Keys)
 	}
-	if bundle.Keys[0].KeyID != KeyID(publicKey) {
-		t.Fatalf("bundle key %s, want the installation's unchanged key %s", bundle.Keys[0].KeyID, KeyID(publicKey))
+	if bundle.Keys[0].KeyID != wire.KeyID(publicKey) {
+		t.Fatalf("bundle key %s, want the installation's unchanged key %s", bundle.Keys[0].KeyID, wire.KeyID(publicKey))
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/jackc/pgx/v5"
+
+	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
 )
 
 // Key generation belongs to explicit governed preparation. Normal runtime
@@ -57,7 +59,7 @@ func initializePreparedAdvancedIssuerIdentity(ctx context.Context, applicationCo
 	}
 	issuerID, key, err := store.LoadExistingKey(ctx)
 	if err == nil {
-		return issuerID, advancedissuer.KeyID(key.Public().(ed25519.PublicKey)), nil
+		return issuerID, wire.KeyID(key.Public().(ed25519.PublicKey)), nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return "", "", errors.New("existing installation identity or wrapping custody cannot be verified; no key change")
 	}
@@ -68,7 +70,7 @@ func initializePreparedAdvancedIssuerIdentity(ctx context.Context, applicationCo
 	if err != nil {
 		return "", "", err
 	}
-	return issuerID, advancedissuer.KeyID(key.Public().(ed25519.PublicKey)), nil
+	return issuerID, wire.KeyID(key.Public().(ed25519.PublicKey)), nil
 }
 
 func installationIssuerGenesisAuthorized() bool {
@@ -96,5 +98,5 @@ func verifyRetainedIssuerBeforePreparation(ctx context.Context, authority *db.DB
 		return "", "", errors.New("existing issuer identity or wrapping custody is unqualified; no preparation effects")
 	}
 	defer clear(key)
-	return issuerID, advancedissuer.KeyID(key.Public().(ed25519.PublicKey)), nil
+	return issuerID, wire.KeyID(key.Public().(ed25519.PublicKey)), nil
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/kombifyio/techstack/internal/advancedissuer"
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/db"
+
+	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
 )
 
 // The normal producer verifies through the application's native database
@@ -127,7 +129,7 @@ func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[s
 	if err != nil {
 		return errors.New("governed installation signing preparation or retained wrapping custody is unavailable")
 	}
-	keyID := advancedissuer.KeyID(key.Public().(ed25519.PublicKey))
+	keyID := wire.KeyID(key.Public().(ed25519.PublicKey))
 	serviceID := ""
 	if assignment != nil {
 		serviceID = assignment.ServiceID
