@@ -320,6 +320,11 @@ func runTechstack(ctx context.Context) error {
 	orchCfg.RoutingStore = controlStores.Routing
 	portInventory := portinventory.NewPostgresAuthority(v2Boot.db.DB)
 	orchCfg.PortInventory = portInventory
+	// Removing a stack whose owner server is gone reads that server and ends its
+	// custody through the canonical server store, with the owner's confirmation.
+	if serverStore := controlPlanePostgresStore(v2Boot); serverStore != nil {
+		orchCfg.OfflineServers = serverStore
+	}
 	orchCfg.BackupScheduleProjector = backupScheduleProjector(v2Boot, log)
 	backupRetention := composeBackupRetention(v2Boot, log)
 	orchCfg.BackupDecommissioner = backupRetention.decommissioner()

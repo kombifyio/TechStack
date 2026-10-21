@@ -14,8 +14,10 @@
     applyOrphanCleanup,
     destroyStack,
     listKitDeployments,
+    offlineServersFromDestroyError,
     planOrphanCleanup,
     type KitDeployment,
+    type OfflineStackServer,
     type StackPruneResponse,
   } from "#lib/api/stacks.js";
   import { authStore } from "#lib/stores/auth.svelte.js";
@@ -137,6 +139,9 @@
   let deleteConfirmName = $state("");
   let deletingDeployment = $state(false);
   let deleteError = $state<string | null>(null);
+  // Servers of the stack that stopped answering; the owner confirms them gone
+  // in a second step, after the API asked for it.
+  let offlineServers = $state<OfflineStackServer[]>([]);
   const deleteConfirmed = $derived(
     deleteCandidate !== null &&
       deleteConfirmName.trim() === (deleteCandidate?.name ?? "").trim(),
@@ -250,6 +255,7 @@
     deleteCandidate = deployment;
     deleteConfirmName = "";
     deleteError = null;
+    offlineServers = [];
   }
 
   function cancelDelete() {
@@ -257,6 +263,7 @@
     deleteCandidate = null;
     deleteConfirmName = "";
     deleteError = null;
+    offlineServers = [];
   }
 
   async function confirmDelete() {
@@ -275,15 +282,31 @@
         }
         await applyOrphanCleanup(plan.digest, target.id);
       } else {
-        await destroyStack(target.id);
+        await destroyStack(target.id, {
+          confirmServerIds: offlineServers.map((server) => server.id),
+        });
       }
       const removedName = target.name;
       deleteCandidate = null;
       deleteConfirmName = "";
+      offlineServers = [];
       toast.success(tr("settings.homelabRemoved", { name: removedName }));
       await loadDeployments();
     } catch (err) {
-      deleteError = parseApiError(err).message || tr("ui.settings.deletionFailed");
+      const parsed = parseApiError(err);
+      const gone = offlineServersFromDestroyError(parsed.details);
+      if (gone.length > 0) {
+        // Nothing was removed: show the offline servers (again, when one more
+        // went silent after the first confirmation) and let the owner say they
+        // are gone.
+        offlineServers = gone;
+        deleteError = null;
+      } else {
+        // A confirmed server that reported again is no longer offline: the
+        // stack is removed through its node, so the first step starts over.
+        offlineServers = [];
+        deleteError = parsed.message || tr("ui.settings.deletionFailed");
+      }
     } finally {
       deletingDeployment = false;
     }
@@ -736,6 +759,22 @@
       data-autofocus
     />
 
+    {#if offlineServers.length > 0}
+      <div
+        class="mb-4 rounded-lg border border-border bg-muted/40 p-3"
+        data-testid="settings-delete-offline-servers"
+      >
+        <p class="text-sm font-medium text-foreground">
+          {tr("ui.settings.serverGoneTitle")}
+        </p>
+        <p class="mt-1 text-sm text-muted-foreground">
+          {tr("ui.settings.serverGoneBody", {
+            servers: offlineServers.map((server) => server.name).join(", "),
+          })}
+        </p>
+      </div>
+    {/if}
+
     {#if deleteError}
       <ErrorCallout message={deleteError} />
     {/if}
@@ -754,7 +793,11 @@
         onclick={confirmDelete}
         disabled={deletingDeployment || !deleteConfirmed}
       >
-        {deletingDeployment ? tr("ui.settings.deleting") : tr("settings.remove")}
+        {deletingDeployment
+          ? tr("ui.settings.deleting")
+          : offlineServers.length > 0
+            ? tr("ui.settings.removeWithoutServer")
+            : tr("settings.remove")}
       </Button>
     {/snippet}
   </Modal>

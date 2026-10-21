@@ -525,7 +525,7 @@ func (o *Orchestrator) syncStackKitOutputsToWallet(tenantID string, job jobs.Job
 func noWorkspaceDestroyProjectionReconciled(job jobs.JobSnapshot) bool {
 	return job.Type == jobs.JobTypeDestroy &&
 		job.State == jobs.JobStateCompleted &&
-		strings.EqualFold(strings.TrimSpace(stringResult(job.Result[jobs.DestroyWorkspaceStateResultField])), jobs.DestroyWorkspaceStateAbsent) &&
+		jobs.DestroyWorkspaceStateRetiresProjection(stringResult(job.Result[jobs.DestroyWorkspaceStateResultField])) &&
 		boolResult(job.Result[jobs.DestroyProjectionReconciledResultField])
 }
 

@@ -3,7 +3,7 @@
   "product": "techstack",
   "source": {
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "c2441c373c3a3a4ff5e98052dbd36c784d91495c71e11bec0ce999c0d4271baf"
+    "sha256": "2435b25038f5c58cd2d3eae70d71638443f5112e3b15679ce2ffee6e4ae349a2"
   },
   "envelope": "data",
   "cli": {
@@ -18307,6 +18307,7 @@
       "method": "POST",
       "path": "/api/v1/stacks/{id}/destroy",
       "summary": "Decommission one StackKit deployment and its infrastructure",
+      "description": "Removes the stack through its nodes: StackKits removes every applied workload on the server that runs it, then the control plane releases the stack. When a server holding the stack was deleted, the node cannot answer; the request is then refused with `server_absence_confirmation_required` and the offline servers, and is sent again with `offline_removal.confirm_server_ids` naming exactly those servers. The control plane accepts that confirmation only for a server it can prove offline (no heartbeat for longer than the stale window), without a lease and not operated by kombify or a provider: leased and provider-operated servers are proven absent by their provider. A confirmed server is never dispatched to; its agent credential is revoked and the server is retired. A server that reported recently is removed through its node.",
       "tags": [
         "Stacks"
       ],
@@ -18322,8 +18323,38 @@
           "schema": {
             "type": "string"
           }
+        },
+        {
+          "name": "offline_removal",
+          "in": "body",
+          "wireName": "offline_removal",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "confirm_server_ids": {
+                "description": "Every offline server of the stack, by id.",
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "confirm_server_ids"
+            ],
+            "type": "object"
+          }
         }
       ],
+      "body": {
+        "contentType": "application/json",
+        "mode": "properties"
+      },
       "output": {
         "contentType": "application/json",
         "schema": {

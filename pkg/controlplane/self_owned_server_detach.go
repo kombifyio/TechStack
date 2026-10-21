@@ -59,6 +59,35 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 	if request.ConfirmServerID != request.ServerID {
 		return nil, ErrServerDetachConfirmation
 	}
+	return s.detachOwnerServer(ctx, request, "", ownerServerDetachPolicy{
+		source:          selfOwnedServerDetachSource,
+		requestedReason: "owner_detach_requested", completedReason: "owner_detach_completed",
+		eligible: func(current ServerRuntime, _ time.Time) error {
+			if !selfOwnedServerDetachAllowed(current) {
+				return ErrServerDetachUnsupported
+			}
+			return nil
+		},
+		evidence: selfOwnedServerDetachEvidence,
+	})
+}
+
+// ownerServerDetachPolicy is what differs between the owner's BYO detach and
+// the retirement of a server the owner confirmed gone: who may be retired, and
+// how the tombstone is attributed. The custody revocation and the terminal
+// transition are the same transaction for both.
+type ownerServerDetachPolicy struct {
+	source          string
+	requestedReason string
+	completedReason string
+	eligible        func(current ServerRuntime, now time.Time) error
+	evidence        func(agentID string, terminal bool) map[string]any
+}
+
+// detachOwnerServer revokes the exact Guard custody of one server and advances
+// it to the terminal tombstone. expectedAgentID, when set, must be the worker
+// bound to the server.
+func (s *PostgresStore) detachOwnerServer(ctx context.Context, request SelfOwnedServerDetachRequest, expectedAgentID string, policy ownerServerDetachPolicy) (*SelfOwnedServerDetachReceipt, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("controlplane: database not configured")
 	}
@@ -85,11 +114,11 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 		if strings.TrimSpace(current.OwnerSubjectID) != request.OwnerSubjectID {
 			return ErrNotFound
 		}
-		if !selfOwnedServerDetachAllowed(*current) {
-			return ErrServerDetachUnsupported
+		if err := policy.eligible(*current, now); err != nil {
+			return err
 		}
 		agentID := strings.TrimSpace(current.WorkerID)
-		if agentID == "" {
+		if agentID == "" || (expectedAgentID != "" && agentID != expectedAgentID) {
 			return ErrServerAgentCustody
 		}
 
@@ -137,15 +166,15 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 				started, applyErr := applyServerEventTx(ctx, tx, ServerEvent{
 					TenantID: request.TenantID, ServerID: request.ServerID,
 					ExpectedRevision: current.Revision, Generation: current.Generation,
-					Authority: ServerEventAuthorityControlPlane, Source: selfOwnedServerDetachSource,
+					Authority: ServerEventAuthorityControlPlane, Source: policy.source,
 					SourceID: request.OwnerSubjectID, ObservedAt: now,
 					Runtime: ServerRuntime{
 						LifecycleState:      string(serverregistry.LifecycleDecommissioning),
 						DesiredState:        string(serverregistry.DesiredAbsent),
-						LifecycleReasonCode: "owner_detach_requested",
-						DesiredReasonCode:   "owner_detach_requested",
+						LifecycleReasonCode: policy.requestedReason,
+						DesiredReasonCode:   policy.requestedReason,
 					},
-					Evidence: selfOwnedServerDetachEvidence(agentID, false),
+					Evidence: policy.evidence(agentID, false),
 				}, now, s.serverEventProjector)
 				if applyErr != nil {
 					return applyErr
@@ -156,16 +185,16 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 			completed, applyErr := applyServerEventTx(ctx, tx, ServerEvent{
 				TenantID: request.TenantID, ServerID: request.ServerID,
 				ExpectedRevision: terminal.Revision, Generation: terminal.Generation,
-				Authority: ServerEventAuthorityControlPlane, Source: selfOwnedServerDetachSource,
+				Authority: ServerEventAuthorityControlPlane, Source: policy.source,
 				SourceID: request.OwnerSubjectID, ObservedAt: now,
 				Runtime: ServerRuntime{
 					LifecycleState:      string(serverregistry.LifecycleDecommissioned),
 					DesiredState:        string(serverregistry.DesiredAbsent),
-					LifecycleReasonCode: "owner_detach_completed",
-					DesiredReasonCode:   "owner_detach_requested",
+					LifecycleReasonCode: policy.completedReason,
+					DesiredReasonCode:   policy.requestedReason,
 					DecommissionedAt:    &now,
 				},
-				Evidence: selfOwnedServerDetachEvidence(agentID, true),
+				Evidence: policy.evidence(agentID, true),
 			}, now, s.serverEventProjector)
 			if applyErr != nil {
 				return applyErr

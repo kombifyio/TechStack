@@ -2902,6 +2902,9 @@ export const es: Record<string, string> = {
   "ui.settings.deleteThisDeployment": "Eliminar este homelab",
   "ui.settings.deleting": "Eliminando...",
   "ui.settings.deletionFailed": "No se pudo eliminar",
+  "ui.settings.removeWithoutServer": "El servidor ya no existe, eliminar",
+  "ui.settings.serverGoneBody": "{servers} no informa desde hace varios minutos. Si lo eliminaste, confirma abajo: Techstack termina su acceso y quita el stack sin él.",
+  "ui.settings.serverGoneTitle": "Su servidor no responde",
   "ui.settings.failedToLoadDeployments": "No se pudieron cargar los homelabs",
   "ui.settings.failedToLoadHomelabIdentity":
     "No se ha podido cargar la identidad del Homelab",

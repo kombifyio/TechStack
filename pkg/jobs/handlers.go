@@ -156,6 +156,10 @@ type ProvisionConfig struct {
 	// It is intentionally a narrow callback: the jobs package never selects a
 	// provider, deletes a provider resource, or touches legacy projections.
 	NoWorkspaceDestroyReconciler NoWorkspaceDestroyReconciler
+	// OfflineServerRetirer ends the custody of an owner server whose absence
+	// the owner confirmed at destroy admission. Nil fails an offline removal
+	// closed: no node-side removal runs and no custody ends.
+	OfflineServerRetirer OfflineServerRetirer
 	// AdvancedIssuer is the installation's Advanced capability issuer. Every
 	// managed rollout imports its trust bundle on the host after init; a
 	// missing issuer fails the rollout closed instead of rolling out Standard.
@@ -695,6 +699,7 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 			return wrapProvisionCause(StepCreateLease, err,
 				"Could not verify whether provider-owned runtime teardown was required. Port claims were retained.")
 		}
+		offlineRemoval := false
 		if managedRuntime {
 			if err := releasePortTeardownSnapshotForJob(ctx, cfg, job); err != nil {
 				return wrapProvisionCause(StepFinalize, fmt.Errorf("port teardown release failed: %w", err),
@@ -707,9 +712,27 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 					"Port claims were retained because the exact teardown snapshot could not be verified.")
 			}
 			if len(snapshot.Generations) > 0 {
-				if err := removeLocalStackKitWorkloads(ctx, cfg, job, snapshot); err != nil {
-					return wrapProvisionCause(StepProvision, fmt.Errorf("typed local StackKits removal failed: %w", err),
-						"Port claims were retained because StackKits did not prove every applied workload absent.")
+				// Servers the owner confirmed gone (admission proved them offline) end
+				// their custody here and are never dispatched to; any other server of
+				// the stack keeps the typed removal on its node.
+				offline, offlineConfirmed, err := boundOfflineRemovalEvidence(job, snapshot)
+				if err != nil {
+					return wrapProvisionCause(StepFinalize, fmt.Errorf("offline removal evidence invalid: %w", err),
+						"Port claims were retained because the offline removal confirmation could not be verified.")
+				}
+				if offlineConfirmed {
+					offlineRemoval = true
+					q.UpdateProgress(job.ID, 5, "Ending the custody of servers confirmed gone...")
+					if err := retireOfflineRemovalServers(ctx, cfg, job, offline); err != nil {
+						return wrapProvisionCause(StepFinalize, err,
+							"Port claims were retained because the confirmed-gone servers' custody could not be ended; retry the removal.")
+					}
+				}
+				if !offlineConfirmed || !offline.CoversEveryGeneration(snapshot) {
+					if err := removeLocalStackKitWorkloads(ctx, cfg, job, snapshot); err != nil {
+						return wrapProvisionCause(StepProvision, fmt.Errorf("typed local StackKits removal failed: %w", err),
+							"Port claims were retained because StackKits did not prove every applied workload absent.")
+					}
 				}
 			}
 			if err := releasePortTeardownSnapshot(ctx, cfg, job, snapshot); err != nil {
@@ -723,13 +746,21 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 		q.UpdateProgress(job.ID, 10, "Locating stack workspace...")
 
 		workDir := filepath.Join(cfg.WorkDir, job.TargetID)
-		if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		_, workspaceErr := os.Stat(workDir)
+		workspaceAbsent := os.IsNotExist(workspaceErr)
+		if workspaceAbsent || offlineRemoval {
 			// No workspace found - it may have been cleaned up or never created.
-			// Record that exact outcome before reconciling the separately-owned
-			// control-plane projection. Returning success without this handoff
-			// used to leave fresh failed stacks visible indefinitely.
+			// A workspace that is there is not run against a server confirmed
+			// gone, and is left as it is. Record that exact outcome before
+			// reconciling the separately-owned control-plane projection.
+			// Returning success without this handoff used to leave fresh failed
+			// stacks visible indefinitely.
+			workspaceState := DestroyWorkspaceStateAbsent
+			if !workspaceAbsent {
+				workspaceState = DestroyWorkspaceStateOfflineRemoval
+			}
 			job.mutateResult(func(result map[string]interface{}) {
-				result[DestroyWorkspaceStateResultField] = DestroyWorkspaceStateAbsent
+				result[DestroyWorkspaceStateResultField] = workspaceState
 			})
 			if cfg.NoWorkspaceDestroyReconciler != nil {
 				snapshot := job.Snapshot()
@@ -750,7 +781,11 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 					result[DestroyProjectionReconciledResultField] = true
 				})
 			}
-			q.UpdateProgress(job.ID, 100, "No workspace found, stack already destroyed")
+			doneMessage := "No workspace found, stack already destroyed"
+			if offlineRemoval {
+				doneMessage = "Stack removed; its server was confirmed gone"
+			}
+			q.UpdateProgress(job.ID, 100, doneMessage)
 			return nil
 		}
 

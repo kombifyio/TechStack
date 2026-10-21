@@ -776,14 +776,22 @@ func (h crudRouteHandlers) destroyStack(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
 			"The protected kombify demo anchor cannot be destroyed", demoRestrictedStackDetails("stack_destroy"))
 	}
+	offlineRemoval, bodyErr := readDestroyStackRequest(e.Request)
+	if bodyErr != nil {
+		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, bodyErr.Error(), nil)
+	}
 	if h.orch != nil {
 		jobID, destroyErr := h.orch.DestroyStackWithOptions(stackID, orchestrator.ProvisionStackOptions{
 			RequestContext: e.Request.Context(),
 			TenantID:       stack.TenantID,
 			OwnerID:        stack.OwnerSubjectID,
 			StackName:      stack.Name,
+			OfflineRemoval: offlineRemoval,
 		})
 		if destroyErr != nil {
+			if refused, refusal := offlineRemovalRefusal(e, destroyErr); refused {
+				return refusal
+			}
 			return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to start destruction", map[string]any{
 				"reason": destroyErr.Error(),
 			})
