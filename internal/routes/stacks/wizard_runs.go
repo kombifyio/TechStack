@@ -171,6 +171,8 @@ type wizardRunHandlers struct {
 	crud       crudRouteHandlers
 	wizardRuns controlplane.WizardRunStore
 	cfg        WizardRunRouteConfig
+	// identitySnapshots coalesces the dashboard's identity reads per stack.
+	identitySnapshots *identitySnapshotCoalescer
 }
 
 // RegisterWizardRunRoutes registers POST /api/v1/wizard/runs. The facade is
@@ -221,8 +223,9 @@ func newWizardRunHandlers(cfg WizardRunRouteConfig) wizardRunHandlers {
 			notificationOutbox: cfg.NotificationOutbox,
 			kombifyWallet:      cfg.KombifyWallet,
 		},
-		wizardRuns: stores.WizardRuns,
-		cfg:        cfg,
+		wizardRuns:        stores.WizardRuns,
+		cfg:               cfg,
+		identitySnapshots: newIdentitySnapshotCoalescer(),
 	}
 }
 

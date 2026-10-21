@@ -160,6 +160,7 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 		identityStore:        identityStore,
 		credentialSecret:     workerauth.SecretFromEnv(),
 		bindingKeyBase:       bindingKeyBase,
+		inventoryGate:        newInventoryProjectionGate(inventoryProjectionBudget),
 	}
 	r.GET("/api/v1/workers", h.list)
 	registerLimiter := newWorkerRegisterLimiter()
@@ -224,6 +225,7 @@ type workerRouteHandlers struct {
 	binaryArtifact          func() (agentBinaryArtifact, error)
 	stackKitReleaseArtifact func() (agentBinaryArtifact, error)
 	binaryDownloadGuard     *agentBinaryDownloadGuard
+	inventoryGate           *inventoryProjectionGate
 	networkRebinder         NetworkRebinder
 	connectorReconciler     ConnectorReconciler
 

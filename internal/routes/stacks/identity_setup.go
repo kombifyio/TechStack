@@ -216,7 +216,10 @@ func (h wizardRunHandlers) getStackIdentity(e *httpx.Event) error {
 	}
 	response := h.identityResponse(e.Request.Context(), request, stack, WizardIdentitySnapshot{})
 	if h.cfg.IdentityRuntime != nil {
-		snapshot, err := h.cfg.IdentityRuntime.Snapshot(e.Request.Context(), request)
+		// A snapshot still running past the read's wait answers like a failed
+		// one: the dashboard shows the household as not reporting yet and its
+		// next poll gets the kept result.
+		snapshot, err := h.identitySnapshots.Snapshot(e.Request.Context(), h.cfg.IdentityRuntime, request)
 		if err == nil {
 			response = h.identityResponse(e.Request.Context(), request, stack, snapshot)
 		} else {
@@ -243,6 +246,7 @@ func (h wizardRunHandlers) issueOwnerActivation(e *httpx.Event) error {
 	if err != nil {
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Owner activation is unavailable", map[string]any{"reason_code": "owner_activation_failed", "retryable": true})
 	}
+	h.identitySnapshots.Forget(request)
 	e.Response.Header().Set("Cache-Control", "no-store")
 	return httpx.Success(e, http.StatusOK, map[string]any{"owner": ownerActivationWire(activation, true)})
 }
@@ -281,6 +285,7 @@ func (h wizardRunHandlers) createHouseholdInvitation(e *httpx.Event) error {
 	if err != nil {
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Household invitation failed", map[string]any{"reason_code": "household_invitation_failed", "retryable": true})
 	}
+	h.identitySnapshots.Forget(request)
 	e.Response.Header().Set("Cache-Control", "no-store")
 	return httpx.Success(e, http.StatusCreated, map[string]any{"invitation": householdInvitationWire(invitation)})
 }

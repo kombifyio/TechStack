@@ -392,6 +392,20 @@ func resolveManagedRuntimeTargetWithWaitClock(ctx context.Context, cfg *Provisio
 	)
 	observedAt := now().UTC()
 	waitStartedAt, ok := managedRuntimeEnrollmentWaitStartedAt(snapshot.Result)
+	// Auto-deploy has already crossed provider-ready. Address and credential
+	// resolution must spend the original enrollment budget, including on resume.
+	if raw := firstNonEmpty(stringFromMap(snapshot.Result, autoDeployGuardWaitStartedAtField), stringFromMap(snapshot.Payload, autoDeployGuardWaitStartedAtField)); raw != "" {
+		providerReadyAt, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil || providerReadyAt.IsZero() || providerReadyAt.After(observedAt) {
+			return nil, fmt.Errorf("%w: phase=runtime_target_custody reason=provider_ready_at_invalid", ErrManagedRuntimeEnrollmentFailed)
+		}
+		if !ok || providerReadyAt.Before(waitStartedAt) {
+			waitStartedAt, ok = providerReadyAt.UTC(), true
+			job.mutateResult(func(result map[string]interface{}) {
+				result[managedRuntimeEnrollmentWaitStartedAtField] = waitStartedAt.Format(time.RFC3339Nano)
+			})
+		}
+	}
 	if !ok {
 		waitStartedAt = observedAt
 		job.mutateResult(func(result map[string]interface{}) {
@@ -399,6 +413,8 @@ func resolveManagedRuntimeTargetWithWaitClock(ctx context.Context, cfg *Provisio
 		})
 	}
 	deadline := waitStartedAt.Add(timeout)
+	resolveCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	remaining := deadline.Sub(observedAt)
 	if remaining <= 0 {
 		timeoutErr := managedRuntimeEnrollmentTimeoutError(leaseID, timeout, nil)
@@ -434,8 +450,11 @@ func resolveManagedRuntimeTargetWithWaitClock(ctx context.Context, cfg *Provisio
 	// external dependency, so polling it inside the handler would occupy a
 	// worker and misreport the job as running for minutes. A non-terminal result
 	// is handed back to the queue, which exposes `waiting` and resumes later.
-	target, err := resolveManagedRuntimeTargetAttempt(ctx, cfg, job, spec, attemptTimeout)
-	if err == nil {
+	target, err := resolveManagedRuntimeTargetAttempt(resolveCtx, cfg, job, spec, attemptTimeout)
+	if err == nil && now().Before(deadline) && resolveCtx.Err() == nil {
+		job.mutateResult(func(result map[string]interface{}) {
+			result["managed_runtime_target_verified_at"] = now().UTC().Format(time.RFC3339Nano)
+		})
 		clearManagedRuntimeEnrollmentWaitStart(job)
 		return target, nil
 	}
@@ -577,13 +596,9 @@ func managedRuntimeTargetResolveAttemptTimeout(timeout, _ time.Duration) time.Du
 }
 
 func managedRuntimeTargetWaitConfig(cfg *ProvisionConfig) (time.Duration, time.Duration) {
-	// Provider-backed monthly runtimes must cover first-boot Guard enrollment,
-	// not just SSH allocation. Centron Ubuntu cloud-init plus apt/docker/Guard
-	// routinely exceeds five minutes; a 5m fuse marked a live E2E Centron
-	// lease enrolling with 22 open as a non-retryable admission timeout.
-	// Override with TECHSTACK_MANAGED_RUNTIME_WAIT_TIMEOUT / _POLL_INTERVAL
-	// for shorter environment-specific fuses.
-	maxTimeout := 20 * time.Minute
+	// Keep one second of the owner's 60s ceiling for recording the phase outcome.
+	// RPCs and backoff share this budget; overrides may only shorten it.
+	maxTimeout := 59 * time.Second
 	timeout := maxTimeout
 	interval := 5 * time.Second
 	if cfg != nil {

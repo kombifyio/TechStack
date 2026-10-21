@@ -818,6 +818,13 @@ func provisionCreateManagedLease(ctx context.Context, cfg *ProvisionConfig, job 
 				result["owner_id"] = leaseOwnerID
 			}
 		})
+		if runtimePhase == RuntimePhaseLeaseReady {
+			startedAt := leaseResult.ProviderReadyAt
+			if startedAt.IsZero() || startedAt.After(time.Now().UTC()) {
+				return wrapProvisionCause(StepCreateLease, fmt.Errorf("%w: provider_ready_at_invalid", ErrAutoDeployAdmissionPrerequisite), "The native provider-ready receipt has no valid timestamp; enrollment cannot start a replacement window.")
+			}
+			setAutoDeployGuardWaitStart(job, startedAt)
+		}
 		copyManagedRuntimeTargetToJob(job, leaseResult.Target)
 	}
 	return nil
@@ -881,15 +888,15 @@ func provisionMaybeAutoDeploy(ctx context.Context, cfg *ProvisionConfig, job *Jo
 	}
 	snapshot := job.Snapshot()
 	request := AutoDeployAdmissionRequest{
-		StackID:  strings.TrimSpace(snapshot.TargetID),
-		TenantID: firstNonEmpty(stringFromMap(snapshot.Payload, tenantIDField), stringFromMap(snapshot.Result, tenantIDField)),
-		OwnerID:  firstNonEmpty(stringFromMap(snapshot.Payload, "owner_id"), stringFromMap(snapshot.Result, "owner_id")),
-		LeaseID:  firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField)),
+		StackID:     strings.TrimSpace(snapshot.TargetID),
+		TenantID:    firstNonEmpty(stringFromMap(snapshot.Payload, tenantIDField), stringFromMap(snapshot.Result, tenantIDField)),
+		OwnerID:     firstNonEmpty(stringFromMap(snapshot.Payload, "owner_id"), stringFromMap(snapshot.Result, "owner_id")),
+		LeaseID:     firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField)),
+		OperationID: firstNonEmpty(stringFromMap(snapshot.Result, operationIDField), stringFromMap(snapshot.Payload, operationIDField)),
 	}
-	if err := cfg.AutoDeployAdmission(ctx, request); err != nil {
-		return true, autoDeployGuardWaitError(cfg, job, q, err)
+	if err := awaitAutoDeployGuardAdmission(ctx, cfg, job, q, request); err != nil {
+		return true, err
 	}
-	clearAutoDeployGuardWaitStart(job)
 	// From here the rollout may cause side effects; the job is no longer a
 	// replay of a wait that recovery may resume.
 	clearManagedProvisionWaitCheckpoint(job)
@@ -906,42 +913,6 @@ func provisionMaybeAutoDeploy(ctx context.Context, cfg *ProvisionConfig, job *Jo
 	return true, nil
 }
 
-func autoDeployGuardWaitError(cfg *ProvisionConfig, job *Job, q *Queue, cause error) error {
-	now := time.Now().UTC()
-	timeout, interval := managedRuntimeTargetWaitConfig(cfg)
-	startedAt := now
-	snapshot := job.Snapshot()
-	if raw := firstNonEmpty(
-		strings.TrimSpace(stringFromMap(snapshot.Result, autoDeployGuardWaitStartedAtField)),
-		strings.TrimSpace(stringFromMap(snapshot.Payload, autoDeployGuardWaitStartedAtField)),
-	); raw != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil && !parsed.IsZero() {
-			startedAt = parsed.UTC()
-		}
-	} else {
-		setAutoDeployGuardWaitStart(job, now)
-	}
-	if timeout <= 0 || now.Sub(startedAt) >= timeout {
-		job.mutateResult(func(result map[string]interface{}) {
-			result[GuardHeartbeatTimeoutReason] = true
-		})
-		return wrapProvisionCause(StepPrepareRollout, fmt.Errorf("%w after %s: %v", ErrAutoDeployAdmissionTimeout, timeout, cause),
-			"The managed server was created, but its Guard did not report a fresh heartbeat in time. Retry the rollout once the server is reachable.")
-	}
-	remaining := timeout - now.Sub(startedAt)
-	resumeAfter := managedRuntimeEnrollmentBoundedDelay(managedRuntimeEnrollmentResumeDelay(interval), remaining)
-	// The server exists; waiting for its Guard is the VPS-target confirmation.
-	job.setStep(StepPrepareRollout)
-	recordManagedProvisionWaitCheckpoint(job, WaitReasonCanonicalGuardEvidence)
-	q.UpdateProgress(job.ID, 90, "Managed runtime prepared; waiting for fresh canonical Guard evidence...")
-	return &JobWaitError{
-		Reason:      WaitReasonCanonicalGuardEvidence,
-		Message:     "Managed runtime is prepared; rollout is waiting for a fresh canonical Guard heartbeat.",
-		ResumeAfter: resumeAfter,
-		Cause:       cause,
-	}
-}
-
 func setAutoDeployGuardWaitStart(job *Job, startedAt time.Time) {
 	if job == nil {
 		return
@@ -949,16 +920,4 @@ func setAutoDeployGuardWaitStart(job *Job, startedAt time.Time) {
 	job.mutateResult(func(result map[string]interface{}) {
 		result[autoDeployGuardWaitStartedAtField] = startedAt.UTC().Format(time.RFC3339Nano)
 	})
-}
-
-func clearAutoDeployGuardWaitStart(job *Job) {
-	if job == nil {
-		return
-	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	delete(job.Result, autoDeployGuardWaitStartedAtField)
-	delete(job.Payload, autoDeployGuardWaitStartedAtField)
-	job.Result = cloneJobMap(job.Result)
-	job.Payload = cloneJobMap(job.Payload)
 }

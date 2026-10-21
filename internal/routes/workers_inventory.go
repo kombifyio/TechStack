@@ -3,6 +3,7 @@ package routes
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -211,6 +212,14 @@ func (h workerRouteHandlers) inventory(e *httpx.Event) error {
 	observedAt := position.ObservedAt
 	worker := inventoryWorker(authCtx, req, observedAt)
 	nodeID := firstNonEmpty(runtimeidentity.LeaseServerID(authCtx.LeaseID), authCtx.ServerID, runtimeServerIDForWorker(id))
+	release, admitted := h.inventoryGate.acquire(e.Request.Context())
+	if !admitted {
+		slog.Warn("guard_inventory_deferred", "runtime_agent_id", id, "reason_code", "inventory_projection_busy")
+		return httpx.Success(e, http.StatusAccepted, map[string]any{
+			workerFieldServerID: nodeID, "applied": false, "reason_code": "inventory_projection_busy",
+		})
+	}
+	defer release()
 	committed, proceed, commitErr := h.commitWorkerInventory(e, authCtx, nodeID, req, worker, observedAt, now)
 	if commitErr != nil || !proceed {
 		return commitErr

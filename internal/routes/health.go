@@ -37,15 +37,29 @@ type HealthDependencies struct {
 
 // dbHealthStatus captures control-plane Postgres connectivity and schema state.
 type dbHealthStatus struct {
-	Connected         bool   `json:"connected"`
-	Backend           string `json:"backend,omitempty"`
-	SchemaVersion     string `json:"schema_version,omitempty"`
-	MigrationsApplied int    `json:"migrations_applied"`
-	Error             string `json:"error,omitempty"`
+	Connected         bool          `json:"connected"`
+	Backend           string        `json:"backend,omitempty"`
+	SchemaVersion     string        `json:"schema_version,omitempty"`
+	MigrationsApplied int           `json:"migrations_applied"`
+	Pool              *dbPoolStatus `json:"pool,omitempty"`
+	Error             string        `json:"error,omitempty"`
+}
+
+// dbPoolStatus shows how busy the shared pool is. A saturated pool is load,
+// not an outage: it is reported here and never fails readiness by itself.
+type dbPoolStatus struct {
+	MaxOpen        int   `json:"max_open"`
+	Open           int   `json:"open"`
+	InUse          int   `json:"in_use"`
+	Idle           int   `json:"idle"`
+	WaitCount      int64 `json:"wait_count"`
+	WaitDurationMS int64 `json:"wait_duration_ms"`
 }
 
 // controlPlaneDBHealth pings the control-plane Postgres database and reads the
-// latest applied schema migration version + count from schema_migrations.
+// latest applied schema migration version + count from schema_migrations. It
+// runs on the database's dedicated probe connection, so it answers whether the
+// database is reachable even while every pooled connection is busy.
 func controlPlaneDBHealth(database *db.DB) dbHealthStatus {
 	status := dbHealthStatus{}
 	if database == nil || database.DB == nil {
@@ -53,11 +67,17 @@ func controlPlaneDBHealth(database *db.DB) dbHealthStatus {
 		return status
 	}
 	status.Backend = string(database.Backend())
+	stats := database.Stats()
+	status.Pool = &dbPoolStatus{
+		MaxOpen: stats.MaxOpenConnections, Open: stats.OpenConnections, InUse: stats.InUse, Idle: stats.Idle,
+		WaitCount: stats.WaitCount, WaitDurationMS: stats.WaitDuration.Milliseconds(),
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if err := database.PingContext(ctx); err != nil {
+	probe := database.Probe()
+	if err := probe.PingContext(ctx); err != nil {
 		status.Error = err.Error()
 		return status
 	}
@@ -67,14 +87,14 @@ func controlPlaneDBHealth(database *db.DB) dbHealthStatus {
 	// TEXT primary key (the migration filename); the lexically greatest value is
 	// the latest applied migration.
 	var count int
-	if err := database.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+	if err := probe.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		status.Error = err.Error()
 		return status
 	}
 	status.MigrationsApplied = count
 
 	var latest string
-	if err := database.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), '') FROM schema_migrations").Scan(&latest); err != nil {
+	if err := probe.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), '') FROM schema_migrations").Scan(&latest); err != nil {
 		status.Error = err.Error()
 		return status
 	}

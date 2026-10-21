@@ -143,8 +143,8 @@ func provisionFailureOutcome(job *Job, provisionErr *ProvisionError) outcome.Dec
 	if errors.Is(provisionErr, ErrAutoDeployAdmissionTimeout) {
 		decision := jobFailedOutcome(job, GuardHeartbeatTimeoutReason, true, extra)
 		decision.UserGuidance = &outcome.Guidance{
-			Title: "The server was created but its Guard never connected",
-			Body:  "The provider created the server, but its kombify Guard sent no authenticated heartbeat within the enrollment window, so nothing was rolled out.",
+			Title: "Guard admission did not complete in time",
+			Body:  "The provider created the server, but canonical Guard admission did not finish within its total enrollment budget. Inspect the bootstrap failure before retrying; application rollout has not started.",
 			NextSteps: []outcome.Step{
 				{ID: "retry-rollout", Label: "Retry the rollout once the server is reachable", Kind: "retry"},
 				{ID: "decommission-server", Label: "Or decommission the server so it stops running", Kind: "handoff"},

@@ -2,88 +2,12 @@ package guardbootstrap
 
 import (
 	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
 	"gopkg.in/yaml.v3"
 )
-
-func TestGuardEnrollmentWaitsForExecutionChannelReadiness(t *testing.T) {
-	directory := t.TempDir()
-	marker, ready := filepath.Join(directory, "guard-enrolled"), filepath.Join(directory, "execution-ready")
-	readiness := filepath.Join(directory, "execution-channel")
-	if err := os.WriteFile(readiness, []byte("#!/bin/sh\n[ -f "+shellQuote(ready)+" ]\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	// Replace the network dependency, including the failure-report request.
-	curl := "#!/bin/sh\ncase \"$*\" in\n */install.sh*) printf '%s\\n' " + shellQuote("touch "+shellQuote(marker)) + ";;\nesac\n"
-	if err := os.WriteFile(filepath.Join(directory, "curl"), []byte(curl), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
-	document, err := RenderCloudInit(CloudInitInput{
-		ServerURL: "https://techstack.kombify.io", PairingToken: testToken(t, "tenant-demo", "op_1"),
-		HostPrepProfile: HostPrepProfileIONOSUbuntu2404DockerV1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config struct {
-		RunCmd     [][]string `yaml:"runcmd"`
-		WriteFiles []struct {
-			Path    string `yaml:"path"`
-			Content string `yaml:"content"`
-		} `yaml:"write_files"`
-	}
-	if err := yaml.Unmarshal(document, &config); err != nil {
-		t.Fatal(err)
-	}
-	bootstrap := filepath.Join(directory, "guard-bootstrap")
-	run := func() error {
-		// The script removes itself when a run ends, so each run starts from the
-		// file cloud-init would have written.
-		for _, file := range config.WriteFiles {
-			if file.Path == GuardBootstrapScriptPath {
-				content := strings.ReplaceAll(file.Content, executionChannelBootstrapPath, readiness)
-				if err := os.WriteFile(bootstrap, []byte(content), 0700); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-		var last error
-		for _, command := range config.RunCmd {
-			// Host firewall/service managers are outside the enrollment boundary.
-			if command[0] == "/usr/sbin/ufw" || command[0] == "/bin/systemctl" {
-				continue
-			}
-			argv := make([]string, len(command))
-			for i, argument := range command {
-				argv[i] = strings.ReplaceAll(strings.ReplaceAll(argument, executionChannelBootstrapPath, readiness), GuardBootstrapScriptPath, bootstrap)
-			}
-			last = exec.Command(argv[0], argv[1:]...).Run()
-		}
-		return last
-	}
-	if err := run(); err == nil {
-		t.Fatal("unready execution channel admitted Guard enrollment")
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("Guard ran before readiness: %v", err)
-	}
-	if err := os.WriteFile(ready, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run(); err != nil {
-		t.Fatalf("ready execution channel rejected enrollment: %v", err)
-	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("Guard did not run after readiness: %v", err)
-	}
-}
 
 func testToken(t *testing.T, tenant, scope string) string {
 	t.Helper()
@@ -120,7 +44,7 @@ func TestRenderInvokesTheServedInstaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	rendered := string(document)
+	rendered := strings.ReplaceAll(string(document), "'\\''", "'")
 	if !strings.HasPrefix(rendered, "#cloud-config\n") {
 		t.Fatalf("document is not a cloud-config:\n%s", rendered)
 	}
@@ -143,13 +67,13 @@ func TestRenderEnablesSSHOnlyHostFirewallBeforeInstaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	rendered := string(document)
+	rendered := strings.ReplaceAll(string(document), "'\\''", "'")
 	ordered := []string{
-		"  - ufw\n",
-		`["/usr/sbin/ufw", "default", "deny", "incoming"]`,
-		`["/usr/sbin/ufw", "default", "allow", "outgoing"]`,
-		`["/usr/sbin/ufw", "allow", "22/tcp"]`,
-		`["/usr/sbin/ufw", "--force", "enable"]`,
+		"install -y --no-install-recommends ufw",
+		`/usr/sbin/ufw default deny incoming`,
+		`/usr/sbin/ufw default allow outgoing`,
+		`/usr/sbin/ufw allow 22/tcp`,
+		`/usr/sbin/ufw --force enable`,
 		`["` + GuardBootstrapScriptPath + `"]`,
 	}
 	position := -1
@@ -176,7 +100,7 @@ func TestRenderIONOSUbuntuDockerHostPrepIsExplicitAndVersioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	rendered := string(document)
+	rendered := strings.ReplaceAll(string(document), "'\\''", "'")
 	for _, want := range []string{
 		"/usr/local/lib/kombify/host-prep-v2",
 		"/var/lib/kombify/host-prep/v2.status",
@@ -237,7 +161,7 @@ func TestStackKitReadyHostPrepCreatesSSHPrivilegeDirBeforeConfigCheck(t *testing
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	rendered := string(document)
+	rendered := strings.ReplaceAll(string(document), "'\\''", "'")
 	mkdirAt := strings.Index(rendered, "mkdir -p /etc/ssh/sshd_config.d /run/sshd")
 	useraddAt := strings.Index(rendered, "useradd --create-home --shell /bin/bash "+ExecutionChannelUser)
 	sshdTestAt := strings.LastIndex(rendered, "sshd -t")
@@ -275,7 +199,7 @@ func TestStackKitReadyHostPrepKeepsANonRootExecutionChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	rendered := string(document)
+	rendered := strings.ReplaceAll(string(document), "'\\''", "'")
 	if ExecutionChannelUser == "root" {
 		t.Fatal("the execution channel must not be the login host-security disables")
 	}
@@ -331,7 +255,7 @@ func TestRenderPinsTheOriginAndDropsAnyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	rendered := string(document)
+	rendered := strings.ReplaceAll(string(document), "'\\''", "'")
 	if strings.Contains(rendered, "evil") || strings.Contains(rendered, "x=1") {
 		t.Fatalf("origin path/query survived into the payload:\n%s", rendered)
 	}

@@ -697,7 +697,7 @@ func TestProvisionAutoDeployAdmissionRequiresNativeLeaseAndFreshCanonicalGuard(t
 	}
 
 	request.OwnerID = "owner-2"
-	if err := orch.admitProvisionAutoDeploy(ctx, request); !errors.Is(err, ErrDeployRuntimeEvidenceUnavailable) {
+	if err := orch.admitProvisionAutoDeploy(ctx, request); !errors.Is(err, jobs.ErrAutoDeployAdmissionPrerequisite) {
 		t.Fatalf("cross-owner admission error = %v, want fail-closed identity mismatch", err)
 	}
 }

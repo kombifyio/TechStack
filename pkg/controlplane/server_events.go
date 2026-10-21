@@ -180,6 +180,12 @@ func prepareGuardServerEvent(current *ServerRuntime, event ServerEvent, now time
 
 	next := baseServerRuntime(current, event, now)
 	applyObservedServerPatch(&next, patch, event)
+	// A fresh authenticated heartbeat proves that this bootstrap reached the
+	// Guard. Clear its old terminal report atomically with that observation;
+	// subsequent lifecycle and application-readiness fences remain independent.
+	if patch.LastHeartbeatAt != nil {
+		delete(next.Metadata, "guard_bootstrap_failure")
+	}
 	applyServerOutcomePatch(&next, event)
 	next.SourceAuthority = ServerEventAuthorityGuard
 	next.SourceID = event.SourceID

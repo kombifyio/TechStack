@@ -223,12 +223,12 @@ func TestManagedRuntimeTargetWaitConfig(t *testing.T) {
 		config                        *ProvisionConfig
 		wantTimeout, wantInterval     time.Duration
 	}{
-		{"environment override", "2m", "1s", &ProvisionConfig{}, 2 * time.Minute, time.Second},
-		{"defaults", "", "", nil, 20 * time.Minute, 5 * time.Second},
+		{"environment override", "2m", "1s", &ProvisionConfig{}, 59 * time.Second, time.Second},
+		{"defaults", "", "", nil, 59 * time.Second, 5 * time.Second},
 		{"oversized values clamp", "30m", "20m", &ProvisionConfig{
 			ManagedRuntimeTargetWaitTimeout:  25 * time.Minute,
 			ManagedRuntimeTargetPollInterval: 2 * time.Minute,
-		}, 20 * time.Minute, 20 * time.Minute},
+		}, 59 * time.Second, 59 * time.Second},
 	}
 
 	for _, tt := range tests {

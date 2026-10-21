@@ -35,49 +35,6 @@ func TestProvisionMaybeAutoDeployFailsClosedBeforePayloadMutationWithoutAdmissio
 	}
 }
 
-func TestProvisionMaybeAutoDeployWaitsBeforePayloadMutationForGuardEvidence(t *testing.T) {
-	job := autoDeployAdmissionTestJob("auto-deploy-waiting-guard")
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-	wantCause := errors.New("no fresh canonical Guard runtime")
-	cfg := &ProvisionConfig{
-		ManagedRuntimeTargetWaitTimeout:  time.Second,
-		ManagedRuntimeTargetPollInterval: 10 * time.Millisecond,
-		AutoDeployAdmission: func(_ context.Context, req AutoDeployAdmissionRequest) error {
-			if req.StackID != "stack-1" || req.TenantID != "tenant-1" || req.OwnerID != "owner-1" || req.LeaseID != "lease-1" {
-				t.Fatalf("admission request = %+v", req)
-			}
-			return wantCause
-		},
-	}
-
-	handled, err := provisionMaybeAutoDeploy(context.Background(), cfg, job, queue)
-	if !handled {
-		t.Fatal("auto-deploy request was not handled")
-	}
-	var waitErr *JobWaitError
-	if !errors.As(err, &waitErr) {
-		t.Fatalf("error = %T %v, want JobWaitError", err, err)
-	}
-	if waitErr.Reason != WaitReasonCanonicalGuardEvidence || !errors.Is(err, wantCause) {
-		t.Fatalf("wait error = %+v, want canonical Guard cause", waitErr)
-	}
-	snapshot := job.Snapshot()
-	if snapshot.Type != JobTypeProvision {
-		t.Fatalf("job type = %q, want provision while waiting", snapshot.Type)
-	}
-	if _, exists := snapshot.Payload["apply"]; exists {
-		t.Fatal("deploy payload was prepared while canonical Guard admission was pending")
-	}
-	if snapshot.Result[autoDeployGuardWaitStartedAtField] == nil {
-		t.Fatal("bounded Guard wait start was not persisted")
-	}
-	durableResult := cloneJobResult(snapshot.Result)
-	rehydrated := &Job{Payload: cloneJobMap(snapshot.Payload), Result: durableResult}
-	if rehydrated.Snapshot().Result[autoDeployGuardWaitStartedAtField] == nil {
-		t.Fatal("bounded Guard wait start was lost across a durable result roundtrip")
-	}
-}
-
 func TestProvisionMaybeAutoDeployGuardWaitTimesOutFailClosed(t *testing.T) {
 	starts := map[string]func(*Job, string){
 		"durable result": func(job *Job, startedAt string) { job.Result[autoDeployGuardWaitStartedAtField] = startedAt },

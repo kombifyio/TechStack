@@ -187,10 +187,11 @@ type ManagedStackKitInventoryBuilder interface {
 // AutoDeployAdmissionRequest is the immutable identity envelope checked before
 // a provision job can invoke rollout side effects.
 type AutoDeployAdmissionRequest struct {
-	StackID  string
-	TenantID string
-	OwnerID  string
-	LeaseID  string
+	StackID     string
+	TenantID    string
+	OwnerID     string
+	LeaseID     string
+	OperationID string
 }
 
 // AutoDeployAdmission proves that a prepared managed runtime is currently safe

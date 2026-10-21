@@ -289,7 +289,7 @@ func (f *fakeManagedLeaseManager) CreateOrBindLease(_ context.Context, req Manag
 		LeaseID:      "lease-test",
 		Provider:     "centron",
 		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
+		Phase:        RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 		Target: &ManagedRuntimeTarget{
 			Host:          "203.0.113.10",
 			PublicIP:      "203.0.113.10",
@@ -1031,7 +1031,7 @@ func TestProvisionHandler_AutoDeploysManagedCloudStack(t *testing.T) {
 		OperationID:  "operation-test",
 		Provider:     "centron",
 		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
+		Phase:        RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 	}}
 	resolver := &fakeManagedRuntimeTargetResolver{}
 	specBaseDir := t.TempDir()
@@ -1151,7 +1151,7 @@ func newManagedKombifyMeFixture(t *testing.T, stackID, stackName string, generat
 
 	order := []string{}
 	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-		LeaseID: "lease-ionos", Provider: "ionos", DesiredState: "running", Phase: RuntimePhaseLeaseReady,
+		LeaseID: "lease-ionos", Provider: "ionos", DesiredState: "running", Phase: RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 		Target: &ManagedRuntimeTarget{
 			Host: "203.0.113.10", PublicIP: "203.0.113.10", SSHUser: "ubuntu", SSHPort: 22, Source: "test-lease",
 		},
@@ -1320,7 +1320,7 @@ func TestProvisionHandler_AutoDeployManagedCloudFailsWithoutRuntimeAddress(t *te
 				LeaseID:      "lease-no-address",
 				Provider:     "centron",
 				DesiredState: "running",
-				Phase:        RuntimePhaseLeaseReady,
+				Phase:        RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 			}},
 			SimulationGate: &fakeRuntimeRunner{name: "simulate"},
 		},
@@ -1368,7 +1368,7 @@ func runQueuedManagedAutoDeploy(t *testing.T, fixture queuedManagedAutoDeployFix
 	order := []string{}
 	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
 		LeaseID: fixture.leaseID, Provider: fixture.provider,
-		DesiredState: "running", Phase: RuntimePhaseLeaseReady,
+		DesiredState: "running", Phase: RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 	}}
 	cfg := &ProvisionConfig{
 		WorkDir: t.TempDir(), SpecBaseDir: t.TempDir(),
@@ -1496,7 +1496,7 @@ func TestProvisionHandler_AutoDeployBoundsManagedRuntimeTargetResolverHang(t *te
 				LeaseID:      "lease-hanging-target",
 				Provider:     "centron",
 				DesiredState: "running",
-				Phase:        RuntimePhaseLeaseReady,
+				Phase:        RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 			}},
 			RuntimeTargetResolver: resolver,
 			SimulationGate:        &fakeRuntimeRunner{name: "simulate"},
@@ -1576,7 +1576,7 @@ func TestProvisionHandler_AutoDeployStopsWaitingOnTerminalResolverErrors(t *test
 			collector := &fakeRuntimeDiagnosticsCollector{}
 			lease := &ManagedLeaseResult{
 				LeaseID: tc.leaseID, OperationID: tc.operationID, Provider: "ionos",
-				DesiredState: "running", Phase: RuntimePhaseLeaseReady,
+				DesiredState: "running", Phase: RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 			}
 			if tc.wantDiagnostics {
 				lease.Target = &ManagedRuntimeTarget{
@@ -1631,7 +1631,7 @@ func TestProvisionHandler_AutoDeployManagedCloudUsesOwnerAsLocalTenantFallback(t
 		LeaseID:      "lease-local-tenant",
 		Provider:     "centron",
 		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
+		Phase:        RuntimePhaseLeaseReady, ProviderReadyAt: time.Now().UTC(),
 	}}
 	resolver := &fakeManagedRuntimeTargetResolver{}
 	cfg := &ProvisionConfig{
