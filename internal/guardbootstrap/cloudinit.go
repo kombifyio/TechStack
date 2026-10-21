@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
 )
 
@@ -60,16 +61,16 @@ type CloudInitInput struct {
 type HostPrepProfile string
 
 const (
-	HostPrepProfileStackKitReadyUbuntu2604V1 HostPrepProfile = "stackkit-ready-ubuntu-26.04-v1"
+	HostPrepProfileStackKitReadyUbuntu2604V1 HostPrepProfile = "stackkit-ready-" + guardcompat.ProfileReleaseID + "-v1"
 	// HostPrepProfileIONOSUbuntu2404DockerV1 is the IONOS Ubuntu image
 	// contract. It now prepares the same StackKit-ready host as
 	// HostPrepProfileStackKitReadyUbuntu2404V1 so Cloud host-security can
 	// enable nftables, fail2ban, and unattended-upgrades.
-	HostPrepProfileIONOSUbuntu2404DockerV1 HostPrepProfile = "ionos-ubuntu-24.04-docker-v1"
+	HostPrepProfileIONOSUbuntu2404DockerV1 HostPrepProfile = "ionos-" + guardcompat.ProfileCompatibilityReleaseID + "-docker-v1"
 	// HostPrepProfileStackKitReadyUbuntu2404V1 is the provider-neutral
-	// Ubuntu 24.04 compatibility contract used by existing explicit image choices
+	// compatibility contract used by existing explicit image choices
 	// so apply does not start without host-security packages.
-	HostPrepProfileStackKitReadyUbuntu2404V1 HostPrepProfile = "stackkit-ready-ubuntu-24.04-v1"
+	HostPrepProfileStackKitReadyUbuntu2404V1 HostPrepProfile = "stackkit-ready-" + guardcompat.ProfileCompatibilityReleaseID + "-v1"
 )
 
 func (p HostPrepProfile) stackKitReady() bool {
@@ -78,13 +79,14 @@ func (p HostPrepProfile) stackKitReady() bool {
 
 // UbuntuHostPrepProfile preserves the OS version of an explicit image choice.
 func UbuntuHostPrepProfile(version string) HostPrepProfile {
-	if version == "26.04" {
+	switch version {
+	case guardcompat.ProfileReleaseVersion:
 		return HostPrepProfileStackKitReadyUbuntu2604V1
-	}
-	if version == "24.04" {
+	case guardcompat.ProfileCompatibilityReleaseVersion:
 		return HostPrepProfileStackKitReadyUbuntu2404V1
+	default:
+		return ""
 	}
-	return ""
 }
 
 // ExecutionChannelUser is the login the control plane keeps on a managed node.
