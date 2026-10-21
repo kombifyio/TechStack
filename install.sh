@@ -929,45 +929,6 @@ install_stackkit_operations_process() {
     echo "${GREEN}✓ Installed the digest-identical StackKits operations process.${NC}"
 }
 
-ensure_stackkit_container_runtime() {
-    if [ "$OS" != "linux" ] || [ "$WORKER_REGISTERED" != "1" ] || [ "$AS_SERVICE" != "1" ]; then
-        return 0
-    fi
-    if command -v docker >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
-        echo "${GREEN}✓ StackKits container runtime is ready.${NC}"
-        return 0
-    fi
-    if ! command -v apt-get >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
-        echo "${RED}A supported container runtime is required for the StackKits rollout.${NC}" >&2
-        return 1
-    fi
-
-    echo "${CYAN}Preparing the StackKits container runtime...${NC}"
-    timeout 240 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-        -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
-        -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 update || true
-    COMPOSE_PACKAGE=""
-    if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
-        COMPOSE_PACKAGE="docker-compose-v2"
-    elif apt-cache show docker-compose-plugin >/dev/null 2>&1; then
-        COMPOSE_PACKAGE="docker-compose-plugin"
-    fi
-    if [ -n "$COMPOSE_PACKAGE" ]; then
-        timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-            -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
-            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
-            install -y ca-certificates curl docker.io "$COMPOSE_PACKAGE"
-    else
-        timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-            -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
-            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
-            install -y ca-certificates curl docker.io
-    fi
-    sudo systemctl enable --now docker >/dev/null
-    sudo docker info >/dev/null
-    echo "${GREEN}✓ StackKits container runtime installed and ready.${NC}"
-}
-
 # Install SystemD service (Linux only)
 install_systemd_service() {
     if [ "$OS" != "linux" ]; then
@@ -1247,16 +1208,17 @@ main() {
     bootstrap_phase enrollment "Guard binaries are installed; redeeming the managed server enrollment."
     worker_register_if_env_set
 
-    bootstrap_phase stackkits-host "Preparing the managed server for the StackKits rollout."
-    if [ "$SUBSTRATE_HOST" != 1 ]; then
-        ensure_stackkit_container_runtime
-    fi
-
+    # Activate the authenticated Guard before package work. Container readiness
+    # belongs to StackKit rollout, and must not hold the first heartbeat hostage.
     # Install service if requested
     if [ "$AS_SERVICE" = "1" ]; then
         BOOTSTRAP_PHASE="service"
         install_systemd_service
     fi
+
+    # Enrollment ends here. The existing managed host-prep service and rollout
+    # bootstrap own Docker and StackKits readiness; no package manager belongs
+    # in this bounded identity/service installation phase.
 
     echo ""
     echo "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

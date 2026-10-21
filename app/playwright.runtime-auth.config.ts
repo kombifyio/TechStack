@@ -38,7 +38,11 @@ function requireLiveProductURL(value: string): string {
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: ["runtime-auth-smoke.spec.ts", "embedded-sso-session.spec.ts"],
+  testMatch: [
+    "runtime-auth-smoke.spec.ts",
+    "embedded-sso-session.spec.ts",
+    "runtime-dashboard-load.spec.ts",
+  ],
   timeout: 300_000,
   expect: {
     timeout: 30_000,

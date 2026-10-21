@@ -258,11 +258,8 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 		return execution.mode == guardModeLegacyRoot && guardLayoutMigrationEligible("") &&
 			signedGuardReleaseAvailable(ctx, downloadHTTP, enrollment, log) && migrateGuardLayout(ctx, log)
 	}
-	if tryMigration(runCtx) {
-		// Prepare the executor before the independent supervisor stops the
-		// legacy daemon, transfers custody and starts the reversible split trial.
-		return nil
-	}
+	// Signed layout migration is package convergence. Start it after the first
+	// authenticated heartbeat, with the existing convergence readiness fence.
 	manifestPaths := splitNonEmpty(cfg.accessManifest)
 	collector := httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{
 		AccessManifestFiles: manifestPaths,

@@ -171,8 +171,10 @@ type ManagedLeaseResult struct {
 	DesiredState          string
 	BillingMode           string
 	Phase                 RuntimePhase
-	IdempotentReplay      bool
-	Target                *ManagedRuntimeTarget
+	// ProviderReadyAt is the durable present receipt time, never the poll time.
+	ProviderReadyAt  time.Time
+	IdempotentReplay bool
+	Target           *ManagedRuntimeTarget
 }
 
 type ManagedLeaseManager interface {

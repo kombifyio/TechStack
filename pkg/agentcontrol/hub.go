@@ -340,20 +340,22 @@ func (h *Hub) AwaitStackKitCommandForTenant(ctx context.Context, tenantID, comma
 	return h.awaitDurable(ctx, tenantID, commandID)
 }
 
-// awaitDurable polls the command's outcome, fast at first and every two
-// seconds once the command has run for five minutes.
+// awaitDurable polls the command's outcome. Each read is a short tenant
+// transaction on the shared pool, so the interval starts at 200 ms and grows
+// to one second within about two seconds, and to two seconds once the command
+// has run for five minutes. A Guard needs at least a poll cycle to pick a
+// command up, so a faster loop only spends pooled connections.
 func (h *Hub) awaitDurable(ctx context.Context, tenantID, commandID string) (*agentpb.StackKitResult, error) {
 	started := time.Now()
+	interval := 200 * time.Millisecond
 	for {
 		result, done, err := h.readDurableOutcome(ctx, tenantID, commandID)
 		if err != nil || done {
 			return result, err
 		}
-		interval := 200 * time.Millisecond
-		switch elapsed := time.Since(started); {
-		case elapsed > 5*time.Minute:
+		if time.Since(started) > 5*time.Minute {
 			interval = 2 * time.Second
-		case elapsed > 30*time.Second:
+		} else if interval = interval * 3 / 2; interval > time.Second {
 			interval = time.Second
 		}
 		timer := time.NewTimer(interval)

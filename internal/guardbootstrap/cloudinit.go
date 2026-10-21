@@ -146,7 +146,7 @@ func guardInstallerCommand(readinessCommand, installerCommand, failureReport str
 	if readinessCommand = strings.TrimSpace(readinessCommand); readinessCommand != "" {
 		pipeline = readinessCommand + " && " + installerCommand
 	}
-	return "set -o pipefail; " + pipeline + " || { " + failureReport + "; }"
+	return "set -o pipefail; timeout --signal=TERM --kill-after=1 54 /bin/bash -o pipefail -c " + shellQuote(pipeline) + " || { " + failureReport + "; }"
 }
 
 // GuardBootstrapScriptPath is the root-only first-boot script that carries the
@@ -181,19 +181,25 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 	// KOMBI_TOKEN is exported by the script below; it reaches the installer as
 	// environment, never as an argument.
 	installerCommand := fmt.Sprintf(
-		"curl -fsSL --retry 5 --retry-connrefused --retry-delay 10 %s | KOMBI_SERVER=%s bash",
+		"curl -fsSL --connect-timeout 3 --max-time 10 --retry 2 --retry-max-time 20 --retry-connrefused --retry-delay 1 %s | KOMBI_SERVER=%s bash",
 		shellQuote(origin+"/install.sh"), shellQuote(origin),
 	)
 	failureReport := fmt.Sprintf(
-		"status=$?; printf 'Authorization: Bearer %%s\\n' \"$KOMBI_TOKEN\" | curl -sS --max-time 5 --connect-timeout 2 -X POST %s -H @- -H %s -H %s --data-binary %s >/dev/null 2>&1 || true; exit $status",
+		"status=$?; reason=installer_failed; case $status in 42) reason=bootstrap_tools_missing;; 43) reason=ssh_firewall_failed;; 44) reason=execution_channel_failed;; 124|137) reason=first_boot_deadline_exceeded;; esac; printf 'Authorization: Bearer %%s\\n' \"$KOMBI_TOKEN\" | curl -sS --max-time 5 --connect-timeout 2 -X POST %s -H @- -H %s -H %s -H \"X-Kombify-Bootstrap-Reason: $reason\" --data-binary %s >/dev/null 2>&1 || true; exit $status",
 		shellQuote(origin+"/api/v1/workers/bootstrap/logs"),
 		shellQuote("X-Kombify-Log-Level: error"),
 		shellQuote("X-Kombify-Log-Phase: cloud-init"),
 		shellQuote("Cloud-init could not establish the execution channel or execute the Techstack installer."),
 	)
-	readinessCommand := ""
+	readinessCommand := "command -v curl >/dev/null && command -v systemctl >/dev/null || exit 42"
+	// cloud-init's packages module runs before runcmd, outside this deadline.
+	// A missing firewall must spend the same bounded bootstrap budget instead.
+	readinessCommand += "; if ! command -v ufw >/dev/null; then command -v apt-get >/dev/null || exit 42; timeout --signal=TERM --kill-after=1 12 env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=3 -o Acquire::Retries=0 -o Acquire::http::Timeout=3 -o Acquire::https::Timeout=3 install -y --no-install-recommends ufw || exit 42; fi; command -v ufw >/dev/null || exit 42"
+	for _, firewallCommand := range ubuntuSSHFirewallCommands() {
+		readinessCommand += "; " + strings.Join(firewallCommand, " ") + " || exit 43"
+	}
 	if in.HostPrepProfile.stackKitReady() {
-		readinessCommand = executionChannelBootstrapPath
+		readinessCommand += "; " + executionChannelBootstrapPath + " || exit 44"
 	}
 	command := guardInstallerCommand(readinessCommand, installerCommand, failureReport)
 	// The script is embedded in a YAML block scalar below, one line per line.
@@ -220,9 +226,7 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		document.WriteString("hostname: " + hostname + "\n")
 		document.WriteString("preserve_hostname: false\n")
 	}
-	document.WriteString("package_update: true\n")
-	document.WriteString("packages:\n")
-	document.WriteString("  - ufw\n")
+	document.WriteString("package_update: false\n")
 	document.WriteString("write_files:\n")
 	// The capability file is root-only; it is created before anything runs.
 	document.WriteString("  - path: " + GuardBootstrapScriptPath + "\n")
@@ -258,23 +262,12 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 	document.WriteString("output:\n")
 	document.WriteString("  all: '| tee -a " + BootstrapLogPath + "'\n")
 	document.WriteString("runcmd:\n")
-	// Provider NICs are not a sufficient host policy. Establish an SSH-only
-	// first-boot baseline before downloading or running the Guard installer;
-	// StackKit rollout must explicitly open any later published service ports.
-	for _, command := range ubuntuSSHFirewallCommands() {
-		quoted := make([]string, len(command))
-		for i, argument := range command {
-			quoted[i] = fmt.Sprintf("%q", argument)
-		}
-		document.WriteString("  - [" + strings.Join(quoted, ", ") + "]\n")
-	}
-	if in.HostPrepProfile.stackKitReady() {
-		document.WriteString("  - [\"" + executionChannelBootstrapPath + "\"]\n")
-		document.WriteString("  - [\"/bin/systemctl\", \"enable\", \"--now\", \"--no-block\", \"kombify-host-prep-v2.service\"]\n")
-	}
 	// List form: cloud-init execs the argv directly, so no second shell parses
 	// the document and YAML cannot be escaped out of.
 	document.WriteString("  - [\"" + GuardBootstrapScriptPath + "\"]\n")
+	if in.HostPrepProfile.stackKitReady() {
+		document.WriteString("  - [\"/bin/systemctl\", \"enable\", \"--now\", \"--no-block\", \"kombify-host-prep-v2.service\"]\n")
+	}
 	return []byte(document.String()), nil
 }
 

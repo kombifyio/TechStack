@@ -30,7 +30,8 @@ var (
 	ErrAutoDeployAdmissionUnavailable = errors.New("auto-deploy canonical Guard admission is unavailable")
 	// ErrAutoDeployAdmissionTimeout terminates the bounded wait without ever
 	// falling back to provider metadata, Worker approval, or legacy LastSeen.
-	ErrAutoDeployAdmissionTimeout = errors.New("auto-deploy canonical Guard admission timed out")
+	ErrAutoDeployAdmissionTimeout      = errors.New("auto-deploy canonical Guard admission timed out")
+	ErrAutoDeployAdmissionPrerequisite = errors.New("canonical Guard admission prerequisite failed")
 )
 
 // GuardHeartbeatTimeoutReason names a provision that ended because the created

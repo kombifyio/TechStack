@@ -33,7 +33,7 @@ func (r *enrollmentWindowTestResolver) ResolveManagedRuntimeTarget(ctx context.C
 }
 
 func TestManagedRuntimeEnrollmentWaitStartsBeforeFirstResolverAttempt(t *testing.T) {
-	now := time.Date(2026, time.July, 19, 9, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	job := enrollmentWindowTestJob("job-first-attempt", "lease-first-attempt")
 	resolver := &enrollmentWindowTestResolver{
 		job: job,
@@ -70,8 +70,9 @@ func TestManagedRuntimeEnrollmentWaitClampsAttemptAndResumeToRemainingWindow(t *
 		t.Fatalf("bounded resume delay = %s, want %s", got, remaining)
 	}
 
-	startedAt := time.Date(2026, time.July, 19, 9, 0, 0, 0, time.UTC)
-	now := startedAt.Add(55 * time.Second)
+	// Keep one second of the owner's minute for recording the outcome.
+	startedAt := time.Now().UTC().Add(-54 * time.Second)
+	now := startedAt.Add(54 * time.Second)
 	job := enrollmentWindowTestJob("job-bounded-resume", "lease-bounded-resume")
 	job.Result[managedRuntimeEnrollmentWaitStartedAtField] = startedAt.Format(time.RFC3339Nano)
 	resolver := &enrollmentWindowTestResolver{
@@ -97,7 +98,7 @@ func TestManagedRuntimeEnrollmentWaitClampsAttemptAndResumeToRemainingWindow(t *
 }
 
 func TestManagedRuntimeEnrollmentWaitClearsMarkerWhenAttemptExhaustsDeadline(t *testing.T) {
-	startedAt := time.Date(2026, time.July, 19, 9, 0, 0, 0, time.UTC)
+	startedAt := time.Now().UTC().Add(-55 * time.Second)
 	now := startedAt.Add(55 * time.Second)
 	job := enrollmentWindowTestJob("job-exhausted-during-attempt", "lease-exhausted-during-attempt")
 	job.Result[managedRuntimeEnrollmentWaitStartedAtField] = startedAt.Format(time.RFC3339Nano)
@@ -128,7 +129,7 @@ func TestManagedRuntimeEnrollmentWaitClearsMarkerWhenAttemptExhaustsDeadline(t *
 }
 
 func TestManagedRuntimeEnrollmentWaitClearsMarkerOnTerminalReturns(t *testing.T) {
-	startedAt := time.Date(2026, time.July, 19, 9, 0, 0, 0, time.UTC)
+	startedAt := time.Now().UTC().Add(-time.Second)
 	tests := []struct {
 		name   string
 		ctx    context.Context
@@ -160,9 +161,12 @@ func TestManagedRuntimeEnrollmentWaitClearsMarkerOnTerminalReturns(t *testing.T)
 				ctx = context.Background()
 			}
 
-			_, _ = resolveManagedRuntimeTargetWithWaitClock(
+			target, err := resolveManagedRuntimeTargetWithWaitClock(
 				ctx, cfg, job, &core.KombinationSpec{}, nil, func() time.Time { return now },
 			)
+			if tt.err == nil && (err != nil || target == nil) {
+				t.Fatalf("successful terminal return = %v, %v; want target and nil error", target, err)
+			}
 			if got := stringFromMap(job.Snapshot().Result, managedRuntimeEnrollmentWaitStartedAtField); got != "" {
 				t.Fatalf("terminal return retained wait start %q", got)
 			}

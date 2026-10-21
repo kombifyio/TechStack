@@ -3012,6 +3012,36 @@ test.describe.serial("Runtime E2E scenarios", () => {
             if (isTerminalJobState(observed.state)) provisionJob = observed;
             const result = observed.result as
               Record<string, unknown> | undefined;
+            const guardStarted = Date.parse(
+              String(result?.auto_deploy_guard_wait_started_at ?? ""),
+            );
+            if (Number.isFinite(guardStarted)) {
+              const admittedAt = Date.parse(
+                String(result?.auto_deploy_guard_verified_at ?? ""),
+              );
+              const targetVerifiedAt = Date.parse(
+                String(result?.managed_runtime_target_verified_at ?? ""),
+              );
+              const guardEnded =
+                Number.isFinite(admittedAt) && Number.isFinite(targetVerifiedAt)
+                  ? Math.max(admittedAt, targetVerifiedAt)
+                  : isTerminalJobState(observed.state)
+                    ? Date.parse(String(observed.completed_at ?? ""))
+                    : Date.now();
+              expect(
+                guardEnded - guardStarted,
+                "Guard admission and target custody must finish within 60s of provider-ready, including RPCs and backoff",
+              ).toBeLessThanOrEqual(60_000);
+              if (
+                Number.isFinite(admittedAt) ||
+                isTerminalJobState(observed.state)
+              ) {
+                expect(
+                  result?.guard_admission_reason,
+                  "A finished Guard phase must state its exact outcome",
+                ).toBeTruthy();
+              }
+            }
             const observedLease = String(result?.lease_id ?? "").trim();
             if (observedLease) {
               if (leaseId && leaseId !== observedLease)
@@ -3076,6 +3106,20 @@ test.describe.serial("Runtime E2E scenarios", () => {
           session.apiBase,
         );
         expect(status.enrollment_status).toBe("enrolled");
+        expect(
+          Number.isFinite(
+            Date.parse(
+              String(job.result?.auto_deploy_guard_wait_started_at ?? ""),
+            ),
+          ),
+          "Managed enrollment must retain the original provider-ready timestamp",
+        ).toBe(true);
+        expect(
+          Number.isFinite(
+            Date.parse(String(job.result?.auto_deploy_guard_verified_at ?? "")),
+          ),
+          "Enrolled provision must retain its successful canonical Guard admission",
+        ).toBe(true);
         if (!day2Recorded) {
           managedObservationPhase("day2", MANAGED_DAY2_BUDGET_MS);
           day2Evidence = await managedDay2Evidence(
@@ -3699,9 +3743,7 @@ async function enrollWithRunToken(
       },
     );
     if (!response.ok) {
-      throw new Error(
-        `Connection token mint failed (HTTP ${response.status})`,
-      );
+      throw new Error(`Connection token mint failed (HTTP ${response.status})`);
     }
     const minted = (await response.json()) as { data?: { token?: string } };
     pairing = String(minted.data?.token ?? "");

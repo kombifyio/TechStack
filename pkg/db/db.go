@@ -52,6 +52,11 @@ var ErrSQLStoreDisabled = errors.New("sql store disabled")
 type DB struct {
 	*sql.DB
 	backend StoreBackend
+	// probe is a separate one-connection handle for health probes. A ping
+	// through the shared pool waits behind every busy request, so a reachable
+	// database behind a saturated pool would look dead and readiness would
+	// restart the only instance.
+	probe *sql.DB
 }
 
 // Config holds database configuration.
@@ -66,14 +71,23 @@ type Config struct {
 	managedTestRole string
 }
 
-// DefaultConfig returns conservative connection defaults. ConfigFromEnv
-// selects Postgres when DATABASE_URL is present; production startup rejects
-// the legacy compatibility backend.
+// DefaultConfig returns the connection defaults. ConfigFromEnv selects
+// Postgres when DATABASE_URL is present; production startup rejects the legacy
+// compatibility backend.
+//
+// The control-plane pool is sized for the SaaS worker fleet, not for a single
+// operator. Measured on 2026-10-20 (13 Guards, about 800 requests a minute):
+// Guard inventory projections alone kept 9 to 10 transactions open for 10 to
+// 14 s each, so the former 10-connection pool was already full before a
+// dashboard, a command poll or a readiness ping asked for one. 40 leaves room
+// for the bounded inventory budget, worker polls, dashboard bursts and the
+// background loops; the runtime database admits 500 connections, shared by the
+// stable and Preview services.
 func DefaultConfig() Config {
 	return Config{
 		Backend:         StoreBackendPocketBase,
-		MaxOpenConns:    10,
-		MaxIdleConns:    5,
+		MaxOpenConns:    40,
+		MaxIdleConns:    20,
 		ConnMaxLifetime: 30 * time.Minute,
 		ConnMaxIdleTime: 5 * time.Minute,
 	}
@@ -187,10 +201,41 @@ func OpenContext(ctx context.Context, cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	// sql.Open connects lazily: the probe holds a connection only once a
+	// health check uses it.
+	probe, err := sql.Open(driverName, cfg.DSN)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to open database probe: %w", err)
+	}
+	probe.SetMaxOpenConns(1)
+	probe.SetMaxIdleConns(1)
+	probe.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+	probe.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
+
 	return &DB{
 		DB:      db,
 		backend: cfg.Backend,
+		probe:   probe,
 	}, nil
+}
+
+// Probe returns the handle health checks use to prove the database answers,
+// independent of how busy the shared pool is. A DB built without one falls
+// back to the shared pool.
+func (db *DB) Probe() *sql.DB {
+	if db.probe != nil {
+		return db.probe
+	}
+	return db.DB
+}
+
+// Close closes the shared pool and the health probe.
+func (db *DB) Close() error {
+	if db.probe != nil {
+		_ = db.probe.Close()
+	}
+	return db.DB.Close()
 }
 
 // Migrate applies governed migrations, or verifies the existing schema in verify mode.

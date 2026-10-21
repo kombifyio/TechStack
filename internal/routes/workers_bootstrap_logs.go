@@ -7,6 +7,7 @@ import (
 	"time"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
@@ -58,6 +59,30 @@ func (h workerRouteHandlers) ingestBootstrapLog(e *httpx.Event) error {
 		LeaseID: leaseID, ServerID: serverID, RuntimeActionID: operationID, RuntimeTargetID: agentID,
 		Fields: fields,
 	})
+	// Ordinary installer errors are diagnostics, not terminal admission facts.
+	// Only the bounded cloud-init failure reporter supplies a known reason;
+	// its operation binding comes from the authenticated pairing capability.
+	reason := strings.TrimSpace(e.Request.Header.Get("X-Kombify-Bootstrap-Reason"))
+	terminal := false
+	switch reason {
+	case "bootstrap_tools_missing", "ssh_firewall_failed", "execution_channel_failed", "first_boot_deadline_exceeded", "installer_failed":
+		terminal = true
+	}
+	if terminal && strings.EqualFold(level, "error") && phase == "cloud-init" && leaseID != "" && operationID != "" {
+		if _, err := h.applyServerEvent(e.Request.Context(), controlplane.ServerEvent{
+			TenantID: token.TenantID, ServerID: serverID,
+			Authority: controlplane.ServerEventAuthorityControlPlane,
+			Source:    "managed-bootstrap", SourceID: operationID, ObservedAt: entry.Timestamp,
+			Runtime: controlplane.ServerRuntime{Metadata: map[string]any{
+				"guard_bootstrap_failure": map[string]any{
+					"reason": reason, "operation_id": operationID,
+					"observed_at": entry.Timestamp.Format(time.RFC3339Nano),
+				},
+			}},
+		}); err != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Bootstrap failure projection is unavailable", nil)
+		}
+	}
 	e.Response.Header().Set("Cache-Control", "no-store")
 	return e.JSON(http.StatusAccepted, map[string]any{"data": map[string]any{"id": entry.ID}})
 }

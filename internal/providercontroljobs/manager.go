@@ -199,6 +199,7 @@ func (m *Manager) CreateOrBindLease(
 		DesiredState:          string(vmlease.DesiredStateRunning),
 		BillingMode:           string(vmlease.BillingModeSubscription),
 		Phase:                 phase,
+		ProviderReadyAt:       result.Operation.Head.PhaseEnteredAt,
 		IdempotentReplay:      !result.Created,
 	}, nil
 }

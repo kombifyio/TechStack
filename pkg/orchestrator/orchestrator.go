@@ -485,7 +485,10 @@ func (o *Orchestrator) admitProvisionAutoDeploy(ctx context.Context, req jobs.Au
 	ownerID := strings.TrimSpace(req.OwnerID)
 	leaseID := strings.TrimSpace(req.LeaseID)
 	if stackID == "" || tenantID == "" || ownerID == "" || leaseID == "" {
-		return fmt.Errorf("%w: exact stack, tenant, owner, and lease are required", ErrDeployRuntimeEvidenceUnavailable)
+		return fmt.Errorf("%w: phase=identity reason=exact_binding_missing", jobs.ErrAutoDeployAdmissionPrerequisite)
+	}
+	if o.canonicalServerRuntimeStore() == nil || o.effectiveStackStore() == nil || o.leaseLister == nil {
+		return fmt.Errorf("%w: phase=authority reason=canonical_store_unavailable", jobs.ErrAutoDeployAdmissionPrerequisite)
 	}
 	stack, err := o.findControlPlaneStackForJob(ctx, stackID, ProvisionStackOptions{
 		TenantID:         tenantID,
@@ -494,23 +497,59 @@ func (o *Orchestrator) admitProvisionAutoDeploy(ctx context.Context, req jobs.Au
 		RequiredServerID: runtimeidentity.LeaseServerID(leaseID),
 	})
 	if err != nil {
+		if errors.Is(err, controlplane.ErrNotFound) {
+			return fmt.Errorf("%w: phase=identity reason=stack_not_found", jobs.ErrAutoDeployAdmissionPrerequisite)
+		}
 		return fmt.Errorf("%w: %v", ErrDeployRuntimeEvidenceUnavailable, err)
 	}
 	if stack.tenantID != tenantID || stack.ownerID != ownerID {
-		return fmt.Errorf("%w: auto-deploy identity binding mismatch", ErrDeployRuntimeEvidenceUnavailable)
+		return fmt.Errorf("%w: phase=identity reason=owner_tenant_mismatch", jobs.ErrAutoDeployAdmissionPrerequisite)
 	}
 	lease, err := o.exactManagedRuntimeLeaseForStack(ctx, stack, leaseID)
 	if err != nil {
+		if errors.Is(err, stackrouting.ErrInvalid) || errors.Is(err, controlplane.ErrNotFound) {
+			return fmt.Errorf("%w: phase=provider reason=lease_not_native_active", jobs.ErrAutoDeployAdmissionPrerequisite)
+		}
 		return fmt.Errorf("%w: %v", ErrManagedRuntimeLeaseNotNativeActive, err)
 	}
 	if lease == nil {
-		return ErrManagedRuntimeLeaseNotNativeActive
+		return fmt.Errorf("%w: phase=provider reason=lease_not_native_active", jobs.ErrAutoDeployAdmissionPrerequisite)
 	}
 	serverID := runtimeidentity.LeaseServerID(leaseID)
 	if serverID == "" {
 		return fmt.Errorf("%w: canonical lease server id is unavailable", ErrDeployRuntimeEvidenceUnavailable)
 	}
-	return o.requireExactManagedRuntimeDeploy(ctx, stack, leaseID, serverID)
+	runtimes, observedAt, err := o.canonicalDeployRuntimeEvidence(ctx, stack.id, stack)
+	if err != nil {
+		return err
+	}
+	if exactManagedRuntimeHasDeployEligibleRuntime(stack, leaseID, serverID, runtimes, observedAt) {
+		return nil
+	}
+	for _, runtime := range runtimes {
+		if runtime.ID != serverID || runtime.LeaseID != leaseID {
+			continue
+		}
+		if runtime.TenantID != tenantID || runtime.OwnerSubjectID != ownerID || runtime.StackID != stackID {
+			return fmt.Errorf("%w: phase=identity reason=server_binding_mismatch", jobs.ErrAutoDeployAdmissionPrerequisite)
+		}
+		if failure, ok := runtime.Metadata["guard_bootstrap_failure"].(map[string]any); ok && req.OperationID != "" {
+			operationID, _ := failure["operation_id"].(string)
+			reason, _ := failure["reason"].(string)
+			observed, _ := failure["observed_at"].(string)
+			failedAt, parseErr := time.Parse(time.RFC3339Nano, observed)
+			deadline, bounded := ctx.Deadline()
+			if operationID == req.OperationID && reason != "" && parseErr == nil && !failedAt.IsZero() &&
+				!failedAt.After(observedAt) && bounded && observedAt.Before(deadline) && ctx.Err() == nil {
+				return fmt.Errorf("%w: phase=bootstrap reason=%s", jobs.ErrAutoDeployAdmissionPrerequisite, reason)
+			}
+		}
+		switch runtime.LifecycleState {
+		case "failed", "decommissioning", "decommissioned", "archived":
+			return fmt.Errorf("%w: phase=bootstrap reason=%s", jobs.ErrAutoDeployAdmissionPrerequisite, firstNonEmptyString(runtime.LifecycleReasonCode, runtime.LifecycleState))
+		}
+	}
+	return ErrNoAssignedWorkers
 }
 
 func (o *Orchestrator) ConfigureManagedRuntimeLeases(lister ManagedRuntimeLeaseLister) {
