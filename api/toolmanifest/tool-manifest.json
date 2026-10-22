@@ -6451,7 +6451,8 @@
                 "resolve_custody",
                 "reboot",
                 "os_update_plan",
-                "os_update"
+                "os_update",
+                "re_pair"
               ],
               "type": "string"
             },
@@ -6468,6 +6469,25 @@
           "capabilities": {
             "description": "The Guard facts the control plane persisted for the server's worker, tenant scoped. No token hash and no key material; `credential_generation` is the integer the fenced credential rotation must echo as `expected_credential_generation`. Absent on a server without a Guard worker.",
             "properties": {
+              "binding_repair": {
+                "description": "Present while mutating commands stay refused until the owner pairs this server again. A Guard paired before 2026-10-17 is treated as missing its binding pin until it reports one.",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "guard_binding_repair_required"
+                    ],
+                    "type": "string"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "required",
+                  "code"
+                ],
+                "type": "object"
+              },
               "credential_generation": {
                 "format": "int64",
                 "minimum": 0,
@@ -6522,6 +6542,15 @@
               "guard_posture": {
                 "description": "How the Guard is isolated and how its latest update went. A Guard that reports nothing is legacy_root, never isolated.",
                 "properties": {
+                  "binding_pin": {
+                    "description": "Whether the Guard's root pin file holds a binding signing key. No key material.",
+                    "enum": [
+                      "present",
+                      "absent",
+                      "unreadable"
+                    ],
+                    "type": "string"
+                  },
                   "deny_mutations": {
                     "type": "boolean"
                   },
@@ -13482,6 +13511,52 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "repair_server_binding",
+      "title": "Prepare the pairing command that re-pairs this server",
+      "description": "Issues a one-time install command for a server whose Guard pinned no binding signing key. The token is returned once. Mutating commands stay refused until the server is paired again.",
+      "requiredCapability": "techstack.inventory.write",
+      "operationId": "repairServerBinding",
+      "http": {
+        "method": "POST",
+        "path": "/api/v1/servers/{serverId}/binding-repair"
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
         "openWorldHint": false
       }
     },

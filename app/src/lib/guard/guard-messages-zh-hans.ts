@@ -356,6 +356,18 @@ export const guardMessagesZhHans: Record<
     "已在修订 {revision} 将 {command} 释放为“{disposition}”,记录在 {actor} 名下。",
   "guard.outcomes.fenceReleased": "对这台服务器的阻止已解除。",
 
+  "guard.repair.title": "重新配对此服务器",
+  "guard.repair.body":
+    "在重新配对此服务器之前，会更改服务器的命令仍会被拒绝。观察命令仍会运行。",
+  "guard.repair.action": "重新配对此服务器",
+  "guard.repair.preparing": "正在准备配对命令…",
+  "guard.repair.command":
+    "在服务器上运行此配对命令。它会再次配对服务器并固定绑定密钥。",
+  "guard.repair.copy": "复制",
+  "guard.repair.copied": "已复制",
+  "guard.repair.unavailable": "无法准备配对命令。",
+  "guard.repair.failed": "配对命令无法准备。",
+
   "guard.ladder.title": "配对就绪情况",
   "guard.ladder.intro": "每一步都对照控制平面的记录进行检查,而不是想当然。",
   "guard.ladder.bound": "已绑定",

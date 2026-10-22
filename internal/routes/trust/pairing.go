@@ -36,6 +36,9 @@ type pairingTokenRequest struct {
 	ServerRemoteAuthMethod  string   `json:"server_remote_auth_method"`
 	ServerRemoteSSHKeyLabel string   `json:"server_remote_ssh_key_label"`
 	ServerRemoteUseSudo     bool     `json:"server_remote_use_sudo"`
+	// plannedServerID pins the token to one existing server. It is not part of
+	// the public JSON body; only WithPlannedServer sets it.
+	plannedServerID string
 }
 
 const (
@@ -183,6 +186,13 @@ func createPairingTokenFromStore(stores RouteStores) func(e *httpx.Event) error 
 // pairingTokenRequest field-for-field.
 type PairingTokenParams = pairingTokenRequest
 
+// WithPlannedServer returns a copy of req that pairs one existing server.
+// The public request body cannot set this.
+func WithPlannedServer(req PairingTokenParams, serverID string) PairingTokenParams {
+	req.plannedServerID = strings.TrimSpace(serverID)
+	return req
+}
+
 // MintedStackPairing is the outcome of MintStackPairingToken. The raw Token is
 // a live enrollment credential; callers must not persist it anywhere except
 // the registration job result (where the add-server wizard reads it).
@@ -268,7 +278,7 @@ func MintStackPairingTokenOnly(ctx context.Context, stores RouteStores, tenantID
 		ExpiresAt:      &expiresAt,
 		Metadata: pairingTokenMetadata(
 			stack, req.ServerProvisioningMode, req.EnvironmentClass, req.NodeRole, req.StackKit, req.Services,
-			req.SpecNodeID, req.ServerRemoteHost, req.ServerRemotePort, req.ServerRemoteUser,
+			req.SpecNodeID, req.plannedServerID, req.ServerRemoteHost, req.ServerRemotePort, req.ServerRemoteUser,
 			req.ServerRemoteAuthMethod, req.ServerRemoteSSHKeyLabel, req.ServerRemoteUseSudo,
 		),
 	})
@@ -448,7 +458,7 @@ func pairingTokenMetadata(
 	stack *controlplane.Stack,
 	serverMode, environmentClass, nodeRole, stackKit string,
 	services []string,
-	specNodeID, remoteHost string,
+	specNodeID, plannedServerID, remoteHost string,
 	remotePort *int,
 	remoteUser, remoteAuthMethod, remoteCredentialRef string,
 	remoteUseSudo bool,
@@ -461,9 +471,12 @@ func pairingTokenMetadata(
 	}
 	if nodeID := strings.TrimSpace(specNodeID); nodeID != "" {
 		metadata["spec_node_id"] = nodeID
-		if stack != nil {
+		if stack != nil && strings.TrimSpace(plannedServerID) == "" {
 			metadata["planned_server_id"] = runtimeidentity.StackServerID(stack.ID, nodeID)
 		}
+	}
+	if planned := strings.TrimSpace(plannedServerID); planned != "" {
+		metadata["planned_server_id"] = planned
 	}
 	if nodeRole == "substrate" {
 		delete(metadata, "stackkit_foundation")

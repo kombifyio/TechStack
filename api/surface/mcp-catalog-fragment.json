@@ -4,7 +4,7 @@
   "source": {
     "product": "techstack",
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "8beaeb1e7327b899aa97f3ad9debe1e91c810e8ffe1cb5d809b54f51ad000202"
+    "sha256": "bfc03cfe92a375331c59b6a82b248613eb5ddb166a2c154e96172f62df48dac0"
   },
   "tools": [
     {
@@ -6643,6 +6643,60 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.repair_server_binding",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "repair_server_binding",
+      "alias": "techstack.repair_server_binding",
+      "title": "Prepare the pairing command that re-pairs this server",
+      "description": "Issues a one-time install command for a server whose Guard pinned no binding signing key. The token is returned once. Mutating commands stay refused until the server is paired again.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/repair_server_binding",
+      "auditEvent": "mcp.customer.techstack.inventory.repair_server_binding",
+      "operationIds": [
+        "techstack.repairServerBinding"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
     },
     {
       "toolId": "techstack.repair_stack_component",

@@ -421,6 +421,18 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
     "Se liberó {command} en la revisión {revision} como «{disposition}», registrado para {actor}.",
   "guard.outcomes.fenceReleased": "Se levantó el bloqueo de este servidor.",
 
+  "guard.repair.title": "Volver a emparejar este servidor",
+  "guard.repair.body":
+    "Los comandos que cambian el servidor siguen rechazados hasta que este servidor se empareje de nuevo. Las observaciones siguen funcionando.",
+  "guard.repair.action": "Volver a emparejar este servidor",
+  "guard.repair.preparing": "Preparando el comando de emparejamiento…",
+  "guard.repair.command":
+    "Ejecuta este comando de emparejamiento en el servidor. Vuelve a emparejar el servidor y fija la clave de vinculación.",
+  "guard.repair.copy": "Copiar",
+  "guard.repair.copied": "Copiado",
+  "guard.repair.unavailable": "No se pudo preparar un comando de emparejamiento.",
+  "guard.repair.failed": "No se pudo preparar el comando de emparejamiento.",
+
   "guard.ladder.title": "Preparación del emparejamiento",
   "guard.ladder.intro":
     "Cada paso se comprueba con lo que el plano de control ha registrado, no se da por supuesto.",

@@ -384,6 +384,18 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
     "حُرِّرت {command} عند المراجعة {revision} بوصفها «{disposition}»، ومسجَّلة باسم {actor}.",
   "guard.outcomes.fenceReleased": "رُفع الحظر عن هذا الخادم.",
 
+  "guard.repair.title": "أعد إقران هذا الخادم",
+  "guard.repair.body":
+    "تبقى الأوامر التي تغيّر الخادم مرفوضة إلى أن يُعاد إقران هذا الخادم. تستمر أوامر المراقبة.",
+  "guard.repair.action": "أعد إقران هذا الخادم",
+  "guard.repair.preparing": "جارٍ إعداد أمر الإقران…",
+  "guard.repair.command":
+    "شغّل أمر الإقران هذا على الخادم. يعيد إقران الخادم ويثبّت مفتاح الربط.",
+  "guard.repair.copy": "نسخ",
+  "guard.repair.copied": "تم النسخ",
+  "guard.repair.unavailable": "تعذّر إعداد أمر إقران.",
+  "guard.repair.failed": "تعذّر إعداد أمر الإقران.",
+
   "guard.ladder.title": "جاهزية الإقران",
   "guard.ladder.intro":
     "يُفحص كل خطوة مقابل ما سجّله مستوى التحكم، ولا يُفترض.",

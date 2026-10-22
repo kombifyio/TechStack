@@ -31,6 +31,7 @@ import (
 //	reboot             POST /api/v1/servers/{id}/actions {"action":"reboot"}
 //	os_update_plan     POST /api/v1/servers/{id}/actions {"action":"os_update_plan"}
 //	os_update          POST /api/v1/servers/{id}/actions {"action":"os_update"}
+//	re_pair            POST /api/v1/servers/{id}/binding-repair
 //
 // The three maintenance ids come from serverMaintenanceHandlers.advertisedActions
 // and are offered only when the maintenance route is wired, the node is an
@@ -52,6 +53,7 @@ const (
 	serverActionDetach            = "detach"
 	serverActionDecommission      = "decommission"
 	serverActionResolveCustody    = "resolve_custody"
+	serverActionRePair            = "re_pair"
 )
 
 // Stack action vocabulary. All of these route to
@@ -228,6 +230,38 @@ func (h serverRuntimeHandlers) applyStackKitActions(item *serverRuntimeResponse,
 	catalog, _ := configured.AdvancedOperations()
 	item.StackActions = append(item.StackActions, stackKitDay2Actions(item, capabilities, configured.Receipt(), catalog)...)
 	sort.Strings(item.StackActions)
+}
+
+// applyBindingRepair removes mutating StackKit actions while this server has
+// no pinned binding key, and advertises re-pair only when that route is wired.
+// An action this process does not know is treated as mutating.
+func (h serverRuntimeHandlers) applyBindingRepair(item *serverRuntimeResponse) {
+	if item == nil || item.Capabilities == nil || item.Capabilities.BindingRepair == nil || !item.Capabilities.BindingRepair.Required {
+		return
+	}
+	kept := make([]string, 0, len(item.StackActions))
+	for _, action := range item.StackActions {
+		if !stackActionMutates(action) {
+			kept = append(kept, action)
+		}
+	}
+	item.StackActions = kept
+	if h.bindingRepair == nil || slices.Contains(item.AllowedActions, serverActionRePair) {
+		return
+	}
+	actions := make([]string, len(item.AllowedActions), len(item.AllowedActions)+1)
+	copy(actions, item.AllowedActions)
+	item.AllowedActions = append(actions, serverActionRePair)
+	sort.Strings(item.AllowedActions)
+}
+
+func stackActionMutates(action string) bool {
+	switch action {
+	case serverStackActionPlan, serverStackActionVerify, serverStackActionDriftDetect, serverStackActionBackupStatus:
+		return false
+	default:
+		return true
+	}
 }
 
 // stackKitDay2Actions classifies already verified release and node observations.
