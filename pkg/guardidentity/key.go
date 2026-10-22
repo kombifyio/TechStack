@@ -66,36 +66,59 @@ func ParseJWK(raw []byte) (JWK, error) {
 	return jwk, nil
 }
 
-// PublicKey validates the JWK and returns the Ed25519 public key.
+// PublicKey validates the JWK and returns the Ed25519 public key. The x member
+// must be the canonical unpadded base64url form: the decoder skips CR and LF,
+// so without the re-encoding check one key could carry many thumbprints.
 func (j JWK) PublicKey() (ed25519.PublicKey, error) {
 	if j.Kty != jwkKeyType || j.Crv != jwkCurve {
 		return nil, errors.New("guard identity key must be OKP/Ed25519")
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(j.X)
-	if err != nil || len(raw) != ed25519.PublicKeySize {
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(j.X)
+	if err != nil || len(raw) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(raw) != j.X {
 		return nil, errors.New("guard identity key has an invalid public value")
 	}
 	return ed25519.PublicKey(raw), nil
+}
+
+// thumbprintMembers are the RFC 7638 required members of an OKP key, declared
+// in lexicographic order. encoding/json quotes every value, so no member can
+// end its string early.
+type thumbprintMembers struct {
+	Crv string `json:"crv"`
+	Kty string `json:"kty"`
+	X   string `json:"x"`
+}
+
+func (j JWK) canonicalJSON() ([]byte, error) {
+	if _, err := j.PublicKey(); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(thumbprintMembers{Crv: j.Crv, Kty: j.Kty, X: j.X})
+	if err != nil {
+		return nil, fmt.Errorf("encode guard identity key: %w", err)
+	}
+	return encoded, nil
 }
 
 // Thumbprint returns the RFC 7638 SHA-256 thumbprint of the key, base64url
 // encoded. The required members are serialized in lexicographic order with no
 // whitespace, exactly as the RFC prescribes.
 func (j JWK) Thumbprint() (string, error) {
-	if _, err := j.PublicKey(); err != nil {
+	canonical, err := j.canonicalJSON()
+	if err != nil {
 		return "", err
 	}
-	canonical := `{"crv":"` + j.Crv + `","kty":"` + j.Kty + `","x":"` + j.X + `"}`
-	sum := sha256.Sum256([]byte(canonical))
+	sum := sha256.Sum256(canonical)
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
 // Canonical returns the stable JSON persisted with a key binding.
 func (j JWK) Canonical() (string, error) {
-	if _, err := j.PublicKey(); err != nil {
+	canonical, err := j.canonicalJSON()
+	if err != nil {
 		return "", err
 	}
-	return `{"crv":"` + j.Crv + `","kty":"` + j.Kty + `","x":"` + j.X + `"}`, nil
+	return string(canonical), nil
 }
 
 // EncodePrivateKeyPEM serializes a private key as PKCS#8 PEM for the Guard

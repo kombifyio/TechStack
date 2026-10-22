@@ -17,6 +17,8 @@
     registryMode: string;
     registryUrlError: string | null;
     installCommand: string;
+    /** Why no install command is offered (no trusted Guard binary digest). */
+    installCommandError?: string;
     canRollout: boolean;
     rolloutLoading: boolean;
     onDeploy: () => void;
@@ -31,6 +33,7 @@
     registryMode,
     registryUrlError,
     installCommand,
+    installCommandError = "",
     canRollout,
     rolloutLoading,
     onDeploy,
@@ -135,6 +138,8 @@
           <pre
             class="text-sm font-mono text-primary overflow-x-auto whitespace-pre-wrap break-all">{installCommand}</pre>
         </div>
+      {:else if installCommandError}
+        <p role="alert" class="mb-4 text-sm text-destructive">{installCommandError}</p>
       {/if}
     </div>
   </Surface>
@@ -279,6 +284,8 @@
           <pre
             class="text-sm font-mono text-primary overflow-x-auto whitespace-pre-wrap break-all">{installCommand}</pre>
         </div>
+      {:else if installCommandError}
+        <p role="alert" class="mb-4 text-sm text-destructive">{installCommandError}</p>
       {/if}
 
       <!-- Actions -->

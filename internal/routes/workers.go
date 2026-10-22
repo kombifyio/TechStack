@@ -194,6 +194,7 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 	r.POST("/api/v1/workers/{id}/user-notification", h.workerUserNotification).BindFunc(h.workerAgentIngress(workerUserNotificationBodyLimit))
 	r.POST("/api/v1/workers/bootstrap/logs", h.ingestBootstrapLog).BindFunc(workerBodyBound(maxBootstrapLogPayload))
 	h.binaryDownloadGuard = newAgentBinaryDownloadGuard()
+	r.GET("/api/v1/workers/install-pins", h.agentInstallPins)
 	r.POST("/api/v1/agent/binary/{os}/{arch}", h.agentBinary).BindFunc(workerBodyBound(workerSmallBodyLimit))
 	r.POST("/api/v1/agent/release-evidence/{os}/{arch}", h.agentReleaseEvidence).BindFunc(workerBodyBound(workerSmallBodyLimit))
 	r.POST("/api/v1/agent/stackkit-release/{os}/{arch}", h.agentStackKitRelease).BindFunc(workerBodyBound(workerSmallBodyLimit))

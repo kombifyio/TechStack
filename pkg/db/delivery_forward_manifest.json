@@ -2,8 +2,16 @@
   "schema": "techstack.database-forward-batch/v1",
   "migrations": [
     {
-      "version": "160_ril_layout_recommendations.sql",
-      "sha256": "4a5120f63e07c9c4ce6679dd9bdb82ac3a1addac411f1ea3e09616936cbb4dcb"
+      "version": "161_application_loop_table_grants.sql",
+      "sha256": "33b28fd5a89af4c190801ba41d5a2641992e5576e330b69f2058964e6e3c339e"
+    },
+    {
+      "version": "162_guard_command_round_trips.sql",
+      "sha256": "93d6e9d748df5c77a3b594f95132a19eedf5639b6762a9fda467e8d1edc90654"
+    },
+    {
+      "version": "163_servers_trigger_tenant_serialization.sql",
+      "sha256": "1b6643cac86aade4ff7b7ceacb4e69e0bd9ce54ce542e7a6f1b87468537323b6"
     }
   ],
   "provider_resource": "clickhouse-postgres:b6140b1d-3833-455a-b515-729055d3140d:f9301db0-e99d-8ad0-bec2-efb56642a37e:migrations",

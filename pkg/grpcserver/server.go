@@ -90,6 +90,9 @@ type Server struct {
 	enrollmentStore AgentEnrollmentStore
 	healStore       RILHealStore
 	defaultTenant   string // fallback tenant for standalone / dev mode
+	// stackKitRoundTrips persists each accepted typed result as the agent's
+	// Connected round-trip evidence. Nil records nothing.
+	stackKitRoundTrips StackKitRoundTripRecorder
 
 	// Opt-in user_notification class (smart-home notices).
 	userNotices     usernotice.Sink
@@ -302,6 +305,17 @@ func newServer(cfg Config, log *logger.Logger) (*Server, error) {
 // before Start; not safe for concurrent reconfiguration.
 func (s *Server) SetEnrollmentStore(store AgentEnrollmentStore) {
 	s.enrollmentStore = store
+}
+
+// StackKitRoundTripRecorder persists the authenticated command/result round
+// trip of an mTLS agent whose typed result this server accepted.
+// agentcontrol.Hub.RecordMTLSRoundTrip satisfies it.
+type StackKitRoundTripRecorder func(ctx context.Context, tenantID, agentID, certSerial string, result *agentpb.StackKitResult) error
+
+// SetStackKitRoundTripRecorder wires the round-trip evidence store before the
+// server starts; not safe for concurrent reconfiguration.
+func (s *Server) SetStackKitRoundTripRecorder(recorder StackKitRoundTripRecorder) {
+	s.stackKitRoundTrips = recorder
 }
 
 // RILHealStore is the canonical tenant-scoped persistence seam used by the

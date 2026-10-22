@@ -10825,10 +10825,39 @@
                 "id": {
                   "type": "string"
                 },
+                "local": {
+                  "description": "Set only for mode local.",
+                  "properties": {
+                    "digest": {
+                      "type": "string"
+                    },
+                    "generation": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "operation_id": {
+                      "type": "string"
+                    },
+                    "policy_id": {
+                      "type": "string"
+                    },
+                    "policy_version": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "revision": {
+                      "format": "int64",
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                },
                 "mode": {
+                  "description": "local is a repair the Guard ran on its own under a local policy version and reported as evidence.",
                   "enum": [
                     "operator",
-                    "auto"
+                    "auto",
+                    "local"
                   ],
                   "type": "string"
                 },
@@ -10840,7 +10869,7 @@
                   "type": "string"
                 },
                 "requested_by": {
-                  "description": "The authenticated operator, or the owner who approved automatic repair.",
+                  "description": "The authenticated operator, the owner who approved automatic repair, or `guard-local-policy:<policy_id>@v<version>`.",
                   "type": "string"
                 },
                 "server_id": {

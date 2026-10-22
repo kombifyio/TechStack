@@ -240,6 +240,47 @@ func agentBinaryArtifactForPath(path, artifactOS, artifactArch string) (agentBin
 	}, nil
 }
 
+// agentInstallPins returns, per Linux architecture, the SHA-256 of the exact
+// Guard binary agentBinary serves, so the enrollment command the dashboard
+// shows carries TECHSTACK_BINARY_SHA256 and install.sh refuses any other bytes
+// (threat model F4). With a signed release an architecture is pinned only when
+// its file matches the signed manifest entry; an empty set means no trusted
+// digest is known and the dashboard must not offer a command.
+func (h workerRouteHandlers) agentInstallPins(e *httpx.Event) error {
+	if ownerID, err := requireWorkerOwner(e); err != nil || ownerID == "" {
+		return err
+	}
+	pins := map[string]string{}
+	version := guardArtifactVersion()
+	if h.binaryArtifact != nil {
+		if artifact, err := h.binaryArtifact(); err == nil && artifact.os == managedRuntimeOSLinux && len(artifact.sha256) == sha256.Size*2 {
+			pins[artifact.arch] = artifact.sha256
+		}
+	} else if dir := guardReleaseDir(); dir != "" {
+		if served, _, err := currentGuardManifest(dir); err == nil {
+			version = served.manifest.Version
+			for _, arch := range []string{managedRuntimeArchAMD64, "arm64"} {
+				entry, found := served.manifest.Artifact(managedRuntimeOSLinux, arch)
+				if !found {
+					continue
+				}
+				artifact, err := signedGuardBinaryArtifact(dir, managedRuntimeOSLinux, arch)
+				if err == nil && artifact.sha256 == entry.SHA256 {
+					pins[arch] = artifact.sha256
+				}
+			}
+		}
+	} else if artifact, err := currentAgentBinaryArtifact(); err == nil && artifact.os == managedRuntimeOSLinux && len(artifact.sha256) == sha256.Size*2 {
+		pins[artifact.arch] = artifact.sha256
+	}
+	e.Response.Header().Set("Cache-Control", "private, no-store")
+	return httpx.Success(e, http.StatusOK, map[string]any{
+		"os":      managedRuntimeOSLinux,
+		"version": version,
+		"pins":    pins,
+	})
+}
+
 func (h workerRouteHandlers) agentBinary(e *httpx.Event) error {
 	requestedOS := strings.ToLower(strings.TrimSpace(e.Request.PathValue("os")))
 	requestedArch := normalizeAgentBinaryArch(e.Request.PathValue("arch"))

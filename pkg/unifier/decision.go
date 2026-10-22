@@ -82,7 +82,35 @@ func BuildDecisionTrace(spec *core.KombinationSpec, ctx *core.DecisionContext, r
 	trace.Guidance = buildGuidance(ctx)
 	applyUseCaseComputeTierDecision(spec, trace)
 	trace.Reasons = buildDecisionReasons(spec, ctx, resolve, trace)
+	applyExternalStorageDecision(spec, ctx, trace)
 	return trace
+}
+
+func applyExternalStorageDecision(spec *core.KombinationSpec, ctx *core.DecisionContext, trace *core.DecisionTrace) {
+	if spec == nil || ctx == nil || ctx.Environment == nil || trace == nil {
+		return
+	}
+	placement := ExternalStorageForSelection(spec, ctx.Environment)
+	if placement == nil {
+		return
+	}
+	trace.StoragePlacement = placement
+	recordStoragePlacement(spec, placement)
+	message := fmt.Sprintf("Package data, backups, stacks, and media move to %s because the internal disk is smaller than the selected use cases. The operating system stays on the internal disk.", placement.DataRoot)
+	if placement.ContainerDataRoot != "" {
+		message = fmt.Sprintf("%s Container images move to %s.", message, placement.ContainerDataRoot)
+	}
+	trace.Reasons = append(trace.Reasons, core.DecisionReason{
+		Code:    "external_data_placement",
+		Message: message,
+		Source:  "environment-inventory",
+	})
+	trace.Guidance = append(trace.Guidance, core.DecisionGuidance{
+		Code:    "external_data_placement",
+		Level:   "info",
+		Message: message,
+		Surface: "wizard",
+	})
 }
 
 func applyUseCaseComputeTierDecision(spec *core.KombinationSpec, trace *core.DecisionTrace) {

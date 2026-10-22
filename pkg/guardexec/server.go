@@ -271,8 +271,18 @@ func (s *Server) execute(ctx context.Context, raw json.RawMessage, out *frameWri
 		return deny(CodeBindingMismatch, "the command differs from its binding")
 	}
 	mutating := stackkitcommand.IsMutatingOperation(command.Operation)
+	local := binding.ContractVersion == guardbinding.LocalRepairContractVersion
+	if params.LocalGrant != nil && !local {
+		return deny(CodeBindingMismatch, "only a local repair carries a local repair grant")
+	}
 	switch binding.ContractVersion {
 	case guardbinding.ContractVersion:
+	case guardbinding.LocalRepairContractVersion:
+		// A repair Guard admitted on its own under the owner's local policy:
+		// the signed grant, not a command binding, is its authority.
+		if denial := s.admitLocalRepair(params, command); denial != nil {
+			return denial
+		}
 	case guardbinding.LegacyContractVersion:
 		// A legacy binding is one the daemon made up itself; it admits
 		// observations only.
@@ -282,7 +292,7 @@ func (s *Server) execute(ctx context.Context, raw json.RawMessage, out *frameWri
 	default:
 		return deny(CodeBindingMismatch, "binding contract %q is not supported", binding.ContractVersion)
 	}
-	if s.Pins != nil {
+	if s.Pins != nil && !local {
 		pins, pinErr := s.Pins()
 		if pinErr != nil {
 			return deny(CodeUnavailable, "the executor cannot read its pinned binding keys: %v", pinErr)

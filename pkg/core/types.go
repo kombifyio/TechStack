@@ -509,16 +509,44 @@ type EnvironmentInventory struct {
 	Source          string                   `json:"source,omitempty" yaml:"source,omitempty"`
 }
 
+// StorageVolume is one mounted filesystem a connected server reported.
+// External is true when the volume is not the root filesystem.
+type StorageVolume struct {
+	MountPoint string `json:"mountPoint,omitempty" yaml:"mountPoint,omitempty"`
+	SizeGB     int    `json:"sizeGb,omitempty" yaml:"sizeGb,omitempty"`
+	FreeGB     int    `json:"freeGb,omitempty" yaml:"freeGb,omitempty"`
+	Filesystem string `json:"filesystem,omitempty" yaml:"filesystem,omitempty"`
+	Label      string `json:"label,omitempty" yaml:"label,omitempty"`
+	External   bool   `json:"external,omitempty" yaml:"external,omitempty"`
+}
+
+// ExternalStoragePlacement is the one data layout for every package when the
+// internal disk cannot hold the selected use cases. The operating system stays
+// on the internal disk. Paths sit on the external mount.
+type ExternalStoragePlacement struct {
+	NodeID            string `json:"nodeId,omitempty" yaml:"nodeId,omitempty"`
+	MountPoint        string `json:"mountPoint" yaml:"mountPoint"`
+	DataRoot          string `json:"dataRoot" yaml:"dataRoot"`
+	BackupRoot        string `json:"backupRoot" yaml:"backupRoot"`
+	StacksRoot        string `json:"stacksRoot" yaml:"stacksRoot"`
+	MediaRoot         string `json:"mediaRoot" yaml:"mediaRoot"`
+	ContainerDataRoot string `json:"containerDataRoot,omitempty" yaml:"containerDataRoot,omitempty"`
+	VolumeSizeGB      int    `json:"volumeSizeGb,omitempty" yaml:"volumeSizeGb,omitempty"`
+}
+
 // EnvironmentComputeNode is a normalized compute node from user spec, registry, or lease state.
 type EnvironmentComputeNode struct {
-	ID                          string            `json:"id,omitempty" yaml:"id,omitempty"`
-	Name                        string            `json:"name,omitempty" yaml:"name,omitempty"`
-	Role                        string            `json:"role,omitempty" yaml:"role,omitempty"`
-	Provider                    string            `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Status                      string            `json:"status,omitempty" yaml:"status,omitempty"`
-	CPU                         int               `json:"cpu,omitempty" yaml:"cpu,omitempty"`
-	RAMMB                       int               `json:"ramMb,omitempty" yaml:"ramMb,omitempty"`
-	DiskGB                      int               `json:"diskGb,omitempty" yaml:"diskGb,omitempty"`
+	ID       string `json:"id,omitempty" yaml:"id,omitempty"`
+	Name     string `json:"name,omitempty" yaml:"name,omitempty"`
+	Role     string `json:"role,omitempty" yaml:"role,omitempty"`
+	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Status   string `json:"status,omitempty" yaml:"status,omitempty"`
+	CPU      int    `json:"cpu,omitempty" yaml:"cpu,omitempty"`
+	RAMMB    int    `json:"ramMb,omitempty" yaml:"ramMb,omitempty"`
+	DiskGB   int    `json:"diskGb,omitempty" yaml:"diskGb,omitempty"`
+	// Volumes are mounted filesystems other than the root disk. Package data
+	// can move onto one of them when DiskGB is too small for the selection.
+	Volumes                     []StorageVolume   `json:"volumes,omitempty" yaml:"volumes,omitempty"`
 	Arch                        string            `json:"arch,omitempty" yaml:"arch,omitempty"`
 	OS                          string            `json:"os,omitempty" yaml:"os,omitempty"`
 	Source                      string            `json:"source,omitempty" yaml:"source,omitempty"`
@@ -573,17 +601,21 @@ type OperatorCapabilityEvidence struct {
 
 // DecisionTrace is the explainable output of the decision plane.
 type DecisionTrace struct {
-	SelectedStackKit    string             `json:"selectedStackKit,omitempty" yaml:"selectedStackKit,omitempty"`
-	StackKitProfile     string             `json:"stackKitProfile,omitempty" yaml:"stackKitProfile,omitempty"`
-	Foundation          string             `json:"foundation,omitempty" yaml:"foundation,omitempty"`
-	Addons              []string           `json:"addons,omitempty" yaml:"addons,omitempty"`
-	DeploymentMode      string             `json:"deploymentMode,omitempty" yaml:"deploymentMode,omitempty"`
-	ComputeTier         string             `json:"computeTier,omitempty" yaml:"computeTier,omitempty"`
-	PAAS                string             `json:"paas,omitempty" yaml:"paas,omitempty"`
-	Reasons             []DecisionReason   `json:"reasons,omitempty" yaml:"reasons,omitempty"`
-	BlockingGaps        []EnvironmentGap   `json:"blockingGaps,omitempty" yaml:"blockingGaps,omitempty"`
-	Guidance            []DecisionGuidance `json:"guidance,omitempty" yaml:"guidance,omitempty"`
-	DecisionContextHash string             `json:"decisionContextHash,omitempty" yaml:"decisionContextHash,omitempty"`
+	SelectedStackKit string   `json:"selectedStackKit,omitempty" yaml:"selectedStackKit,omitempty"`
+	StackKitProfile  string   `json:"stackKitProfile,omitempty" yaml:"stackKitProfile,omitempty"`
+	Foundation       string   `json:"foundation,omitempty" yaml:"foundation,omitempty"`
+	Addons           []string `json:"addons,omitempty" yaml:"addons,omitempty"`
+	DeploymentMode   string   `json:"deploymentMode,omitempty" yaml:"deploymentMode,omitempty"`
+	ComputeTier      string   `json:"computeTier,omitempty" yaml:"computeTier,omitempty"`
+	// StoragePlacement is set when package data moves onto one external volume
+	// because the internal disk cannot hold the selected use cases. Every
+	// package reads the same roots.
+	StoragePlacement    *ExternalStoragePlacement `json:"storagePlacement,omitempty" yaml:"storagePlacement,omitempty"`
+	PAAS                string                    `json:"paas,omitempty" yaml:"paas,omitempty"`
+	Reasons             []DecisionReason          `json:"reasons,omitempty" yaml:"reasons,omitempty"`
+	BlockingGaps        []EnvironmentGap          `json:"blockingGaps,omitempty" yaml:"blockingGaps,omitempty"`
+	Guidance            []DecisionGuidance        `json:"guidance,omitempty" yaml:"guidance,omitempty"`
+	DecisionContextHash string                    `json:"decisionContextHash,omitempty" yaml:"decisionContextHash,omitempty"`
 }
 
 // DecisionReason explains a concrete resolver choice.
@@ -857,8 +889,11 @@ type WorkerCapabilities struct {
 	// Total RAM in MB
 	RAM int `json:"ram"`
 
-	// Disk space in GB
+	// Disk space in GB. This is the root filesystem, where the operating system lives.
 	Disk int `json:"disk"`
+
+	// Volumes are mounted filesystems other than the root disk.
+	Volumes []StorageVolume `json:"volumes,omitempty"`
 
 	// GPU info if available
 	GPU *GPUInfo `json:"gpu,omitempty"`

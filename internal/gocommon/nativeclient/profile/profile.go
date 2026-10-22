@@ -3,7 +3,7 @@
 // and discovery fetching of `GET /.well-known/kombify-client`.
 //
 // The wire contract is owned by
-// kombify-Core/standards/client-connection-profile.v1.schema.json and
+// platform/standards/client-connection-profile.v1.schema.json and
 // API-FIRST-STANDARD.md §12; behavior rules come from
 // DESKTOP-FOUNDATION-STANDARD.md §5.3. This package carries no
 // product-specific branches: every Kombify native client consumes it

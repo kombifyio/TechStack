@@ -27,10 +27,8 @@ type Server struct {
 	startedAt time.Time
 	db        *db.DB
 	sessions  *session.Manager
-	// releaseChannel reports a subject's chosen release channel; nil omits it.
-	releaseChannel func(subject string) string
-	auth           AuthHandlers
-	cookie         string
+	auth      AuthHandlers
+	cookie    string
 }
 
 // AuthHandlers groups optional V2 auth endpoints.
@@ -75,13 +73,6 @@ func WithSessionCookieName(name string) Option {
 			s.cookie = strings.TrimSpace(name)
 		}
 	}
-}
-
-// WithReleaseChannel attaches the lookup of the release channel a subject
-// chose ("stable" or "preview", "" when unknown); /api/v2/whoami reports it so
-// the operator UI can keep the person on their channel.
-func WithReleaseChannel(lookup func(subject string) string) Option {
-	return func(s *Server) { s.releaseChannel = lookup }
 }
 
 // WithAuthHandlers wires optional auth endpoints under /api/v2/auth/*.
@@ -202,9 +193,6 @@ type WhoAmIResponse struct {
 	Email    string `json:"email,omitempty"`
 	Provider string `json:"provider,omitempty"`
 	Role     string `json:"role,omitempty"`
-	// ReleaseChannel is the channel the person chose in kombify Cloud,
-	// omitted while unknown.
-	ReleaseChannel string `json:"releaseChannel,omitempty"`
 }
 
 func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
@@ -220,9 +208,6 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		Email:    c.Email,
 		Provider: c.Provider,
 		Role:     c.Role,
-	}
-	if s.releaseChannel != nil {
-		resp.ReleaseChannel = s.releaseChannel(c.Subject)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")

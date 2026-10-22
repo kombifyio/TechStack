@@ -35,6 +35,8 @@ const (
 type relayKey struct {
 	url, tenant, server, worker string
 	generation                  int64
+	// port is the owner-published loopback port; a change restarts the relay.
+	port int
 }
 
 // relayController runs one relay session loop per relay target and restarts it
@@ -77,7 +79,7 @@ func (c *relayController) setStatus(generation int64, state, reason string) {
 // stopped on a permanent denial restarts only for a changed target or after
 // denialRetry.
 func (c *relayController) Apply(ctx context.Context, target guardreach.RelayTarget) {
-	key := relayKey{url: target.RelayURL, tenant: target.TenantID, server: target.ServerID, worker: target.WorkerID, generation: target.Generation}
+	key := relayKey{url: target.RelayURL, tenant: target.TenantID, server: target.ServerID, worker: target.WorkerID, generation: target.Generation, port: target.TargetPort}
 	c.mu.Lock()
 	if c.key != nil && *c.key == key {
 		running := c.cancel != nil && !chanClosed(c.done)
@@ -132,6 +134,7 @@ func (c *relayController) run(ctx context.Context, key relayKey) {
 		ProofProvider: func(context.Context) (string, error) { return mintRelayProof(c.cfg.Manager, c.cfg.Now, key) },
 		OnConnected:   func() { c.setStatus(key.generation, relayConnected, "") },
 		LoopbackOnly:  true,
+		LoopbackPort:  key.port,
 	})
 	if err != nil {
 		c.setStatus(key.generation, relayDenied, "relay_not_configured")

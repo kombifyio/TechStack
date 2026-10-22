@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -265,6 +266,16 @@ func (o *Orchestrator) precheckOfflineRemoval(ctx context.Context, stack *orches
 	return nil
 }
 
+// disconnectAgentBestEffort never lets the hub's removal of an agent take the
+// destroy job (and the process it runs in) down: the server's credentials are
+// already revoked, so a failure or panic here leaves nothing that can act. It
+// returns the recovered panic value, or nil.
+func disconnectAgentBestEffort(disconnect func(string) error, agentID string) (recovered any) {
+	defer func() { recovered = recover() }()
+	_ = disconnect(agentID)
+	return nil
+}
+
 func stackOwnsServerAgent(approved []stackKitLifecycleAgentBinding, serverID, workerID string) bool {
 	if workerID == "" {
 		return false
@@ -327,7 +338,9 @@ func (o *Orchestrator) retireOfflineServer(ctx context.Context, request jobs.Off
 	o.mu.RUnlock()
 	if disconnect != nil && receipt != nil {
 		// Custody has ended, so a failed disconnect leaves nothing that can act.
-		_ = disconnect(receipt.AgentID)
+		if recovered := disconnectAgentBestEffort(disconnect, receipt.AgentID); recovered != nil {
+			o.log.Error("offline_removal_agent_disconnect_panic", "agent_id", receipt.AgentID, "panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
+		}
 	}
 	if !o.kombifyWallet.Enabled() {
 		return jobs.OfflineServerRetireResult{WalletState: "not_configured"}, nil

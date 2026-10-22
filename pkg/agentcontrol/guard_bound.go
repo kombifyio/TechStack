@@ -448,6 +448,11 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	`, commandID, next, nullableText(nextError), nullableJSON(resultPayload), report.Revision, report.Digest, req.Generation, next == "outcome_unknown"); err != nil {
 		return guardbinding.Acknowledgement{}, err
 	}
+	if next == "completed" {
+		if err := recordRoundTrip(ctx, tx, req); err != nil {
+			return guardbinding.Acknowledgement{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return guardbinding.Acknowledgement{}, err
 	}

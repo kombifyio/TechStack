@@ -32,6 +32,10 @@ export const zhHans: Record<string, string> = {
   "ui.services.adoptionProgress": "查看操作进度",
   "ui.services.adoptionChecking": "正在检查已保存的操作",
   "ui.services.adoptionFailed": "操作未完成。请先查看其证据，再重试。",
+  "ui.services.adoptionSourceIdentityUnavailable":
+    "此应用尚无精确的容器标识，因此 Stack it 无法选择其来源。请刷新其 Node 上的发现，然后重试。",
+  "ui.services.adoptionReleaseUnavailable":
+    "连接到此 Node 的 Guard 尚无可接管此应用的已发布 StackKits 版本。",
   "ui.services.adoptionUnavailable":
     "评估接管之前，此来源需要精确的容器身份，以及在其已连接 Guard 上发布的兼容 StackKits 版本。",
   "ui.services.adoptionVerified": "生命周期绑定已验证。此应用现在为 Stacked。",
@@ -2470,8 +2474,6 @@ export const zhHans: Record<string, string> = {
   "ui.services.fetchLogs": "获取日志",
   "ui.services.freshnessValue": "新鲜度：{value}",
   "ui.services.health": "健康状态",
-  "ui.services.importAsObserved": "作为已观测项导入",
-  "ui.services.importUnmanaged": "导入未托管项",
   "ui.services.internalAddressOnlyOpenIt": "仅限内部地址；请从服务器所在网络中打开。",
   "ui.services.jobId": "任务 {id}",
   "ui.services.loadOlderLogs": "加载更早的日志",
@@ -2542,7 +2544,6 @@ export const zhHans: Record<string, string> = {
   "ui.services.serviceFallback": "服务",
   "ui.services.serviceLogCollectionDidNot": "服务日志收集未完成。",
   "ui.services.serviceLogsCouldNotBe": "无法加载服务日志。",
-  "ui.services.serviceMode": "服务模式",
   "ui.services.serviceRegistryCouldNotBe": "无法加载 Service Registry。",
   "ui.services.services": "服务",
   "ui.services.servicesMode": "服务模式",
@@ -2569,7 +2570,6 @@ export const zhHans: Record<string, string> = {
   "ui.services.type2": "类型",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
     "未分类的运行时组件会显示在这里。",
-  "ui.services.unmanagedServiceCouldNotBe": "无法导入未托管的服务。",
   "ui.services.uponYourManualVerificationThe":
     "在你手动验证后，旧实例会被停用，并可被永久移除。",
   "ui.services.url": "URL",

@@ -34,10 +34,14 @@ func stackKitSpecBytesForPayload(specData interface{}) ([]byte, error) {
 	}
 	projected := mapFromInterface(dataMap[payloadKeyStackSpecV2])
 	if len(projected) > 0 {
-		if err := specv2.RequireCanonicalV2(projected); err != nil {
+		document, err := documentWithPayloadStorage(projected, dataMap)
+		if err != nil {
+			return nil, err
+		}
+		if err := specv2.RequireCanonicalV2(document); err != nil {
 			return nil, fmt.Errorf("payload %s: %w", payloadKeyStackSpecV2, err)
 		}
-		return yaml.Marshal(projected)
+		return yaml.Marshal(document)
 	}
 	if err := specv2.RequireCanonicalV2(dataMap); err == nil {
 		return yaml.Marshal(dataMap)

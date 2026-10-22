@@ -93,6 +93,13 @@ func canonicalStackSpecFor(stackSpecPath, stackKit, stackName string) (canonical
 		if rootErr != nil {
 			return canonicalStackSpec{}, rootErr
 		}
+		// A canonical handoff that already names the external roots is the
+		// document the CLI runs. Apply them and drop the transport keys, which
+		// #StackSpecV2 metadata does not allow. A handoff without the full set
+		// stays byte for byte.
+		if applyHandoffStoragePlacement(handoff, handoff) {
+			return writeDerivedStackSpec(stackSpecPath, handoff, outputRoot)
+		}
 		return canonicalStackSpec{Path: stackSpecPath, OutputRoot: outputRoot}, nil
 	}
 	if canonical, ok, projErr := canonicalFromProjected(stackSpecPath, handoff); projErr != nil {
@@ -142,6 +149,7 @@ func canonicalStackSpecFor(stackSpecPath, stackKit, stackName string) (canonical
 	// The canonical document is deterministic JSON, and the CLI reads it as
 	// YAML. Encoding it as JSON keeps the bytes closest to what init wrote.
 	applyFirstPartyTelemetryToStackSpec(template)
+	applyHandoffStoragePlacement(template, handoff)
 
 	outputRoot, err := stackSpecOutputRoot(template)
 	if err != nil {
@@ -157,6 +165,87 @@ func canonicalStackSpecFor(stackSpecPath, stackKit, stackName string) (canonical
 		return canonicalStackSpec{}, fmt.Errorf("persist canonical StackSpec: %w", err)
 	}
 	return canonicalStackSpec{Path: canonicalPath, Derived: true, OutputRoot: outputRoot}, nil
+}
+
+// applyHandoffStoragePlacement copies a recorded external placement onto the
+// StackSpec the pinned CLI executes. A handoff without the full safe set of
+// roots leaves the document untouched. Transport keys are removed from the
+// document metadata so they are not submitted as #StackSpecV2 metadata.
+func applyHandoffStoragePlacement(document, handoff map[string]interface{}) bool {
+	if document == nil || handoff == nil {
+		return false
+	}
+	metadata := map[string]string{}
+	for key, value := range mapFromInterface(handoff["metadata"]) {
+		if text := stringFromInterface(value); text != "" {
+			metadata[key] = text
+		}
+	}
+	if unifier.StoragePlacementFromMetadata(metadata) == nil {
+		return false
+	}
+	unifier.ApplyStackSpecStorage(document, unifier.StoragePlacementFromMetadata(metadata))
+	stripStoragePlacementMetadata(document)
+	return true
+}
+
+func stripStoragePlacementMetadata(document map[string]interface{}) {
+	metadata := mapFromInterface(document["metadata"])
+	if len(metadata) == 0 {
+		return
+	}
+	for _, key := range []string{
+		"storage_external_mount",
+		"storage_data_root",
+		"storage_backup_root",
+		"storage_stacks_root",
+		"storage_media_root",
+		"storage_container_data_root",
+	} {
+		delete(metadata, key)
+	}
+	document["metadata"] = metadata
+}
+
+func writeDerivedStackSpec(stackSpecPath string, document map[string]interface{}, outputRoot string) (canonicalStackSpec, error) {
+	next, err := json.Marshal(document)
+	if err != nil {
+		return canonicalStackSpec{}, fmt.Errorf("serialize canonical StackSpec: %w", err)
+	}
+	canonicalPath := filepath.Join(filepath.Dir(stackSpecPath), canonicalStackSpecFilename)
+	if err := os.WriteFile(canonicalPath, next, 0o600); err != nil {
+		return canonicalStackSpec{}, fmt.Errorf("persist canonical StackSpec: %w", err)
+	}
+	return canonicalStackSpec{Path: canonicalPath, Derived: true, OutputRoot: outputRoot}, nil
+}
+
+// documentWithPayloadStorage applies external roots from the provision payload
+// onto a copy of the Architecture v2 document. The caller's document stays
+// unchanged. Without the full safe set, the original document is returned.
+func documentWithPayloadStorage(document, payload map[string]interface{}) (map[string]interface{}, error) {
+	if document == nil || payload == nil || unifier.StoragePlacementFromMetadata(storageMetadata(payload)) == nil {
+		return document, nil
+	}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		return nil, fmt.Errorf("copy StackSpec before external placement: %w", err)
+	}
+	var clone map[string]interface{}
+	if err := json.Unmarshal(raw, &clone); err != nil {
+		return nil, fmt.Errorf("copy StackSpec before external placement: %w", err)
+	}
+	applyHandoffStoragePlacement(clone, payload)
+	return clone, nil
+}
+
+func storageMetadata(payload map[string]interface{}) map[string]string {
+	metadata := map[string]string{}
+	for key, value := range mapFromInterface(payload["metadata"]) {
+		if text := stringFromInterface(value); text != "" {
+			metadata[key] = text
+		}
+	}
+	return metadata
 }
 
 // canonicalFromProjected derives the canonical document from the wizard-run
@@ -199,6 +288,7 @@ func canonicalFromProjected(stackSpecPath string, handoff map[string]interface{}
 		}
 	}
 	applyFirstPartyTelemetryToStackSpec(projected)
+	applyHandoffStoragePlacement(projected, handoff)
 
 	outputRoot, err := stackSpecOutputRoot(projected)
 	if err != nil {
@@ -235,10 +325,14 @@ func persistProjectedStackSpec(persister *unifier.SpecPersister, specData interf
 		}
 		return "", nil
 	}
-	if err := specv2.RequireCanonicalV2(projected); err != nil {
+	document, err := documentWithPayloadStorage(projected, dataMap)
+	if err != nil {
+		return "", err
+	}
+	if err := specv2.RequireCanonicalV2(document); err != nil {
 		return "", fmt.Errorf("payload %s: %w", payloadKeyStackSpecV2, err)
 	}
-	next, err := json.Marshal(projected)
+	next, err := json.Marshal(document)
 	if err != nil {
 		return "", fmt.Errorf("serialize projected StackSpec: %w", err)
 	}

@@ -5,8 +5,9 @@
  * Rules that are the whole point of this module:
  *  - A fact is `ok` only when it is positively evidenced by fresh evidence.
  *  - Evidence that is absent, malformed or older than its freshness bound is
- *    `unknown`, never `ok`. A heartbeat alone establishes nothing but
- *    "connected".
+ *    `unknown`, never `ok`. A heartbeat alone establishes nothing: Connected
+ *    also needs the persisted authenticated command/result round trip that
+ *    the server read model classifies.
  *  - A legacy credential, journal or privilege layout is reported as reduced
  *    protection (`attention`), never as fine.
  *  - "Guard-ready" needs all seven facts `ok`.
@@ -244,10 +245,38 @@ function connectedFact(evidence: GuardEvidence, now: number): GuardFact {
           next: msg("guard.fact.connected.reconnectNext"),
         });
       }
-      return fact("connected", "ok", msg("guard.fact.connected.ok"), {
-        observedAt,
-        details,
-      });
+      // A fresh heartbeat proves authentication only. Connected also needs
+      // the persisted round trip the server read model classified.
+      switch (normalized(evidence.round_trip?.state)) {
+        case "verified":
+          return fact("connected", "ok", msg("guard.fact.connected.ok"), {
+            observedAt: evidence.round_trip?.acknowledged_at ?? observedAt,
+            details,
+          });
+        case "stale":
+        case "superseded":
+          return fact(
+            "connected",
+            "unknown",
+            msg("guard.fact.connected.roundTripStale"),
+            {
+              observedAt: evidence.round_trip?.acknowledged_at ?? observedAt,
+              details,
+              next: msg("guard.fact.connected.roundTripNext"),
+            },
+          );
+        default:
+          return fact(
+            "connected",
+            "unknown",
+            msg("guard.fact.connected.awaitingRoundTrip"),
+            {
+              observedAt,
+              details,
+              next: msg("guard.fact.connected.roundTripNext"),
+            },
+          );
+      }
     case "degraded":
       return fact(
         "connected",
@@ -821,17 +850,29 @@ function reachableFact(evidence: GuardEvidence, now: number): GuardFact {
       );
     case "not_enabled":
       // A deliberate owner choice (nothing is published until it is enabled),
-      // not a missing or failed registration, so it does not hold back the
-      // pairing ladder or "Guard-ready".
-      return fact(
-        "reachable",
-        "ok",
-        msg("guard.fact.reachable.notEnabled"),
-        {
-          observedAt,
-          next: msg("guard.fact.reachable.notEnabledNext"),
-        },
-      );
+      // not a missing or failed registration. It never opts out of the
+      // governed route: while Connect applies to the server, it must be
+      // registered before the private server reads as reachable and governed.
+      if (
+        reach.connect?.applicability === "applicable" &&
+        reach.connect.state !== "registered"
+      ) {
+        return reach.connect.state === "failed"
+          ? fact("reachable", "attention", msg("guard.fact.reachable.failed"), {
+              observedAt,
+              details: [...details, ...reasonDetails],
+              next: reasonNext ?? msg("guard.fact.reachable.failedNext"),
+            })
+          : fact("reachable", "unknown", msg("guard.fact.reachable.pending"), {
+              observedAt,
+              details: [...details, ...reasonDetails],
+              next: reasonNext ?? msg("guard.fact.reachable.pendingNext"),
+            });
+      }
+      return fact("reachable", "ok", msg("guard.fact.reachable.notEnabled"), {
+        observedAt,
+        next: msg("guard.fact.reachable.notEnabledNext"),
+      });
     case "pending":
       return fact("reachable", "unknown", msg("guard.fact.reachable.pending"), {
         observedAt,

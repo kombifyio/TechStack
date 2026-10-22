@@ -106,6 +106,8 @@ func guidanceFor(code string) string {
 		return "This kombify Guard's identity was revoked, so it starts no further changes. Pair the server again to continue."
 	case CodeRevalidationRequired:
 		return "kombify Guard cannot trust how much authority is left for this command (it restarted, the host rebooted or the clock changed); it was not run. It runs once the control plane offers it again online."
+	case CodeLocalAuthorityMissing:
+		return "kombify Guard holds no current repair authority for this server, so it only observes. Automatic repair resumes once the owner's approval is active and the Guard has reached the control plane again."
 	case CodeOutcomeNotUnresolved:
 		return "This operation has no unresolved outcome to release. Refresh the list of unresolved operations."
 	case CodeOutcomeRevisionStale:

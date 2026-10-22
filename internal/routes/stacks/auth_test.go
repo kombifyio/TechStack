@@ -70,3 +70,58 @@ func TestJobStatsRequiresAuthentication(t *testing.T) {
 		t.Fatalf("authenticated jobStats status = %d, want %d", authedRecorder.Code, http.StatusOK)
 	}
 }
+
+// Regression (kombify-Techstack-7kf0): an operator who signed in directly
+// through Auth0 has no projected kombify Cloud profile yet. The automatic cloud
+// owner bootstrap must accept the email the Gateway signed as verified, and
+// must still fail closed when the signed identity does not assert it.
+func TestAutomaticCloudOwnerBootstrapUsesEdgeVerifiedEmail(t *testing.T) {
+	autoCloudRequest := func() normalizedCreateStackRequest {
+		return normalizedCreateStackRequest{
+			Name:       "Direct Login Owner",
+			Mode:       "easy",
+			UserConfig: map[string]interface{}{"name": "direct-login-owner"},
+			Options: map[string]interface{}{
+				"owner_bootstrap_mode": ownerBootstrapModeAuto,
+				"owner_source":         ownerSourceCloud,
+			},
+		}
+	}
+	eventWith := func(id *identity.Identity) *httpx.Event {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/stacks", nil)
+		req = req.WithContext(identity.NewContext(context.Background(), id))
+		return &httpx.Event{Request: req, Response: httptest.NewRecorder()}
+	}
+
+	verified := ownerBootstrapContextFromRequest(eventWith(&identity.Identity{
+		UserID: "auth0|direct", Email: "Direct.Owner@example.com", EmailVerified: true,
+	}))
+	resolved, denial := resolveCreateOwnerBootstrap(autoCloudRequest(), verified)
+	if denial != nil {
+		t.Fatalf("verified edge email denied: %s (%s)", denial.Message, denial.ReasonCode)
+	}
+	bootstrap, ok := ownerBootstrapFromRequest(resolved)
+	if !ok || bootstrap.Source != ownerSourceCloud || bootstrap.Email != "Direct.Owner@example.com" || bootstrap.Username != "direct-owner" {
+		t.Fatalf("unexpected resolved bootstrap: %+v", bootstrap)
+	}
+
+	unverified := ownerBootstrapContextFromRequest(eventWith(&identity.Identity{
+		UserID: "auth0|direct", Email: "Direct.Owner@example.com",
+	}))
+	if unverified.EdgeVerifiedEmail != "" {
+		t.Fatalf("unverified identity produced edge verified email %q", unverified.EdgeVerifiedEmail)
+	}
+	if _, denial := resolveCreateOwnerBootstrap(autoCloudRequest(), unverified); denial == nil || denial.ReasonCode != reasonCloudProfileEmailMissing {
+		t.Fatalf("unverified edge email: denial = %+v, want %s", denial, reasonCloudProfileEmailMissing)
+	}
+
+	// A projected Cloud profile keeps precedence over the edge identity.
+	verified.CurrentProfile = &cloudLinkIdentity{Email: "profile@example.com", EmailVerified: true, DisplayName: "Profile"}
+	resolved, denial = resolveCreateOwnerBootstrap(autoCloudRequest(), verified)
+	if denial != nil {
+		t.Fatalf("verified profile denied: %s", denial.Message)
+	}
+	if bootstrap, _ := ownerBootstrapFromRequest(resolved); bootstrap.Email != "profile@example.com" {
+		t.Fatalf("profile email not preferred: %+v", bootstrap)
+	}
+}

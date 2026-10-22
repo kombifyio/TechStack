@@ -232,6 +232,10 @@ type ownerBootstrapContext struct {
 	// CurrentProfile is the server-side verified profile represented by the
 	// authenticated SaaS session. It is never populated from request JSON.
 	CurrentProfile *cloudLinkIdentity
+	// EdgeVerifiedEmail is the email of the Gateway-signed request identity,
+	// set only when the verified edge envelope (v9) also signed the Auth0
+	// email_verified fact as true. It is never populated from request JSON.
+	EdgeVerifiedEmail string
 	// CloudLink carries the server-side verified kombify Cloud profile link for
 	// the authenticated operator. It is only populated when the request selects
 	// the cloud-linked owner source; nil means no usable link exists.
@@ -255,6 +259,9 @@ func ownerBootstrapContextFromRequest(e *httpx.Event) ownerBootstrapContext {
 		if id := identity.FromContext(e.Request.Context()); id != nil {
 			ctx.Email = firstNonEmpty(ctx.Email, id.Email)
 			ctx.Username = firstNonEmpty(ctx.Username, id.UserID)
+			if id.EmailVerified {
+				ctx.EdgeVerifiedEmail = strings.TrimSpace(id.Email)
+			}
 		}
 	}
 	return ctx
@@ -274,6 +281,9 @@ func resolveCreateOwnerBootstrap(req normalizedCreateStackRequest, ctx ownerBoot
 		if bootstrap.Source == ownerSourceCloud {
 			profile := ctx.CurrentProfile
 			if profile == nil || !profile.EmailVerified || strings.TrimSpace(profile.Email) == "" {
+				profile = edgeVerifiedProfile(ctx)
+			}
+			if profile == nil {
 				return req, denyCloudProfileEmailMissing()
 			}
 			bootstrap.Email = strings.TrimSpace(profile.Email)
@@ -306,6 +316,18 @@ func resolveCreateOwnerBootstrap(req normalizedCreateStackRequest, ctx ownerBoot
 	}
 	applyResolvedOwnerBootstrap(&req, bootstrap)
 	return req, nil
+}
+
+// edgeVerifiedProfile is the fallback cloud profile for an operator who signed
+// in directly through Auth0 and has no projected kombify Cloud profile yet: the
+// Gateway-signed identity whose email the edge also signed as verified. An
+// unverified or unsigned email yields nil, so the bootstrap fails closed.
+func edgeVerifiedProfile(ctx ownerBootstrapContext) *cloudLinkIdentity {
+	email := strings.TrimSpace(ctx.EdgeVerifiedEmail)
+	if email == "" {
+		return nil
+	}
+	return &cloudLinkIdentity{Email: email, EmailVerified: true, DisplayName: ctx.DisplayName}
 }
 
 // resolveCustomOwnerIdentity fills the owner identity for custom bootstrap

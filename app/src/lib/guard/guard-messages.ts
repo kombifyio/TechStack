@@ -110,7 +110,7 @@ export const guardMessages = {
       "Wait for the next report. If it does not appear, update Guard on the server.",
 
     "guard.fact.connected.ok":
-      "Guard is reporting over its authenticated connection.",
+      "Guard answered a command over its authenticated connection.",
     "guard.fact.connected.degraded": "The connection is degraded.",
     "guard.fact.connected.offline":
       "Guard is not reporting. The server is offline or cannot reach Techstack.",
@@ -125,6 +125,12 @@ export const guardMessages = {
       "No connection state is reported for this server.",
     "guard.fact.connected.reconnectNext":
       "Check that the server is powered on and can reach Techstack.",
+    "guard.fact.connected.awaitingRoundTrip":
+      "Guard is reporting, but has not yet answered a command from Techstack under its current credential.",
+    "guard.fact.connected.roundTripStale":
+      "Guard is reporting, but the last command it answered is too old, or was answered under an earlier credential.",
+    "guard.fact.connected.roundTripNext":
+      "The next operation on this server confirms the connection; reports alone do not.",
 
     "guard.fact.operations.ok":
       "Operations are journaled durably and nothing is left unresolved.",
@@ -535,7 +541,7 @@ export const guardMessages = {
       "Warte auf die nächste Meldung. Erscheint sie nicht, aktualisiere Guard auf dem Server.",
 
     "guard.fact.connected.ok":
-      "Guard meldet sich über seine authentifizierte Verbindung.",
+      "Guard hat über seine authentifizierte Verbindung einen Befehl beantwortet.",
     "guard.fact.connected.degraded": "Die Verbindung ist beeinträchtigt.",
     "guard.fact.connected.offline":
       "Guard meldet sich nicht. Der Server ist offline oder erreicht Techstack nicht.",
@@ -550,6 +556,12 @@ export const guardMessages = {
       "Für diesen Server wird kein Verbindungsstatus gemeldet.",
     "guard.fact.connected.reconnectNext":
       "Prüfe, ob der Server eingeschaltet ist und Techstack erreichen kann.",
+    "guard.fact.connected.awaitingRoundTrip":
+      "Guard meldet sich, hat aber noch keinen Befehl von Techstack mit seinem aktuellen Zugang beantwortet.",
+    "guard.fact.connected.roundTripStale":
+      "Guard meldet sich, aber der zuletzt beantwortete Befehl ist zu alt oder wurde mit einem früheren Zugang beantwortet.",
+    "guard.fact.connected.roundTripNext":
+      "Der nächste Vorgang auf diesem Server bestätigt die Verbindung; Meldungen allein genügen nicht.",
 
     "guard.fact.operations.ok":
       "Vorgänge werden dauerhaft protokolliert und nichts bleibt ungeklärt.",

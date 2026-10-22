@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 )
 
 // ReportSchema is the Guard-to-control-plane posture report.
@@ -161,4 +163,10 @@ type Directive struct {
 	VerifyRequestID string `json:"verify_request_id,omitempty"`
 	// VerifyIntervalSeconds is the cadence of routine observations.
 	VerifyIntervalSeconds int `json:"verify_interval_seconds"`
+	// LocalPolicy is the signed grant of the owner's current repair approval,
+	// present only while it is active and the control plane can sign it. A
+	// Guard holds it in memory and may repair under it on its own for a short
+	// while when the control plane is unreachable; without it the Guard only
+	// observes.
+	LocalPolicy *guardbinding.LocalRepairGrant `json:"local_policy,omitempty"`
 }

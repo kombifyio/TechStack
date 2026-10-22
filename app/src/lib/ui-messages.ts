@@ -35,6 +35,10 @@ export const uiMessages = {
     "ui.services.adoptionChecking": "Checking the retained operation",
     "ui.services.adoptionFailed":
       "The operation did not complete. Review its evidence before retrying.",
+    "ui.services.adoptionSourceIdentityUnavailable":
+      "This application has no exact container identity yet, so Stack it cannot select its source. Refresh discovery on its Node, then try again.",
+    "ui.services.adoptionReleaseUnavailable":
+      "The Guard connected to this Node has no published StackKits release that can adopt this application yet.",
     "ui.services.adoptionUnavailable":
       "This source needs an exact container identity and a capable published StackKits release on its connected Guard before adoption can be assessed.",
     "ui.services.adoptionVerified":
@@ -217,6 +221,10 @@ export const uiMessages = {
     "ui.services.adoptionChecking": "Gespeicherte Operation wird geprüft",
     "ui.services.adoptionFailed":
       "Die Operation ist nicht abgeschlossen. Prüfe ihre Nachweise vor einem erneuten Versuch.",
+    "ui.services.adoptionSourceIdentityUnavailable":
+      "Diese Anwendung hat noch keine exakte Container-Identität, daher kann Stack it ihre Quelle nicht auswählen. Aktualisiere die Erkennung auf ihrem Node und versuche es erneut.",
+    "ui.services.adoptionReleaseUnavailable":
+      "Der mit diesem Node verbundene Guard hat noch kein veröffentlichtes StackKits-Release, das diese Anwendung übernehmen kann.",
     "ui.services.adoptionUnavailable":
       "Für die Prüfung braucht diese Quelle eine exakte Container-Identität und ein veröffentlichtes, geeignetes StackKits-Release auf ihrem verbundenen Guard.",
     "ui.services.adoptionVerified":

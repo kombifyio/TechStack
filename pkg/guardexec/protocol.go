@@ -128,6 +128,9 @@ type ExecuteParams struct {
 	// Command is the exact JSON the binding's payload digest names.
 	Command json.RawMessage      `json:"command"`
 	Binding guardbinding.Binding `json:"binding"`
+	// LocalGrant is the signed local repair grant of a binding of the local
+	// repair contract (Guard G07); it is the only authority of such a request.
+	LocalGrant *guardbinding.LocalRepairGrant `json:"local_grant,omitempty"`
 }
 
 // RuntimeDescription is the installed StackKits runtime.

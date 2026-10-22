@@ -166,6 +166,30 @@ func Recover(opts Options) error {
 	return updater.Recover()
 }
 
+// CheckManifestAdmission is the root-only, read-only admission check of the
+// operator command: it reports whether this host would admit the release a
+// signed manifest and its bundle describe, using the executor's own verifier,
+// its manifest floor and the running Guard's version. It stages and records
+// nothing, and does not touch the floor.
+func CheckManifestAdmission(opts Options, manifestPath, bundlePath string) (ManifestAdmission, error) {
+	opts.defaults()
+	if os.Geteuid() != 0 {
+		return ManifestAdmission{}, errors.New("the admission check must run as root")
+	}
+	if manifestPath == "" || bundlePath == "" {
+		return ManifestAdmission{}, errors.New("--manifest and --bundle are required")
+	}
+	// A missing state directory is not a Guard host; creating it would be a write.
+	if info, err := os.Stat(opts.StateDir); err != nil || !info.IsDir() {
+		return ManifestAdmission{}, fmt.Errorf("no executor state at %s: this is not an installed Guard", opts.StateDir)
+	}
+	updater, err := NewUpdaterFromOptions(opts)
+	if err != nil {
+		return ManifestAdmission{}, err
+	}
+	return updater.CheckManifest(manifestPath, bundlePath)
+}
+
 func envTrue(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on":

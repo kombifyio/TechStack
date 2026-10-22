@@ -22,10 +22,12 @@ func issuerPreparationError(stage string, cause error) error {
 	return errors.New(message)
 }
 
-// prepareAdvancedIssuerKeyLogin is shared by governed deployment and assigned
-// test preparation. Existing credentials are authenticated by their stored
-// SCRAM verifier; no password, key, app grant or ownership is changed.
-func prepareAdvancedIssuerKeyLogin(ctx context.Context, tx *sql.Tx, role, password, verifier, databaseName, identityFunction string) error {
+const EnvAdvancedIssuerDatabaseURL = "TECHSTACK_ADVANCED_ISSUER_DATABASE_URL"
+
+// prepareAdvancedIssuerKeyLogin is the governed deployment's signing-login
+// preparation. Existing credentials are authenticated by their stored SCRAM
+// verifier; no password, key, app grant or ownership is changed.
+func prepareAdvancedIssuerKeyLogin(ctx context.Context, tx *sql.Tx, role, password, verifier, databaseName string) error {
 	if role == "" || len(password) < 32 || !PostgresSCRAMSecretMatches(password, verifier) {
 		return errors.New("advanced issuer preparation requires its bound SCRAM credential")
 	}
@@ -54,7 +56,7 @@ func prepareAdvancedIssuerKeyLogin(ctx context.Context, tx *sql.Tx, role, passwo
 			return issuerPreparationError("create-login", err)
 		}
 	}
-	if err = inspectAdvancedIssuerKeyPrivileges(ctx, tx, role, identityFunction, false); err != nil {
+	if err = inspectAdvancedIssuerKeyPrivileges(ctx, tx, role, "", false); err != nil {
 		return err
 	}
 	statements := []string{
@@ -62,22 +64,18 @@ func prepareAdvancedIssuerKeyLogin(ctx context.Context, tx *sql.Tx, role, passwo
 		"GRANT USAGE ON SCHEMA public TO " + quoted,
 		"GRANT SELECT,INSERT ON TABLE public.advanced_issuer_keys TO " + quoted,
 	}
-	if identityFunction != "" {
-		statements = append(statements, "GRANT EXECUTE ON FUNCTION "+identityFunction+" TO "+quoted)
-	}
-	stages := []string{"grant-database-connect", "grant-schema-usage", "grant-key-custody", "grant-identity-read"}
+	stages := []string{"grant-database-connect", "grant-schema-usage", "grant-key-custody"}
 	for index, statement := range statements {
 		if _, err = tx.ExecContext(ctx, statement); err != nil {
 			return issuerPreparationError(stages[index], err)
 		}
 	}
-	return inspectAdvancedIssuerKeyPrivileges(ctx, tx, role, identityFunction, true)
+	return inspectAdvancedIssuerKeyPrivileges(ctx, tx, role, "", true)
 }
 
 // PrepareAdvancedIssuerKeyCustody uses the existing migration/bootstrap
-// authority. The transaction owns only the signing login and direct grants.
-// Assignment-specific service, owner and identity-helper rules stay in the
-// managed test wrapper; this function does not choose a fixture or database.
+// authority. The transaction owns only the signing login and direct grants;
+// this function does not choose a fixture or database.
 func PrepareAdvancedIssuerKeyCustody(ctx context.Context, database *DB, issuerDSN, applicationRole, verifier string) error {
 	if database == nil || database.DB == nil {
 		return errors.New("advanced issuer bootstrap database is absent")
@@ -89,9 +87,6 @@ func PrepareAdvancedIssuerKeyCustody(ctx context.Context, database *DB, issuerDS
 	cfg, err := pgx.ParseConfig(issuerDSN)
 	if err != nil || cfg.User == "" || cfg.User == applicationRole || applicationRole == "" {
 		return errors.New("advanced issuer bootstrap needs a distinct signing login")
-	}
-	if isManagedTestDSN(issuerDSN) {
-		return errors.New("assigned database signing custody requires its governed assignment preparation")
 	}
 	if err = VerifyExpectedDatabaseIdentity(ctx, database.DB); err != nil {
 		return err
@@ -116,7 +111,7 @@ func PrepareAdvancedIssuerKeyCustody(ctx context.Context, database *DB, issuerDS
 	if err != nil || appKeyAccess {
 		return errors.New("advanced issuer bootstrap refuses application key authority")
 	}
-	if err = prepareAdvancedIssuerKeyLogin(ctx, tx, cfg.User, cfg.Password, verifier, databaseName, ""); err != nil {
+	if err = prepareAdvancedIssuerKeyLogin(ctx, tx, cfg.User, cfg.Password, verifier, databaseName); err != nil {
 		return err
 	}
 	if pin, pinned, pinErr := ExpectedDatabaseIdentityFromEnv(); pinErr != nil {

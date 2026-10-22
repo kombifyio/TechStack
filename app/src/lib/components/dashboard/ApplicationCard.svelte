@@ -130,7 +130,12 @@
       label: action.label,
       icon: action.icon as unknown as EntityIcon,
       href: action.href,
-      state: action.busy ? "executing" : undefined,
+      state: action.disabledReason
+        ? "disabled"
+        : action.busy
+          ? "executing"
+          : undefined,
+      disabledReason: action.disabledReason,
       onSelect: action.onSelect ? () => void action.onSelect?.() : undefined,
     };
   }

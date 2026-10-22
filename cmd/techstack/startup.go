@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -350,6 +351,11 @@ func runTechstack(ctx context.Context) error {
 			log.Error("agent_mtls_config_invalid", "error", err)
 			return err
 		}
+		if grpcState.server != nil {
+			// A typed result the mTLS listener accepts is the agent's
+			// Connected round-trip evidence, as on the HTTPS hub.
+			grpcState.server.SetStackKitRoundTripRecorder(typedControl.RecordMTLSRoundTrip)
+		}
 	}
 	notificationOutbox := bootProductNotificationOutbox(v2Boot, startup.cfg.Edition, log)
 	if notificationOutbox != nil {
@@ -460,9 +466,6 @@ func runTechstack(ctx context.Context) error {
 	}
 	previewExecution.StartupSuppressed()
 
-	// Read who chose Preview before any loop picks tenants, the boot requeue
-	// included.
-	channelDirectory := bootReleaseChannelDirectory(ctx, startup.cfg, log)
 	registrySweeper := bootServerRegistrySweeper(v2Boot, monitorState, log)
 	platformProjector := bootPlatformServerProjector(v2Boot, log)
 	jobReclaimer := bootJobExecutionReclaimer(v2Boot, orch, monitorState, log)
@@ -476,8 +479,10 @@ func runTechstack(ctx context.Context) error {
 	if feed != nil && feed.digest != nil {
 		handles.background.run(feed.digest.Run)
 	}
-	if channelDirectory != nil {
-		handles.background.run(runReleaseChannelDirectory(channelDirectory, log))
+	if config.RunsSharedWork() {
+		if probe := bootGuardRoundTripProbe(startup.cfg, v2Boot, orch, typedControl, grpcState, log); probe != nil {
+			handles.background.run(probe.Run)
+		}
 	}
 
 	addr := startup.cfg.Server.ListenAddr
@@ -561,10 +566,6 @@ func handleEarlyCommand(ctx context.Context, args []string) (bool, error) {
 		}
 		fmt.Println("provider-control runtime authority installed and verified")
 		return true, nil
-	case "managed-test-bootstrap":
-		return true, runManagedTestBootstrap(ctx, args[2:])
-	case "operator-qualification-fixture":
-		return true, runOperatorQualificationFixture(ctx, args[2:])
 	case "wallet-migration":
 		return true, runWalletMigration(ctx, args[2:])
 	case "wallet":
@@ -651,7 +652,6 @@ func bootCanonicalV2(ctx context.Context, cfg *config.Config, log *logger.Logger
 
 	boot.cookieName = v2SessionCookieNameFromEnv()
 	options = append(options, v2.WithSessionCookieName(boot.cookieName))
-	options = append(options, v2.WithReleaseChannel(chosenReleaseChannel))
 	configureV2Auth(ctx, cfg, log, boot, &options)
 	boot.server = v2.NewServer(options...)
 	return boot
@@ -670,17 +670,6 @@ func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.D
 	if err != nil {
 		log.Error("v2_db_open_failed", "error", err)
 		return nil
-	}
-	if os.Getenv(db.EnvManagedTestAssignment) != "" {
-		a, err := db.LoadManagedTestAssignment()
-		if err == nil {
-			err = db.VerifyManagedTestSession(ctx, opened.DB, *a, db.ManagedTestApp)
-		}
-		if err != nil {
-			log.Error("v2_assigned_runtime_invalid", "error", err)
-			_ = opened.Close()
-			return nil
-		}
 	}
 	if err := opened.Migrate(ctx); err != nil {
 		log.Error("v2_db_migrate_failed", "error", err)
@@ -1074,7 +1063,6 @@ func buildRouter(deps routeDeps) (*httpx.Router, error) {
 	registerNetworkRoutes(router, deps)
 	registerFeatureRoutes(router, deps, state)
 	registerV2Routes(router, deps)
-	registerReleaseChannelRoutes(router, deps)
 	registerFrontendFallback(router, deps)
 	return router, nil
 }
@@ -1157,7 +1145,10 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 			return e.Next()
 		}
 		if id := identity.FromContext(e.Request.Context()); id != nil && id.IsAuthenticated() {
-			membership := enrichIdentityFromMembership(e.Request.Context(), boot.authStore, id, id.OrgID, boot.defaultTenant, "default")
+			membership, lookupErr := enrichIdentityFromMembership(e.Request.Context(), boot.authStore, id, id.OrgID, boot.defaultTenant, "default")
+			if err := interruptedMembershipLookup(id.OrgID, lookupErr); err != nil {
+				return err
+			}
 			// Edge-signed tenants are authoritative per request: never rebind
 			// them to another tenant; an unrecoverable projection failure is
 			// answered with the retryable re-auth signal (a fresh login
@@ -1182,7 +1173,10 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 			return e.Next()
 		}
 		id := identityFromV2SessionClaims(claims)
-		membership := enrichV2SessionIdentityFromMembership(e.Request.Context(), boot.authStore, boot.defaultTenant, boot.saasMode, claims, id)
+		membership, lookupErr := enrichV2SessionIdentityFromMembership(e.Request.Context(), boot.authStore, boot.defaultTenant, boot.saasMode, claims, id)
+		if err := interruptedMembershipLookup(id.OrgID, lookupErr); err != nil {
+			return err
+		}
 		// Session claims are login-time snapshots, not per-request authority:
 		// when their tenant no longer projects, the recovery ladder may rebind
 		// the identity the same way a fresh login would.
@@ -1411,9 +1405,9 @@ func identityFromV2SessionClaims(claims *session.Claims) *identity.Identity {
 	}
 }
 
-func enrichV2SessionIdentityFromMembership(ctx context.Context, store controlplane.AuthStore, defaultTenant string, saasMode bool, claims *session.Claims, id *identity.Identity) *controlplane.Membership {
+func enrichV2SessionIdentityFromMembership(ctx context.Context, store controlplane.AuthStore, defaultTenant string, saasMode bool, claims *session.Claims, id *identity.Identity) (*controlplane.Membership, error) {
 	if claims == nil {
-		return nil
+		return nil, nil
 	}
 	// Legacy SaaS sessions issued before the login-time tenant resolver carry
 	// no tenant claim; prefer the user's org membership over the shared
@@ -1421,7 +1415,7 @@ func enrichV2SessionIdentityFromMembership(ctx context.Context, store controlpla
 	if saasMode && strings.TrimSpace(v2SessionTenantID(claims)) == "" {
 		if membership := preferredOrgMembershipForIdentity(ctx, store, id); membership != nil {
 			appendIdentityRole(id, membership.RoleKey)
-			return membership
+			return membership, nil
 		}
 	}
 	return enrichIdentityFromMembership(ctx, store, id, v2SessionTenantID(claims), claims.TenantID, claims.OrgID, defaultTenant, "default")
@@ -1437,26 +1431,40 @@ func activeMembership(membership *controlplane.Membership) bool {
 	return status == "" || strings.EqualFold(status, "active")
 }
 
-func enrichIdentityFromMembership(ctx context.Context, store controlplane.AuthStore, id *identity.Identity, tenantIDs ...string) *controlplane.Membership {
-	if store == nil || id == nil || !id.IsAuthenticated() || strings.TrimSpace(id.UserID) == "" {
+// interruptedMembershipLookup refuses a membership read that stopped because
+// the caller left or the deadline fired. That result is not a missing
+// membership: it must not clear the session or ask for reprojection, and it
+// must not continue as an authenticated request.
+func interruptedMembershipLookup(tenantID string, err error) error {
+	if err == nil || (!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)) {
 		return nil
+	}
+	logger.Default().Warn("membership_lookup_interrupted", "error", err, "tenant_id", tenantID)
+	return httpx.NewAPIError(http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Membership lookup did not finish", nil)
+}
+
+func enrichIdentityFromMembership(ctx context.Context, store controlplane.AuthStore, id *identity.Identity, tenantIDs ...string) (*controlplane.Membership, error) {
+	if store == nil || id == nil || !id.IsAuthenticated() || strings.TrimSpace(id.UserID) == "" {
+		return nil, nil
 	}
 	tenantIDs = uniqueNonEmptyStrings(tenantIDs...)
 	if len(tenantIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	for _, tenantID := range tenantIDs {
 		membership, err := store.GetMembership(ctx, tenantID, id.UserID)
-		if err != nil || membership == nil {
-			continue
+		// Cancellation is not absence. Falling through to a nil membership
+		// makes the session middleware clear the cookie.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
-		if !activeMembership(membership) {
+		if err != nil || membership == nil || !activeMembership(membership) {
 			continue
 		}
 		appendIdentityRole(id, membership.RoleKey)
-		return membership
+		return membership, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // applyOwnerTenantFallback resolves a SaaS identity without any tenant scope

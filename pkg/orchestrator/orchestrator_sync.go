@@ -278,10 +278,6 @@ func terminalJobSnapshot(snapshot jobs.JobSnapshot) bool {
 	}
 }
 
-func (o *Orchestrator) syncControlPlaneJobSnapshot(job jobs.JobSnapshot, tenantID string) error {
-	return o.syncControlPlaneJobSnapshotContext(o.ctx, job, tenantID)
-}
-
 func (o *Orchestrator) syncDurableJobExecutionSnapshot(ctx context.Context, job jobs.JobSnapshot) error {
 	tenantID := firstNonEmptyJobString(job, "tenant_id")
 	if tenantID == "" {

@@ -10,13 +10,12 @@ import (
 
 const AllowedFrameOriginsEnv = "ALLOWED_FRAME_ORIGINS"
 
-// https://preview.kombify.io is kombify Cloud's Preview channel. It
-// embeds this stable Techstack exactly as https://kombify.io does, so the
-// preview channel's tool pages render signed in (same site, Lax session).
+// Stable never knows Preview: kombify Cloud's Preview frames Techstack's
+// Preview, whose own configuration admits it (ALLOWED_FRAME_ORIGINS in
+// render.preview.yaml), so no Preview host is part of this production list.
 var productionPortalFrameOrigins = []string{
 	"https://kombify.io",
 	"https://app.kombify.io",
-	"https://preview.kombify.io",
 }
 
 var devPortalFrameOrigins = []string{

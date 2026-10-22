@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "public_repository": "kombifyio/TechStack",
-  "source_commit": "45e01cb5baa6b5bf2cd39cd0fb610e5bb9b371e1",
-  "candidate_digest": "6a31ec4c20062dc12938c417afbebd0a726a6ffe52156b27cd3215bcc60230eb",
-  "candidate_file_count": 3130,
+  "source_commit": "00e2a8745f46f278c6b89b76eaded07749d28ad2",
+  "candidate_digest": "3d8edd0bba72ff05a4bc4e26cf1001971577bd3926e22fefcd958dd75f72aa54",
+  "candidate_file_count": 2381,
   "digest_scope": "sha256 over every exported file except this receipt, in code-unit path order, as path NUL content NUL",
   "projected_go_sources": [
     {
       "destination": "internal/gocommon",
-      "version": "v0.8.2",
-      "sum": "h1:6n7IaFYvmqjy0x/RSOEQWk+pVaJ5Q+x0Ai0z+mvbGXI=",
-      "commit": "43a8f76348bbb1b725f20bd93417ea4b5d9d3d62",
+      "version": "v0.8.3",
+      "sum": "h1:WDw+XogEeHuzsVRjjyc6tgRcPWKqTh6R3bRV8UtDXMk=",
+      "commit": "2b0846cfc5f9dde3263590629a95d28ec0bee36b",
       "packages": [
         "apisurface",
         "apisurface/cli",

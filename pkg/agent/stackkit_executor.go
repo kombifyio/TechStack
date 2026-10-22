@@ -512,7 +512,7 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 		// workspace, StackSpec or workspace binding, only a neutral directory.
 		workDir, err = cleanStackKitWorkDir(os.TempDir())
 	} else {
-		workDir, err = cleanStackKitWorkDir(command.WorkingDirectory)
+		workDir, err = confineStackKitWorkDir(command.WorkingDirectory)
 	}
 	if err != nil {
 		return stackkitrelease.Release{}, nil, "", "", nil, err
@@ -669,6 +669,9 @@ func materializeStackKitInventory(workDir string, raw []byte) error {
 	}
 	canonical = append(canonical, '\n')
 	directory := filepath.Join(workDir, ".stackkit")
+	if err := requireStackKitStateDir(workDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return fmt.Errorf("create StackKits Inventory directory: %w", err)
 	}
@@ -836,6 +839,9 @@ func stackKitAdvancedTrustImportArgs(command *agentpb.StackKitCommand) ([]string
 
 func materializeStackKitAdvancedTrustBundle(workDir string, bundle []byte) error {
 	directory := filepath.Join(workDir, ".stackkit")
+	if err := requireStackKitStateDir(workDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return fmt.Errorf("create StackKits workspace directory: %w", err)
 	}
@@ -1048,6 +1054,60 @@ func cleanStackKitWorkDir(path string) (string, error) {
 		return "", fmt.Errorf("StackKit working_directory must be a real directory")
 	}
 	return absolute, nil
+}
+
+// confineStackKitWorkDir admits a command's working_directory only when it is
+// the node's StackKits workspace or a real directory below it. The executor
+// runs as root, so a control-plane command must not be able to point it at an
+// arbitrary directory, and no component below the workspace may be a symlink
+// that could redirect the later .stackkit writes elsewhere. The workspace root
+// itself is operator configuration (TECHSTACK_STACKKIT_WORKSPACE, default
+// /opt/stackkit) and is trusted as given.
+func confineStackKitWorkDir(path string) (string, error) {
+	absolute, err := cleanStackKitWorkDir(path)
+	if err != nil {
+		return "", err
+	}
+	root, err := filepath.Abs(filepath.Clean(stackKitWorkspaceRoot()))
+	if err != nil {
+		return "", fmt.Errorf("resolve StackKits workspace root: %w", err)
+	}
+	relative, err := filepath.Rel(root, absolute)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("StackKit working_directory must be inside the StackKits workspace")
+	}
+	current := root
+	for _, part := range strings.Split(relative, string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", fmt.Errorf("inspect StackKit working_directory: %w", err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("StackKit working_directory must not pass through a symlink or non-directory")
+		}
+	}
+	return current, nil
+}
+
+// requireStackKitStateDir refuses a .stackkit entry that is a symlink or a
+// non-directory, so the root-owned inventory and trust-bundle writes stay in
+// the confined workspace. A missing entry is created by the caller.
+func requireStackKitStateDir(workDir string) error {
+	info, err := os.Lstat(filepath.Join(workDir, ".stackkit"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect StackKits state directory: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("StackKits state directory must be a real directory")
+	}
+	return nil
 }
 
 func cleanStackKitRelativePath(value, fallback, field string) (string, error) {

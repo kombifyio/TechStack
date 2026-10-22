@@ -168,6 +168,45 @@ export async function runComponentAction(
   return tracker.run(component, action);
 }
 
+/**
+ * The backend's explanation for a withheld adoption, by reason code. A source
+ * without an exact container identity cannot be bound; otherwise the connected
+ * Guard lacks a capable published StackKits release (or the backend predates
+ * the assessment), which the general message covers.
+ */
+export function adoptionUnavailableReason(
+  adoption?: CanonicalService["adoption"],
+): string {
+  switch (adoption?.reason_code) {
+    case "application_source_identity_unavailable":
+      return tr("ui.services.adoptionSourceIdentityUnavailable");
+    case "application_adoption_unavailable":
+      return tr("ui.services.adoptionReleaseUnavailable");
+    default:
+      return tr("ui.services.adoptionUnavailable");
+  }
+}
+
+/**
+ * Why "Stack it" is withheld from an Unstacked (observed) component, or
+ * undefined when it is granted or does not apply. The owner lock wins: the
+ * backend withholds `adopt` from a locked service even when the source could
+ * be adopted.
+ */
+export function adoptionDeniedReason(
+  component: Pick<
+    CanonicalService,
+    "management_state" | "allowed_actions" | "mutation_lock" | "adoption"
+  >,
+): string | undefined {
+  if (component.management_state !== "observed") return undefined;
+  if (component.allowed_actions.includes("adopt")) return undefined;
+  if (serviceIsLocked(component.mutation_lock)) {
+    return serviceLockReason(component.mutation_lock);
+  }
+  return adoptionUnavailableReason(component.adoption);
+}
+
 export interface ApplicationCardHandlers {
   /** Open the logs of one component (sheet or tab). */
   onLogs: (target: CanonicalService) => void;
@@ -202,6 +241,9 @@ export function applicationCardActions(
   if (updateTarget(application)) granted.add("update");
   const adoptable = adoptTarget(application);
   if (adoptable) granted.add("adopt");
+  const unstacked = application.components.find(
+    (component) => component.management_state === "observed",
+  );
   const running = application.components
     .map((component) => tracker.jobs[component.id])
     .find((job) => isActionActive(job));
@@ -233,6 +275,8 @@ export function applicationCardActions(
       }
     },
     onAdopt: adoptable ? () => handlers.onAdopt(adoptable) : undefined,
+    adoptDeniedReason:
+      !adoptable && unstacked ? adoptionDeniedReason(unstacked) : undefined,
     onOpen: openUrl ? () => handlers.onOpen(openUrl) : undefined,
     onDetails: handlers.onDetails,
   });
@@ -263,6 +307,7 @@ export function componentCardActions(
     updateAvailable: Boolean(component.version?.update_available),
     onAction: handlers.onAction,
     onAdopt: handlers.onAdopt,
+    adoptDeniedReason: adoptionDeniedReason(component),
     onOpen: handlers.onOpen,
     onDetails: handlers.onDetails,
   });

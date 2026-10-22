@@ -43,12 +43,13 @@ func previewPublicPath(p string) bool {
 }
 
 // previewStaticAssetPath names the app's own static files outside /_app/
-// (brand marks, product logos, the creation-wizard preview catalogs). They
-// are files, not work; like every public shell path they are admitted only
-// through the router's frontend fallback, never a dynamic handler.
+// (brand marks, product logos, the creation-wizard preview catalogs, the
+// RFC 9116 security contact). They are files, not work; like every public
+// shell path they are admitted only through the router's frontend fallback,
+// never a dynamic handler.
 func previewStaticAssetPath(p string) bool {
 	switch p {
-	case "/kombify-navy.png", "/robots.txt":
+	case "/kombify-navy.png", "/robots.txt", "/.well-known/security.txt":
 		return true
 	}
 	return strings.HasPrefix(p, "/brand/") || strings.HasPrefix(p, "/brand-logos/") || strings.HasPrefix(p, "/preview-catalogs/")

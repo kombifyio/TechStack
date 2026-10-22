@@ -106,7 +106,7 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
     "Espera al siguiente informe. Si no aparece, actualiza Guard en el servidor.",
 
   "guard.fact.connected.ok":
-    "Guard informa a través de su conexión autenticada.",
+    "Guard respondió a un comando a través de su conexión autenticada.",
   "guard.fact.connected.degraded": "La conexión está degradada.",
   "guard.fact.connected.offline":
     "Guard no informa. El servidor está sin conexión o no puede alcanzar Techstack.",
@@ -121,6 +121,12 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
     "No se informa ningún estado de conexión para este servidor.",
   "guard.fact.connected.reconnectNext":
     "Comprueba que el servidor está encendido y puede alcanzar Techstack.",
+  "guard.fact.connected.awaitingRoundTrip":
+    "Guard informa, pero aún no ha respondido a ningún comando de Techstack con su credencial actual.",
+  "guard.fact.connected.roundTripStale":
+    "Guard informa, pero el último comando que respondió es demasiado antiguo o se respondió con una credencial anterior.",
+  "guard.fact.connected.roundTripNext":
+    "La próxima operación en este servidor confirma la conexión; los informes por sí solos no bastan.",
 
   "guard.fact.operations.ok":
     "Las operaciones se registran de forma duradera y no queda nada sin resolver.",

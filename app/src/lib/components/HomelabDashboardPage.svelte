@@ -18,6 +18,7 @@
   import { useViewContextOverlay } from "#lib/stores/viewContext.svelte.js";
   import type { ViewContextDetails } from "#lib/view-context.js";
   import { getWorkerRegistryUrl } from "#lib/api/tunnel.js";
+  import { getGuardBinaryPins } from "#lib/api/workers.js";
   import { listWorkers, type Worker } from "#lib/api/workers.js";
   import { goto, pushState } from "$app/navigation";
   import { page } from "$app/state";
@@ -283,13 +284,23 @@
   // The private-LAN bridge pin applies only while serverUrl is that bridge.
   let lanBridge = $state<{ url: string; pin: string } | null>(null);
   let registryUrlError = $state<string | null>(null);
+  // The Guard binary pin set the install command carries. Without a trusted
+  // digest there is no command, only the reason (fail closed).
+  let binaryPin = $state("");
+  let binaryPinResolved = $state(false);
   let installCommand = $derived(
     registrationToken && serverUrl
       ? generateInstallCommand(
           serverUrl,
           registrationToken,
           lanBridge && lanBridge.url === serverUrl ? lanBridge.pin : "",
+          binaryPin,
         )
+      : "",
+  );
+  let installCommandError = $derived(
+    registrationToken && serverUrl && binaryPinResolved && !installCommand
+      ? tr("ui.substrateEnrollment.aConnectionCommandCouldNot")
       : "",
   );
   // Connection and rollout authority comes exclusively from the canonical
@@ -1475,7 +1486,18 @@
     }, delayMs);
   }
 
+  async function refreshBinaryPins() {
+    try {
+      binaryPin = await getGuardBinaryPins();
+    } catch {
+      binaryPin = "";
+    } finally {
+      binaryPinResolved = true;
+    }
+  }
+
   async function refreshWorkerRegistryUrl() {
+    void refreshBinaryPins();
     registryUrlError = null;
     try {
       const res = await getWorkerRegistryUrl();
@@ -2961,6 +2983,7 @@
         {registryMode}
         {registryUrlError}
         {installCommand}
+        {installCommandError}
         {canRollout}
         {rolloutLoading}
         onDeploy={() => startRollout()}

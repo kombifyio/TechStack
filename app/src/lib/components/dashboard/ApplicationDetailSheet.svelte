@@ -142,7 +142,12 @@
         label: action.label,
         icon: action.icon as EntityAction["icon"],
         href: action.href,
-        state: action.busy ? "executing" : "ready",
+        state: action.disabledReason
+          ? "disabled"
+          : action.busy
+            ? "executing"
+            : "ready",
+        disabledReason: action.disabledReason,
         onSelect: () => void action.onSelect?.(),
       }),
     ),

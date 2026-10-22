@@ -115,6 +115,7 @@ func (h workerRouteHandlers) heartbeatWithRuntimeAgent(e *httpx.Event, id string
 	}
 	serverID := firstNonEmpty(authCtx.ServerID, runtimeServerIDForWorker(id))
 	if err := h.projectServerHeartbeat(e.Request.Context(), *updated, serverID, authCtx.LeaseID, now, "guard-heartbeat", position); err != nil {
+		httpx.RecordDependencyFailure(e, "workers.heartbeat.project_server", err)
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist server heartbeat", nil)
 	}
 	h.observeGuardPosture(e.Request.Context(), authCtx, req)

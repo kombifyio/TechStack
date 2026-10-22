@@ -8,7 +8,7 @@
 //
 // Scope: SaaS services only (Ebene 2 per PRODUCT-SEGMENTATION.md).
 // OSS tools (Ebene 1 — Sim, SpeechKit, StackKits, TechStack-OSS) MUST NOT
-// import this package. See ../kombify Core/standards/OBSERVABILITY-STANDARD.md.
+// import this package. See ../platform/standards/OBSERVABILITY-STANDARD.md.
 //
 // Usage:
 //

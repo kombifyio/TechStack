@@ -60,6 +60,9 @@ func (h workerRouteHandlers) workerTelemetry(e *httpx.Event) error {
 		return httpx.Success(e, http.StatusOK, map[string]any{"telemetry": ack})
 	case err != nil:
 		slog.Warn("guard_telemetry_ingest_failed", "worker_id", identity.WorkerID, "error", err.Error())
+		// The 503 hides which store call failed (cursor, sample sink or drive
+		// observations); the Sentry event carries the operation and cause class.
+		httpx.RecordDependencyFailure(e, "workers.telemetry.ingest", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Guard telemetry is unavailable", nil)
 	}
 	return httpx.Success(e, http.StatusOK, map[string]any{"telemetry": ack})

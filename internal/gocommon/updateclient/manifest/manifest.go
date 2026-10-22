@@ -1,6 +1,6 @@
 // Package manifest is the Go source of truth for the Kombify
 // ClientUpdateManifest v1 wire contract
-// (kombify-Core/standards/client-update-manifest.v1.schema.json). It parses
+// (platform/standards/client-update-manifest.v1.schema.json). It parses
 // manifests fail-closed and verifies their detached signature against public
 // keys embedded in the client binary.
 //

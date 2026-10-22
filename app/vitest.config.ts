@@ -16,22 +16,6 @@ export default defineConfig({
     exclude: ["tests/**", "node_modules/**", "dist/**", "build/**"],
     globals: true,
     maxWorkers: 1,
-    coverage: {
-      provider: "v8",
-      reporter: ["text", "json", "html", "lcov"],
-      exclude: [
-        "node_modules/",
-        ".svelte-kit/",
-        "dist/",
-        "build/",
-        "coverage/",
-        "tests/",
-        "**/*.config.{js,ts}",
-        "**/*.d.ts",
-        "**/*.{test,spec}.{js,ts}",
-        "**/mocks/**",
-      ],
-    },
   },
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),

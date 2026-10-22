@@ -2,11 +2,11 @@
   "configured": true,
   "deliverability_known": true,
   "release": {
-    "tag": "v0.54.3",
-    "version": "0.54.3",
-    "sourceSha": "d8f529767582f017d420edfeeec8c7d1f2810676",
-    "publicSourceSha": "721b28cf58d148556aabcc6eec77161fc5a36f8d",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.3"
+    "tag": "v0.54.4",
+    "version": "0.54.4",
+    "sourceSha": "fa83fa6853ae5e2c5833990fcb26a20a6354d934",
+    "publicSourceSha": "9ac1e5d972181599722602257c2da1876a55d032",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.4"
   },
   "use_cases": [
     {
@@ -3718,7 +3718,8 @@
                 }
               }
             }
-          ]
+          ],
+          "providesRuntimeAdapterRef": "coolify"
         }
       ],
       "components": [
@@ -3728,6 +3729,13 @@
           "role": "primary",
           "kind": "application",
           "maturity": "beta"
+        },
+        {
+          "id": "runtipi",
+          "name": "Runtipi",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "recorded"
         }
       ],
       "compute_tiers": {
@@ -3763,6 +3771,11 @@
               "id": "coolify",
               "name": "Coolify",
               "realization": "install"
+            },
+            {
+              "id": "runtipi",
+              "name": "Runtipi",
+              "realization": "recorded"
             }
           ],
           "default": "coolify",

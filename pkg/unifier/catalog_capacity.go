@@ -101,7 +101,7 @@ func selectedFootprints(catalog stackkitrelease.UseCaseCatalog, goals []string, 
 
 // footprintFits checks floors against the whole host and reservations against
 // unallocated capacity. Missing measurements are explicit, not zero capacity.
-func footprintFits(footprint stackkitrelease.WorkloadFootprint, worker core.Worker, allocated stackkitrelease.UseCaseResources) (shortfall, unknown []string) {
+func footprintFits(footprint stackkitrelease.WorkloadFootprint, worker core.Worker, allocated stackkitrelease.UseCaseResources, selectionNeed float64) (shortfall, unknown []string) {
 	floor, reservation, capacity := footprint.HostFloor, footprint.Reservation, worker.Capabilities
 	check := func(name string, total, used, minimum, demand float64) {
 		if minimum == 0 && demand == 0 {
@@ -115,7 +115,19 @@ func footprintFits(footprint stackkitrelease.WorkloadFootprint, worker core.Work
 	}
 	check("cpu", float64(capacity.CPU), float64(worker.Usage.CPU)+allocated.CPUCores, floor.MinCPUCores, reservation.CPUCores)
 	check("memory", float64(capacity.RAM)/1024, float64(worker.Usage.RAM)/1024+allocated.RAMGB, floor.MinRAMGB, reservation.RAMGB)
-	check("storage", float64(capacity.Disk), float64(worker.Usage.Disk)+allocated.StorageGB, floor.MinStorageGB, reservation.StorageGB)
+	storageTotal := float64(capacity.Disk)
+	storageUsed := float64(worker.Usage.Disk) + allocated.StorageGB
+	// Package data on an external volume does not consume the root filesystem,
+	// so root usage is not subtracted from that volume.
+	if selectionNeed > 0 && storageTotal < selectionNeed {
+		if volume, ok := largestFittingVolume(capacity.Volumes, selectionNeed); ok {
+			storageTotal = float64(volume.SizeGB)
+			// Measured free space is the room left on that volume. Unknown
+			// free space adds no usage. Root disk usage stays on the root disk.
+			storageUsed = externalVolumeUsedGB(volume) + allocated.StorageGB
+		}
+	}
+	check("storage", storageTotal, storageUsed, floor.MinStorageGB, reservation.StorageGB)
 	if footprint.CPUReservationUnspecified {
 		unknown = append(unknown, "cpu_reservation")
 	}
@@ -175,13 +187,14 @@ func catalogCapacityReasons(request core.WizardRecommendationRequest, inventory 
 	if len(workers) == 0 {
 		return nil, false // The existing inventory status describes this state.
 	}
+	selectionNeed := selectionStorageNeed(footprints)
 	var reasons []core.WizardRecommendationReason
 	unknown := false
 	for _, footprint := range footprints {
 		fits, measured := false, false
 		var shortfalls, missing []string
 		for _, worker := range workers {
-			shortfall, absent := footprintFits(footprint, worker, stackkitrelease.UseCaseResources{})
+			shortfall, absent := footprintFits(footprint, worker, stackkitrelease.UseCaseResources{}, selectionNeed)
 			if len(shortfall) == 0 {
 				fits = true
 				if len(absent) == 0 {

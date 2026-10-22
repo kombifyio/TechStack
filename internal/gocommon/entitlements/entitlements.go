@@ -1,4 +1,4 @@
-// Code generated from kombify-Core/standards/entitlements.v1.json by scripts/entitlements/generate.mjs. DO NOT EDIT.
+// Code generated from platform/standards/entitlements.v1.json by scripts/entitlements/generate.mjs. DO NOT EDIT.
 // Regenerate with `mise run entitlements:generate`; `mise run entitlements:check` fails when this file is stale.
 
 // Package entitlements is the generated Go projection of the kombify
@@ -9,7 +9,7 @@ package entitlements
 
 import "strings"
 
-// VocabularyVersion is the version of kombify-Core/standards/entitlements.v1.json.
+// VocabularyVersion is the version of platform/standards/entitlements.v1.json.
 const VocabularyVersion = "1"
 
 // PlanTier is a canonical plan tier (ENTITLEMENTS-ARCHITECTURE section 3).

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,10 +42,14 @@ type RelayConfig struct {
 	// connection.
 	OnConnected func()
 	// LoopbackOnly pins every relayed request to this host's loopback
-	// interface. Guard reach publishes services of the Guard host only, so a
-	// relay-supplied target_addr naming anything else (RFC1918, another
-	// machine, a public host) is refused instead of dialed.
+	// interface and to LoopbackPort. Guard reach publishes one service of the
+	// Guard host only, so a relay-supplied target_addr naming anything else
+	// (RFC1918, another machine, a public host, or another local port such as
+	// a telemetry sink) is refused instead of dialed.
 	LoopbackOnly bool
+	// LoopbackPort is the one port the owner published, taken from the
+	// accepted reach document. LoopbackOnly without a valid port is refused.
+	LoopbackPort int
 }
 
 type Relay struct {
@@ -125,6 +130,9 @@ func NewRelay(cfg RelayConfig) (*Relay, error) {
 			return nil, errors.New("kombify.me relay requires an agent ID")
 		}
 	}
+	if cfg.LoopbackOnly && (cfg.LoopbackPort < 1 || cfg.LoopbackPort > 65535) {
+		return nil, errors.New("kombify.me relay loopback pin requires the published target port")
+	}
 	if cfg.Version == "" {
 		cfg.Version = "unknown"
 	}
@@ -138,7 +146,7 @@ func NewRelay(cfg RelayConfig) (*Relay, error) {
 	transport.Proxy = nil
 	transport.DialContext = dialRelayTarget
 	if cfg.LoopbackOnly {
-		transport.DialContext = dialRelayLoopbackTarget
+		transport.DialContext = dialRelayLoopbackTarget(cfg.LoopbackPort)
 	}
 	httpClient := &http.Client{
 		Transport: transport,
@@ -310,7 +318,7 @@ func (r *Relay) handleHTTPRequest(parent context.Context, conn *websocket.Conn, 
 
 func (r *Relay) forwardHTTPRequest(parent context.Context, payload relayHTTPRequest) (int, map[string]string, []byte, error) {
 	if r.cfg.LoopbackOnly {
-		if err := requireLoopbackTarget(payload.TargetAddr); err != nil {
+		if err := requireLoopbackTarget(payload.TargetAddr, r.cfg.LoopbackPort); err != nil {
 			return 0, nil, nil, err
 		}
 	}
@@ -432,47 +440,69 @@ func resolveRelayTarget(baseAddress, requestPath string) (*url.URL, error) {
 	return base, nil
 }
 
-var errRelayTargetNotLoopback = errors.New("relay target is not on this host's loopback interface")
+var (
+	errRelayTargetNotLoopback  = errors.New("relay target is not on this host's loopback interface")
+	errRelayTargetNotPublished = errors.New("relay target is not the published port")
+)
 
 // requireLoopbackTarget refuses a relay target whose host is not a loopback
-// literal or localhost. The dial-time check repeats it on resolved addresses.
-func requireLoopbackTarget(baseAddress string) error {
+// literal or localhost, or whose port is not the published one (an omitted
+// port is the scheme default). The dial-time check repeats both on resolved
+// addresses.
+func requireLoopbackTarget(baseAddress string, publishedPort int) error {
 	base, err := url.Parse(baseAddress)
 	if err != nil || base.Hostname() == "" {
 		return errors.New("invalid authorized tunnel target")
 	}
 	host := strings.ToLower(strings.TrimSuffix(base.Hostname(), "."))
-	if host == "localhost" {
-		return nil
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return errRelayTargetNotLoopback
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return nil
+	port := base.Port()
+	if port == "" {
+		port = "80"
+		if base.Scheme == "https" {
+			port = "443"
+		}
 	}
-	return errRelayTargetNotLoopback
+	if !isPublishedPort(port, publishedPort) {
+		return errRelayTargetNotPublished
+	}
+	return nil
 }
 
-func dialRelayLoopbackTarget(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, err
-	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	dialer := &net.Dialer{Timeout: relayHTTPTimeout, KeepAlive: 30 * time.Second}
-	var lastErr error = errors.New("tunnel target resolved to no addresses")
-	for _, resolved := range addresses {
-		if !resolved.IP.IsLoopback() {
-			return nil, errRelayTargetNotLoopback
+func isPublishedPort(port string, publishedPort int) bool {
+	value, err := strconv.Atoi(port)
+	return err == nil && publishedPort >= 1 && value == publishedPort
+}
+
+func dialRelayLoopbackTarget(publishedPort int) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
 		}
-		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
-		if dialErr == nil {
-			return conn, nil
+		if !isPublishedPort(port, publishedPort) {
+			return nil, errRelayTargetNotPublished
 		}
-		lastErr = dialErr
+		addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		dialer := &net.Dialer{Timeout: relayHTTPTimeout, KeepAlive: 30 * time.Second}
+		var lastErr error = errors.New("tunnel target resolved to no addresses")
+		for _, resolved := range addresses {
+			if !resolved.IP.IsLoopback() {
+				return nil, errRelayTargetNotLoopback
+			}
+			conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		return nil, lastErr
 	}
-	return nil, lastErr
 }
 
 func isMetadataHost(host string) bool {

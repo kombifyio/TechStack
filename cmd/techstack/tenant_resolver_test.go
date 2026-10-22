@@ -191,7 +191,10 @@ func TestEnrichV2SessionIdentityPrefersOrgMembershipInSaaS(t *testing.T) {
 	claims := &authsession.Claims{Subject: "auth0|user-1", Email: "user-1@kombify.io"}
 	id := identityFromV2SessionClaims(claims)
 
-	membership := enrichV2SessionIdentityFromMembership(context.Background(), store, "default", true, claims, id)
+	membership, err := enrichV2SessionIdentityFromMembership(context.Background(), store, "default", true, claims, id)
+	if err != nil {
+		t.Fatalf("enrichV2SessionIdentityFromMembership() error = %v", err)
+	}
 	if membership == nil || membership.TenantID != "org_acme" {
 		t.Fatalf("membership = %#v, want org_acme preferred", membership)
 	}
@@ -208,7 +211,10 @@ func TestEnrichV2SessionIdentityKeepsDefaultChainInSelfHosted(t *testing.T) {
 	claims := &authsession.Claims{Subject: "auth0|user-1"}
 	id := identityFromV2SessionClaims(claims)
 
-	membership := enrichV2SessionIdentityFromMembership(context.Background(), store, "default", false, claims, id)
+	membership, err := enrichV2SessionIdentityFromMembership(context.Background(), store, "default", false, claims, id)
+	if err != nil {
+		t.Fatalf("enrichV2SessionIdentityFromMembership() error = %v", err)
+	}
 	if membership == nil || membership.TenantID != "default" {
 		t.Fatalf("membership = %#v, want default chain untouched in self-hosted mode", membership)
 	}

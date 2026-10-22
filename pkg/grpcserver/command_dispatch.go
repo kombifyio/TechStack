@@ -174,6 +174,7 @@ func (s *Server) CommandStream(stream grpc.BidiStreamingServer[agentpb.AgentMess
 						"agent_id", agentID,
 					)
 				} else {
+					s.recordStackKitRoundTrip(stream.Context(), agentID, payload.StackkitResult)
 					s.appendStackKitResultLogs(agentID, payload.StackkitResult)
 					s.log.Info(
 						"stackkit_result_received",
@@ -388,4 +389,22 @@ func (s *Server) RunPreChecks(ctx context.Context, req *agentpb.PreCheckRequest)
 func (s *Server) SendCommandWithPersistence(cmd *AgentCommand, ownerID string) error {
 	_ = ownerID
 	return s.SendCommand(cmd)
+}
+
+// recordStackKitRoundTrip persists the accepted result as the agent's
+// round-trip evidence under its current tenant and certificate. A failure is
+// logged and never rejects the result: the command already completed.
+func (s *Server) recordStackKitRoundTrip(ctx context.Context, agentID string, result *agentpb.StackKitResult) {
+	if s.stackKitRoundTrips == nil {
+		return
+	}
+	agent, ok := s.GetAgent(agentID)
+	if !ok || agent == nil || strings.TrimSpace(agent.Tenant) == "" || strings.TrimSpace(agent.CertSerial) == "" {
+		return
+	}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.stackKitRoundTrips(recordCtx, agent.Tenant, agentID, agent.CertSerial, result); err != nil {
+		s.log.Warn("stackkit_round_trip_record_failed", "error", err.Error(), "cmd_id", result.GetCommandId(), "agent_id", agentID)
+	}
 }

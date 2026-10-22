@@ -1,7 +1,0 @@
-[
-  {"version":"156_subject_directory.sql","sha256":"a04c7739ace2ef68d312b3e94829695547b34306e6c182674d84213a1068730d"},
-  {"version":"157_subject_ref_execute_posture.sql","sha256":"6777f7f17156c0d1d5cda70efd55974b62db60a8041a2f8cb6e820c1a9bf014b"},
-  {"version":"158_ionos_basic_cube_large.sql","sha256":"004ccc73df9aad4bf9d391c3cd01ab77b977aa9dde6409ae1b3cbae11a4a7367"},
-  {"version":"159_guard_local_policy_operations.sql","sha256":"2f5af9fa4afdaa981cb3927e03aa7d540a412c09ca495b146dd0cc9e90be87ba"},
-  {"version":"160_ril_layout_recommendations.sql","sha256":"4a5120f63e07c9c4ce6679dd9bdb82ac3a1addac411f1ea3e09616936cbb4dcb"}
-]

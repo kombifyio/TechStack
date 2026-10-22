@@ -433,15 +433,11 @@ func systemdObservedState(active, sub string) string {
 	}
 }
 
-// operatorInstalledUnits lists the service units an operator installed on this
-// host. A masked unit (a symlink to /dev/null) is excluded: it is a decision to
-// never run the service, not a deployed application. Templates and enabled
-// instance links are retained so loaded instances can be observed too.
-func (d *hostDiscovery) operatorInstalledUnits() map[string]struct{} {
-	installed, _ := d.operatorInstalledUnitsCoverage()
-	return installed
-}
-
+// operatorInstalledUnitsCoverage lists the service units an operator installed on
+// this host and whether the listing is complete. A masked unit (a symlink to
+// /dev/null) is excluded: it is a decision to never run the service, not a
+// deployed application. Templates and enabled instance links are retained so
+// loaded instances can be observed too.
 func (d *hostDiscovery) operatorInstalledUnitsCoverage() (map[string]struct{}, bool) {
 	installed := map[string]struct{}{}
 	complete := len(d.cfg.SystemdUnitDir) > 0

@@ -42,6 +42,7 @@ export default defineConfig({
     "runtime-auth-smoke.spec.ts",
     "embedded-sso-session.spec.ts",
     "runtime-dashboard-load.spec.ts",
+    "runtime-offline-destroy.spec.ts",
   ],
   timeout: 300_000,
   expect: {
