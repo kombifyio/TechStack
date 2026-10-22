@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -538,6 +539,12 @@ func (q *Queue) processJob(ctx context.Context, job *Job) {
 	var handlerErr error
 	func() {
 		defer func() {
+			// A handler panic is reported to Sentry before the process goes down:
+			// recover() works only here, in the deferred function itself.
+			if rec := recover(); rec != nil {
+				finishSentry(&jobPanicError{value: rec, stack: debug.Stack()})
+				panic(rec)
+			}
 			if isJobWaitError(handlerErr) {
 				finishSentry(nil)
 				return

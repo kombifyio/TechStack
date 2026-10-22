@@ -666,9 +666,24 @@ func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.D
 	if dbCfg.Backend != db.StoreBackendPostgres {
 		return nil
 	}
+	// Hosted runtimes share the one live database (D-2026-10-22-01), so they
+	// never run DDL and serve only through a bounded application login.
+	posture := db.RuntimeRoleLocalOwner
+	if hostedRuntime(cfg) {
+		posture = db.RuntimeRoleHosted
+		if err := db.VerifyHostedRuntimeMigrationMode(); err != nil {
+			log.Error("v2_db_runtime_role_refused", "error", err)
+			return nil
+		}
+	}
 	opened, err := db.Open(dbCfg)
 	if err != nil {
 		log.Error("v2_db_open_failed", "error", err)
+		return nil
+	}
+	if err := db.VerifyRuntimeRolePosture(ctx, opened.DB, posture); err != nil {
+		log.Error("v2_db_runtime_role_refused", "error", err)
+		_ = opened.Close()
 		return nil
 	}
 	if err := opened.Migrate(ctx); err != nil {
@@ -678,6 +693,12 @@ func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.D
 	}
 	log.Info("v2_db_ready", "backend", string(opened.Backend()))
 	return opened
+}
+
+// hostedRuntime is every Techstack serving the shared live database: the SaaS
+// deployment and its Preview release channel.
+func hostedRuntime(cfg *config.Config) bool {
+	return config.ReleaseChannel() == "preview" || (cfg != nil && cfg.DeploymentMode.IsSaaS())
 }
 
 func ensureDefaultControlPlaneTenant(ctx context.Context, cfg *config.Config, boot *v2Boot) error {

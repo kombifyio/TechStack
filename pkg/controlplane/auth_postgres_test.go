@@ -93,6 +93,7 @@ func TestPostgresStoreUpsertUserAndMembershipDecodeMetadata(t *testing.T) {
 	now := time.Date(2026, 5, 28, 15, 30, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	mock.ExpectExec("set_config").WithArgs("app.user_id", "user-1").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO techstack_users")).
 		WithArgs("user-1", "owner@example.test", "Owner", "active", sqlmock.AnyArg()).
 		WillReturnRows(userRows().AddRow(
