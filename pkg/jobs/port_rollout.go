@@ -15,6 +15,15 @@ import (
 
 const portLifecycleReconciliationTimeout = 5 * time.Second
 
+// A server enrolled seconds ago has not published its first listener inventory
+// yet; the Guard reports it shortly after its first heartbeat. Admission waits
+// this long for that first evidence instead of failing the first rollout, and
+// still fails closed with host_baseline_unverified when it never arrives.
+const (
+	hostBaselineWaitBudget       = 90 * time.Second
+	hostBaselineWaitPollInterval = 3 * time.Second
+)
+
 func deployApplyEnabled(job *Job) bool {
 	if job == nil || job.Payload == nil {
 		return true
@@ -113,7 +122,7 @@ func (r *deployRollout) admitRuntimeListeners(ctx context.Context, apply bool) e
 		StackID:        strings.TrimSpace(r.actionReq.StackID), ResolvedPlanHash: listenerSet.PlanHash, Requirements: listenerSet.portRequirements(),
 	}
 	r.portRequirements = append([]portinventory.Requirement(nil), request.Requirements...)
-	if err := r.checkHostBaseline(ctx, portinventory.GenerationRef{ServerRef: portinventory.ServerRef{TenantID: request.TenantID, ServerID: request.ServerID}, StackID: request.StackID}); err != nil {
+	if err := r.awaitHostBaseline(ctx, portinventory.GenerationRef{ServerRef: portinventory.ServerRef{TenantID: request.TenantID, ServerID: request.ServerID}, StackID: request.StackID}); err != nil {
 		return err
 	}
 	if !apply {
@@ -258,26 +267,95 @@ func (r *deployRollout) portAdmissionError(err error) error {
 		"Techstack could not reserve the compiler-declared host listeners. No host mutation was started.")
 }
 
+// awaitHostBaseline admits the rollout once the node's listener inventory is
+// verified. Missing, incomplete or stale evidence (host_baseline_unverified) is
+// retried for a bounded time with a customer-visible waiting state, because a
+// freshly enrolled Guard publishes its first inventory only moments after it
+// connects. A conflicting listener or any other error is returned at once, and
+// evidence that never verifies fails closed with the original refusal.
+func (r *deployRollout) awaitHostBaseline(ctx context.Context, generation portinventory.GenerationRef) error {
+	started := time.Now()
+	deadline := started.Add(hostBaselineWaitBudget)
+	waiting := false
+	for {
+		evaluation, err := r.evaluateHostBaseline(ctx, generation)
+		if err != nil {
+			return err
+		}
+		if evaluation == nil {
+			if waiting {
+				r.recordHostBaselineWait("verified", started, deadline)
+			}
+			return nil
+		}
+		var conflict *portinventory.ConflictError
+		unverified := errors.As(evaluation, &conflict) && conflict.ReasonCode == "host_baseline_unverified" && conflict.Retryable
+		if !unverified || !time.Now().Before(deadline) {
+			if waiting {
+				state := "blocked"
+				if unverified {
+					state = "timed_out"
+				}
+				r.recordHostBaselineWait(state, started, deadline)
+			}
+			return r.portAdmissionError(evaluation)
+		}
+		if !waiting {
+			waiting = true
+			r.recordHostBaselineWait("waiting", started, deadline)
+			step, progress := r.job.stepProgress()
+			r.updateJobStepProgress(step, progress, "Waiting for the server to report its first host inventory before the rollout starts.")
+		}
+		timer := time.NewTimer(hostBaselineWaitPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (r *deployRollout) recordHostBaselineWait(state string, started, deadline time.Time) {
+	r.job.mutateResult(func(result map[string]interface{}) {
+		result["host_baseline_wait"] = map[string]interface{}{
+			"state": state, "started_at": started.UTC(), "deadline": deadline.UTC(),
+			"message": "The rollout waits for the server's first verified host inventory (at most " + hostBaselineWaitBudget.String() + ").",
+		}
+	})
+}
+
 func (r *deployRollout) checkHostBaseline(ctx context.Context, generation portinventory.GenerationRef) error {
+	evaluation, err := r.evaluateHostBaseline(ctx, generation)
+	if err != nil {
+		return err
+	}
+	return r.portAdmissionError(evaluation)
+}
+
+// evaluateHostBaseline returns a read failure as err and the baseline verdict
+// as evaluation, so a caller can wait on an unverified verdict without
+// publishing it as a port admission error.
+func (r *deployRollout) evaluateHostBaseline(ctx context.Context, generation portinventory.GenerationRef) (evaluation error, err error) {
 	if len(r.portRequirements) == 0 {
-		return nil
+		return nil, nil
 	}
 	reader, ok := r.cfg.PortInventory.(portinventory.ReadAuthority)
 	if !ok {
-		return wrapProvisionError(StepPortAdmission, "host baseline authority is unavailable", "Refresh the Node inventory before rollout. No host mutation was started.")
+		return nil, wrapProvisionError(StepPortAdmission, "host baseline authority is unavailable", "Refresh the Node inventory before rollout. No host mutation was started.")
 	}
 	inventory, err := reader.ReadCurrent(ctx, portinventory.InventoryRequest{TenantID: generation.TenantID, ServerID: generation.ServerID}, time.Now().UTC())
 	if err != nil {
-		return r.portAdmissionError(err)
+		return nil, r.portAdmissionError(err)
 	}
 	if generation.ServerGeneration != 0 && inventory.ServerGeneration != generation.ServerGeneration {
-		return r.portAdmissionError(portinventory.ErrStaleServerGeneration)
+		return nil, r.portAdmissionError(portinventory.ErrStaleServerGeneration)
 	}
 	r.job.mutateResult(func(result map[string]interface{}) {
 		result["host_baseline"] = map[string]interface{}{"server_id": inventory.ServerID, "server_generation": inventory.ServerGeneration, "inventory_revision": inventory.InventoryRevision, "observed_at": inventory.ObservedAt, "expires_at": inventory.ExpiresAt, "listeners_complete": inventory.ListenersComplete}
 	})
 	now := time.Now().UTC()
-	evaluation := portinventory.EvaluateHostBaseline(inventory, r.portRequirements, generation.StackID, now)
+	evaluation = portinventory.EvaluateHostBaseline(inventory, r.portRequirements, generation.StackID, now)
 	if evaluation != nil && r.baselineProof.covers(inventory) {
 		// The node published nothing since the observation admission already
 		// verified (a rollout can delay the node's own inventory write). No
@@ -291,7 +369,7 @@ func (r *deployRollout) checkHostBaseline(ctx context.Context, generation portin
 	if evaluation == nil && r.baselineProof == nil && inventory.ObservedAt != nil {
 		r.baselineProof = &hostBaselineProof{observedAt: inventory.ObservedAt.UTC(), revision: inventory.InventoryRevision, verifiedAt: now}
 	}
-	return r.portAdmissionError(evaluation)
+	return evaluation, nil
 }
 
 type hostBaselineProof struct {

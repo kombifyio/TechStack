@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/dataprofile"
 	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 	"github.com/kombifyio/techstack/internal/gocommon/identity"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -1150,4 +1151,168 @@ func TestEdgeIdentityMiddleware_V9SignedEmailVerified(t *testing.T) {
 	if id := identity.FromContext(run("true", signEdgeRequestV2).Request.Context()); id == nil || id.EmailVerified {
 		t.Fatalf("unsigned v2 email-verified header was trusted: %#v", id)
 	}
+}
+
+const testEdgeProfileSecret = "test-edge-profile-secret"
+
+// newSignedTechStackProfileEvent builds a Techstack request with a verified v2
+// identity envelope and, when profile is non-nil, the Gateway profile headers
+// bound to it (kombify-Gateway data-profile.ts signProfileHeaders).
+func newSignedTechStackProfileEvent(t *testing.T, profile *dataprofile.Profile) *httpx.Event {
+	t.Helper()
+	e := newTestEvent(http.MethodGet, "/api/v1/stacks?limit=5")
+	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
+	e.Request.Header.Set(headerEdgeService, techStackDecisionAudience)
+	e.Request.Header.Set(headerPublicPrefix, techStackDecisionPublicPrefix)
+	e.Request.Header.Set(commonedgeauth.HeaderUserID, "auth0|alice")
+	e.Request.Header.Set(commonedgeauth.HeaderOrgID, "org-1")
+	e.Request.Header.Set(commonedgeauth.HeaderRequestID, "request-profile-1")
+	signEdgeRequestV2(t, e, testEdgeAuthSecret)
+	if profile == nil {
+		return e
+	}
+	h := e.Request.Header
+	signed, err := commonedgeauth.SignProfileHeaders(commonedgeauth.ProfileSignInput{
+		Secret:        testEdgeProfileSecret,
+		Method:        e.Request.Method,
+		SignedPath:    h.Get(headerEdgeSignedPath),
+		Audience:      h.Get(headerEdgeService),
+		PublicPrefix:  h.Get(headerPublicPrefix),
+		SubjectID:     h.Get(commonedgeauth.HeaderUserID),
+		TenantID:      h.Get(commonedgeauth.HeaderOrgID),
+		RequestID:     h.Get(commonedgeauth.HeaderRequestID),
+		EdgeKeyID:     h.Get(headerEdgeKeyID),
+		EdgeTimestamp: h.Get(headerEdgeTimestamp),
+		EdgeNonce:     h.Get(headerEdgeNonce),
+		EdgeSignature: h.Get(headerEdgeSignature),
+		Profile:       *profile,
+	})
+	if err != nil {
+		t.Fatalf("SignProfileHeaders: %v", err)
+	}
+	for name, values := range signed {
+		h[name] = values
+	}
+	return e
+}
+
+func profileTestMiddleware(t *testing.T, mode string) func(*httpx.Event) error {
+	t.Helper()
+	t.Setenv(dataProfileModeEnv, mode)
+	t.Setenv("EDGE_PROFILE_SECRET", testEdgeProfileSecret)
+	return EdgeIdentityMiddlewareWithConfig(EdgeIdentityConfig{
+		Mode:                config.ModeSaaS,
+		EdgeAuthSecret:      testEdgeAuthSecret,
+		EdgeSignatureWindow: 5 * time.Minute,
+	})
+}
+
+func euZeroProfile() *dataprofile.Profile {
+	p := dataprofile.Profile{V: dataprofile.Version, Res: dataprofile.ResidencyEU, Ret: dataprofile.RetentionZero,
+		Loc: dataprofile.LocalityHosted, Scope: dataprofile.ScopeAccount, Rev: 3, TS: 1792700000}
+	return &p
+}
+
+func assertNoProfileHeaders(t *testing.T, r *http.Request) {
+	t.Helper()
+	if hasAnyProfileHeader(r) {
+		t.Fatal("profile headers reached the handler")
+	}
+}
+
+func TestEdgeIdentityMiddleware_DataProfile_ObserveAttachesVerifiedProfile(t *testing.T) {
+	mw := profileTestMiddleware(t, dataProfileModeObserve)
+	e := newSignedTechStackProfileEvent(t, euZeroProfile())
+	if err := mw(e); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := e.Response.(*httptest.ResponseRecorder).Code; got != http.StatusOK {
+		t.Fatalf("status = %d, want 200", got)
+	}
+	profile, ok := DataProfileFromContext(e.Request.Context(), false)
+	if !ok || !profile.EU() || !profile.Zero() || profile.Rev != 3 {
+		t.Fatalf("profile = %+v ok=%v, want verified EU zero-retention rev 3", profile, ok)
+	}
+	assertNoProfileHeaders(t, e.Request)
+}
+
+func TestEdgeIdentityMiddleware_DataProfile_ObserveContinuesWithoutProfile(t *testing.T) {
+	mw := profileTestMiddleware(t, dataProfileModeObserve)
+	e := newSignedTechStackProfileEvent(t, nil)
+	if err := mw(e); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := e.Response.(*httptest.ResponseRecorder).Code; got != http.StatusOK {
+		t.Fatalf("status = %d, want 200", got)
+	}
+	if _, ok := DataProfileFromContext(e.Request.Context(), false); ok {
+		t.Fatal("a missing profile must not resolve, never to Standard")
+	}
+}
+
+func TestEdgeIdentityMiddleware_DataProfile_EnforceDeniesMissingAndTampered(t *testing.T) {
+	for name, tamper := range map[string]func(*httpx.Event){
+		"missing": func(e *httpx.Event) {},
+		"tampered profile": func(e *httpx.Event) {
+			// A Standard profile under the signature of the EU one.
+			standard, _ := dataprofile.Standard().Encode()
+			e.Request.Header.Set(commonedgeauth.HeaderProfile, standard)
+		},
+		"transplanted subject": func(e *httpx.Event) {
+			// Re-signing the identity for another subject must break the
+			// profile binding even though the identity itself verifies.
+			e.Request.Header.Set(commonedgeauth.HeaderUserID, "auth0|mallory")
+			signEdgeRequestV2(t, e, testEdgeAuthSecret)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mw := profileTestMiddleware(t, dataProfileModeEnforce)
+			var e *httpx.Event
+			if name == "missing" {
+				e = newSignedTechStackProfileEvent(t, nil)
+			} else {
+				e = newSignedTechStackProfileEvent(t, euZeroProfile())
+			}
+			tamper(e)
+			if err := mw(e); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			rec := e.Response.(*httptest.ResponseRecorder)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "data_profile_unresolvable") {
+				t.Fatalf("body = %s, want data_profile_unresolvable denial", rec.Body.String())
+			}
+			if _, ok := DataProfileFromContext(e.Request.Context(), false); ok {
+				t.Fatal("denied request carries a profile")
+			}
+		})
+	}
+}
+
+func TestEdgeIdentityMiddleware_DataProfile_OffIgnoresAndStripsHeaders(t *testing.T) {
+	mw := profileTestMiddleware(t, "")
+	e := newSignedTechStackProfileEvent(t, euZeroProfile())
+	if err := mw(e); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := DataProfileFromContext(e.Request.Context(), false); ok {
+		t.Fatal("off mode attached a profile")
+	}
+	assertNoProfileHeaders(t, e.Request)
+}
+
+func TestEdgeIdentityMiddleware_DataProfile_UnsignedRequestNeverCarriesProfile(t *testing.T) {
+	mw := profileTestMiddleware(t, dataProfileModeObserve)
+	e := newTestEvent(http.MethodGet, "/api/v1/stacks")
+	encoded, _ := euZeroProfile().Encode()
+	e.Request.Header.Set(commonedgeauth.HeaderProfile, encoded)
+	if err := mw(e); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := DataProfileFromContext(e.Request.Context(), false); ok {
+		t.Fatal("an unsigned caller supplied a profile")
+	}
+	assertNoProfileHeaders(t, e.Request)
 }

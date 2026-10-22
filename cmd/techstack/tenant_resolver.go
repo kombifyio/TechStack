@@ -9,6 +9,7 @@ import (
 	commonauthflow "github.com/kombifyio/techstack/internal/gocommon/authflow"
 	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 
+	"github.com/kombifyio/techstack/pkg/auth/testidentity"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/demoguard"
 	"github.com/kombifyio/techstack/pkg/identity"
@@ -51,6 +52,11 @@ func v2CloudTenantResolver(store controlplane.AuthStore, orgs organizationLister
 			if tenantID := demoguard.DemoTenantID(); tenantID != "" {
 				return tenantID, nil
 			}
+		}
+		// Any other test identity signs in only to its own test tenant, whatever
+		// organization claims or memberships it carries (D-2026-10-22-02).
+		if testidentity.IsTestSubject(subject) {
+			return testidentity.OwnerTenant(subject), nil
 		}
 		if orgID := rawClaimString(claims,
 			kombifyClaimNamespace+"org_id",

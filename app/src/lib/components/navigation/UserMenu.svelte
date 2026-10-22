@@ -13,6 +13,7 @@
   import { StackIdentityBadge } from "#lib/components/open-core/index.js";
   import ThemeToggle from "#lib/components/ui/ThemeToggle.svelte";
   import { requestIntroductionStart } from "#lib/onboarding/introduction.js";
+  import DataProfileStatus from "#lib/data-profile/DataProfileStatus.svelte";
 
   let {
     placement = "up",
@@ -76,6 +77,7 @@
       <StackIdentityBadge identity={$stackIdentity} />
     </div>
   {/if}
+  <DataProfileStatus />
   {#if apiVersion}
     <div
       class="px-3 py-2 text-xs text-muted-foreground"

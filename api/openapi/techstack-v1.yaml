@@ -334,6 +334,50 @@ paths:
                               key: { type: string }
                               host: { type: string }
                               environment: { type: string }
+                      data_profile:
+                        description: Boot data protection profile; self-hosted editions only. A hosted account's profile comes from GET /api/v1/data-profile.
+                        type: object
+                        properties:
+                          res: { type: string, enum: [global, eu] }
+                          ret: { type: string, enum: [standard, zero] }
+                          loc: { type: string, enum: [hosted, local] }
+
+  /api/v1/data-profile:
+    get:
+      operationId: getDataProfile
+      x-kombify-cli: { command: "system data-profile" }
+      x-kombify-mcp: false # account setting shown in the UI; agents never act on it
+      tags: [Health]
+      summary: Data protection profile of the signed-in user
+      description: |
+        The data protection profile that applies to this request (workspace
+        DATA-ARCHITECTURE.md section 5). A hosted request returns the profile
+        the Gateway signed for it; a self-hosted install returns its boot
+        profile. A profile that cannot be confirmed is the
+        data_profile_unresolvable denial, never Standard.
+      responses:
+        "200":
+          description: Active data protection profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [res, ret, loc, rev, source]
+                    properties:
+                      res: { type: string, enum: [global, eu] }
+                      ret: { type: string, enum: [standard, zero] }
+                      loc: { type: string, enum: [hosted, local] }
+                      rev: { type: integer, format: int64 }
+                      source: { type: string, enum: [edge, boot] }
+        "401":
+          description: Not signed in
+        "403":
+          description: data_profile_unresolvable denial with error_code, reason_code, request_id and user_guidance.
+        "404":
+          description: Hosted profile verification is off on this deployment (TECHSTACK_DATA_PROFILE_MODE=off).
 
   /api/v1/csrf:
     get:

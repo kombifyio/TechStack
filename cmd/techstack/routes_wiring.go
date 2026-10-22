@@ -183,6 +183,7 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 	routes.RegisterOpenAPIRoutes(router)
 	routes.RegisterCapabilitiesRoutes(router, deps.version)
 	routes.RegisterClientBootstrapRoutes(router, deps.version, cfg.Edition, cfg.DeploymentMode)
+	routes.RegisterDataProfileRoutes(router, cfg.DeploymentMode)
 	routes.RegisterDocsRedirectRoutes(router)
 	stores := stackControlPlaneStores(deps.v2)
 	stackroutes.ConfigureControlPlaneStores(stores)

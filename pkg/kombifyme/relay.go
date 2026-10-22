@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 const (
@@ -115,6 +117,14 @@ type relayHTTPResponse struct {
 }
 
 func NewRelay(cfg RelayConfig) (*Relay, error) {
+	// kombify.me is a kombify service; under Full Local the homelab never
+	// connects to it.
+	if fulllocal.Active() {
+		return nil, &RelaySessionError{
+			Err:    &fulllocal.DeniedError{Host: "kombify.me"},
+			Denial: &RelayDenial{ReasonCode: fulllocal.ReasonCode, Retryable: false},
+		}
+	}
 	if cfg.URL == "" {
 		cfg.URL = DefaultRelayURL
 	}

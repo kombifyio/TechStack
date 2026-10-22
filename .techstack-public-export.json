@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "public_repository": "kombifyio/TechStack",
-  "source_commit": "f5e54ac6879771e89c30093c4ec2db81381ea842",
-  "candidate_digest": "d35520daae82de987426aff15ad5a1f4d72d649c046e59c60f66261e18dc30bc",
-  "candidate_file_count": 2382,
+  "source_commit": "20de7539f431df6bec4472a741f6397bdb4f16f8",
+  "candidate_digest": "d2a0dc42e2c027a082a8b2f597816be08273da92ae449521ea6f3f1eb4856233",
+  "candidate_file_count": 2396,
   "digest_scope": "sha256 over every exported file except this receipt, in code-unit path order, as path NUL content NUL",
   "projected_go_sources": [
     {
       "destination": "internal/gocommon",
-      "version": "v0.8.3",
-      "sum": "h1:WDw+XogEeHuzsVRjjyc6tgRcPWKqTh6R3bRV8UtDXMk=",
-      "commit": "2b0846cfc5f9dde3263590629a95d28ec0bee36b",
+      "version": "v0.8.4",
+      "sum": "h1:3Y5DQ7llhWi5bENvlmRq2EMeSGmayu3rBeErbX4xkB4=",
+      "commit": "c3959d8325b594627ba5a98d7f45bd9b713a33a4",
       "packages": [
         "apisurface",
         "apisurface/cli",
@@ -19,8 +19,10 @@
         "authlocal",
         "authsession",
         "cloudlogin",
+        "dataprofile",
         "denial",
         "edgeauth",
+        "edition",
         "entitlements",
         "fga",
         "httputil",

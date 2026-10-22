@@ -185,7 +185,7 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 			return fmt.Errorf("managed test app lacks assigned database/schema access")
 		}
 	}
-	tableRows, err := q.QueryContext(ctx, `SELECT c.oid::bigint,v.privilege,has_table_privilege($1,c.oid,v.privilege),has_table_privilege($1,c.oid,v.privilege||' WITH GRANT OPTION')
+	tableRows, err := q.QueryContext(ctx, `SELECT c.oid::bigint,format('%I.%I',n.nspname,c.relname),v.privilege,has_table_privilege($1,c.oid,v.privilege),has_table_privilege($1,c.oid,v.privilege||' WITH GRANT OPTION')
 	 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN (VALUES('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('TRUNCATE'),('REFERENCES'),('TRIGGER'),('MAINTAIN')) v(privilege)
 	 WHERE n.nspname<>'information_schema' AND n.nspname NOT LIKE 'pg_%' AND c.relkind IN ('r','p','v','m','f')`, principal.Role)
 	if err != nil {
@@ -193,16 +193,16 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 	}
 	for tableRows.Next() {
 		var oid int64
-		var privilege string
+		var name, privilege string
 		var actual, grant bool
-		if err := tableRows.Scan(&oid, &privilege, &actual, &grant); err != nil {
+		if err := tableRows.Scan(&oid, &name, &privilege, &actual, &grant); err != nil {
 			tableRows.Close()
 			return err
 		}
 		expected := p.Tables[oid][privilege]
 		if grant || (actual && !expected) || (requireCapabilities && expected && !actual) {
 			tableRows.Close()
-			return fmt.Errorf("managed test app table authority differs from its exact capability")
+			return fmt.Errorf("managed test app table authority differs from its exact capability: %s %s %s", name, privilege, authorityDifference(grant, actual, expected))
 		}
 	}
 	if err := tableRows.Err(); err != nil {
@@ -210,7 +210,7 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 		return err
 	}
 	tableRows.Close()
-	columnRows, err := q.QueryContext(ctx, `SELECT c.oid::bigint,v.privilege,has_column_privilege($1,c.oid,a.attnum,v.privilege),has_column_privilege($1,c.oid,a.attnum,v.privilege||' WITH GRANT OPTION')
+	columnRows, err := q.QueryContext(ctx, `SELECT c.oid::bigint,format('%I.%I.%I',n.nspname,c.relname,a.attname),v.privilege,has_column_privilege($1,c.oid,a.attnum,v.privilege),has_column_privilege($1,c.oid,a.attnum,v.privilege||' WITH GRANT OPTION')
 	 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
 	 CROSS JOIN (VALUES('SELECT'),('INSERT'),('UPDATE'),('REFERENCES')) v(privilege)
 	 WHERE n.nspname<>'information_schema' AND n.nspname NOT LIKE 'pg_%' AND c.relkind IN ('r','p','v','m','f')`, principal.Role)
@@ -219,15 +219,15 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 	}
 	for columnRows.Next() {
 		var oid int64
-		var privilege string
+		var name, privilege string
 		var actual, grant bool
-		if err := columnRows.Scan(&oid, &privilege, &actual, &grant); err != nil {
+		if err := columnRows.Scan(&oid, &name, &privilege, &actual, &grant); err != nil {
 			columnRows.Close()
 			return err
 		}
 		if grant || (actual && !p.Tables[oid][privilege]) {
 			columnRows.Close()
-			return fmt.Errorf("managed test app has excess column authority")
+			return fmt.Errorf("managed test app has excess column authority: %s %s %s", name, privilege, authorityDifference(grant, actual, p.Tables[oid][privilege]))
 		}
 	}
 	if err := columnRows.Err(); err != nil {
@@ -235,7 +235,7 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 		return err
 	}
 	columnRows.Close()
-	sequenceRows, err := q.QueryContext(ctx, `SELECT c.oid::bigint,v.privilege,has_sequence_privilege($1,c.oid,v.privilege),has_sequence_privilege($1,c.oid,v.privilege||' WITH GRANT OPTION')
+	sequenceRows, err := q.QueryContext(ctx, `SELECT c.oid::bigint,format('%I.%I',n.nspname,c.relname),v.privilege,has_sequence_privilege($1,c.oid,v.privilege),has_sequence_privilege($1,c.oid,v.privilege||' WITH GRANT OPTION')
 	 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN (VALUES('USAGE'),('SELECT'),('UPDATE')) v(privilege)
 	 WHERE n.nspname<>'information_schema' AND n.nspname NOT LIKE 'pg_%' AND c.relkind='S'`, principal.Role)
 	if err != nil {
@@ -243,9 +243,9 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 	}
 	for sequenceRows.Next() {
 		var oid int64
-		var privilege string
+		var name, privilege string
 		var actual, grant bool
-		if err := sequenceRows.Scan(&oid, &privilege, &actual, &grant); err != nil {
+		if err := sequenceRows.Scan(&oid, &name, &privilege, &actual, &grant); err != nil {
 			sequenceRows.Close()
 			return err
 		}
@@ -253,7 +253,7 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 		expected := allowed && privilege == "USAGE"
 		if grant || (actual && !expected) || (requireCapabilities && expected && !actual) {
 			sequenceRows.Close()
-			return fmt.Errorf("managed test app sequence authority differs from its exact capability")
+			return fmt.Errorf("managed test app sequence authority differs from its exact capability: %s %s %s", name, privilege, authorityDifference(grant, actual, expected))
 		}
 	}
 	if err := sequenceRows.Err(); err != nil {
@@ -261,22 +261,23 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 		return err
 	}
 	sequenceRows.Close()
-	functionRows, err := q.QueryContext(ctx, `SELECT f.oid::bigint,has_function_privilege($1,f.oid,'EXECUTE'),has_function_privilege($1,f.oid,'EXECUTE WITH GRANT OPTION')
+	functionRows, err := q.QueryContext(ctx, `SELECT f.oid::bigint,f.oid::regprocedure::text,has_function_privilege($1,f.oid,'EXECUTE'),has_function_privilege($1,f.oid,'EXECUTE WITH GRANT OPTION')
 	 FROM pg_proc f JOIN pg_namespace n ON n.oid=f.pronamespace WHERE n.nspname<>'information_schema' AND n.nspname NOT LIKE 'pg_%'`, principal.Role)
 	if err != nil {
 		return err
 	}
 	for functionRows.Next() {
 		var oid int64
+		var name string
 		var actual, grant bool
-		if err := functionRows.Scan(&oid, &actual, &grant); err != nil {
+		if err := functionRows.Scan(&oid, &name, &actual, &grant); err != nil {
 			functionRows.Close()
 			return err
 		}
 		_, expected := p.Functions[oid]
 		if grant || (actual && !expected) || (requireCapabilities && expected && !actual) {
 			functionRows.Close()
-			return fmt.Errorf("managed test app routine authority differs from its exact capability")
+			return fmt.Errorf("managed test app routine authority differs from its exact capability: %s EXECUTE %s", name, authorityDifference(grant, actual, expected))
 		}
 	}
 	if err := functionRows.Err(); err != nil {
@@ -308,6 +309,20 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 		return fmt.Errorf("managed test app has unassigned future-object default authority")
 	}
 	return nil
+}
+
+// authorityDifference names how an effective privilege differs from the
+// capability. Object and privilege names are catalog facts, never custody, so
+// a refused preparation or pre-deploy says which grant to reconcile.
+func authorityDifference(grant, actual, expected bool) string {
+	switch {
+	case grant:
+		return "held with grant option"
+	case actual && !expected:
+		return "held but not in the capability"
+	default:
+		return "in the capability but not held"
+	}
 }
 
 // This audit works through an owner preparation transaction or the actual app

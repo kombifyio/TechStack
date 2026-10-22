@@ -26,6 +26,7 @@ import { walletMessages } from "./kombify-wallet/wallet-messages";
 import { actorsMessages } from "./actors/actors-messages";
 import { nodesMessages } from "./nodes/nodes-messages";
 import { shellMessages } from "./shell-messages";
+import { dataProfileMessages } from "./data-profile/data-profile-messages";
 import { creationTemplateMessages } from "./wizard/creation-template-messages";
 import { marketplaceMessages } from "./wizard/marketplace-messages";
 import { creationFlowMessages } from "./wizard/creation-flow-messages";
@@ -59,6 +60,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...actorsMessages.en,
     ...nodesMessages.en,
     ...shellMessages.en,
+    ...dataProfileMessages.en,
     ...creationTemplateMessages.en,
     ...marketplaceMessages.en,
     ...creationFlowMessages.en,
@@ -1032,6 +1034,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...actorsMessages.de,
     ...nodesMessages.de,
     ...shellMessages.de,
+    ...dataProfileMessages.de,
     ...creationTemplateMessages.de,
     ...marketplaceMessages.de,
     ...creationFlowMessages.de,
@@ -2021,6 +2024,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...actorsMessages.es,
     ...nodesMessages.es,
     ...shellMessages.es,
+    ...dataProfileMessages.es,
     ...creationTemplateMessages.es,
     ...marketplaceMessages.es,
     ...creationFlowMessages.es,
@@ -2040,6 +2044,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...actorsMessages["zh-Hans"],
     ...nodesMessages["zh-Hans"],
     ...shellMessages["zh-Hans"],
+    ...dataProfileMessages["zh-Hans"],
     ...creationTemplateMessages["zh-Hans"],
     ...marketplaceMessages["zh-Hans"],
     ...creationFlowMessages["zh-Hans"],
@@ -2059,6 +2064,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...actorsMessages.hi,
     ...nodesMessages.hi,
     ...shellMessages.hi,
+    ...dataProfileMessages.hi,
     ...creationTemplateMessages.hi,
     ...marketplaceMessages.hi,
     ...creationFlowMessages.hi,
@@ -2078,6 +2084,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...actorsMessages.ar,
     ...nodesMessages.ar,
     ...shellMessages.ar,
+    ...dataProfileMessages.ar,
     ...creationTemplateMessages.ar,
     ...marketplaceMessages.ar,
     ...creationFlowMessages.ar,

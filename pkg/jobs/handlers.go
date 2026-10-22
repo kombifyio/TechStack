@@ -700,6 +700,7 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 				"Could not verify whether provider-owned runtime teardown was required. Port claims were retained.")
 		}
 		offlineRemoval := false
+		noApplyRemoval := false
 		if managedRuntime {
 			if err := releasePortTeardownSnapshotForJob(ctx, cfg, job); err != nil {
 				return wrapProvisionCause(StepFinalize, fmt.Errorf("port teardown release failed: %w", err),
@@ -728,7 +729,15 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 							"Port claims were retained because the confirmed-gone servers' custody could not be ended; retry the removal.")
 					}
 				}
-				if !offlineConfirmed || !offline.CoversEveryGeneration(snapshot) {
+				// A stack the job history proves was never applied has no workload on any
+				// node: its removal is the release of its claims and its control-plane state.
+				_, noApplyConfirmed, err := boundNoApplyRemovalEvidence(job, snapshot)
+				if err != nil {
+					return wrapProvisionCause(StepFinalize, fmt.Errorf("no-Apply removal evidence invalid: %w", err),
+						"Port claims were retained because the proof that nothing was applied could not be verified.")
+				}
+				noApplyRemoval = noApplyConfirmed
+				if !noApplyConfirmed && (!offlineConfirmed || !offline.CoversEveryGeneration(snapshot)) {
 					if err := removeLocalStackKitWorkloads(ctx, cfg, job, snapshot); err != nil {
 						return wrapProvisionCause(StepProvision, fmt.Errorf("typed local StackKits removal failed: %w", err),
 							"Port claims were retained because StackKits did not prove every applied workload absent.")
@@ -748,7 +757,7 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 		workDir := filepath.Join(cfg.WorkDir, job.TargetID)
 		_, workspaceErr := os.Stat(workDir)
 		workspaceAbsent := os.IsNotExist(workspaceErr)
-		if workspaceAbsent || offlineRemoval {
+		if workspaceAbsent || offlineRemoval || noApplyRemoval {
 			// No workspace found - it may have been cleaned up or never created.
 			// A workspace that is there is not run against a server confirmed
 			// gone, and is left as it is. Record that exact outcome before
@@ -758,6 +767,9 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 			workspaceState := DestroyWorkspaceStateAbsent
 			if !workspaceAbsent {
 				workspaceState = DestroyWorkspaceStateOfflineRemoval
+				if noApplyRemoval && !offlineRemoval {
+					workspaceState = DestroyWorkspaceStateNoApplyRemoval
+				}
 			}
 			job.mutateResult(func(result map[string]interface{}) {
 				result[DestroyWorkspaceStateResultField] = workspaceState
@@ -784,6 +796,9 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 			doneMessage := "No workspace found, stack already destroyed"
 			if offlineRemoval {
 				doneMessage = "Stack removed; its server was confirmed gone"
+			}
+			if noApplyRemoval && !offlineRemoval {
+				doneMessage = "Stack removed; nothing had been applied to its server"
 			}
 			q.UpdateProgress(job.ID, 100, doneMessage)
 			return nil
