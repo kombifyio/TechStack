@@ -30,6 +30,7 @@ import (
 	stackroutes "github.com/kombifyio/techstack/internal/routes/stacks"
 	"github.com/kombifyio/techstack/internal/routes/trust"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
+	"github.com/kombifyio/techstack/pkg/agentcontrol"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	storageauth "github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/backupstore"
@@ -491,6 +492,21 @@ func currentMTLSStackKitCapabilities(boot *grpcBoot) func(controlplane.ServerRun
 	}
 }
 
+// currentMTLSIdentity is the certificate serial of the worker's current mTLS
+// session in its tenant, empty without one.
+func currentMTLSIdentity(boot *grpcBoot) func(tenantID, workerID string) string {
+	return func(tenantID, workerID string) string {
+		if boot == nil || boot.server == nil {
+			return ""
+		}
+		agent, present := boot.server.GetAgent(workerID)
+		if !present || agent == nil || agent.ID != workerID || agent.Tenant != tenantID {
+			return ""
+		}
+		return agent.CertSerial
+	}
+}
+
 func serviceRuntimeControlPlaneStore(boot *v2Boot) controlplane.ServiceRuntimeStore {
 	if boot == nil || boot.db == nil || boot.db.DB == nil {
 		return nil
@@ -572,15 +588,23 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 		maintenanceKeys[nextKeyID] = nextSecret
 	}
 	// A server retired because the owner confirmed it gone loses its agent connection
-	// the way a detached one does.
-	deps.orch.ConfigureOfflineServerDisconnect(deps.grpc.server.RemoveAgent)
+	// the way a detached one does. Without the gRPC listener (SaaS serves Guards
+	// over HTTPS) there is no stream to end and the Guard is refused at its next
+	// call; a method value of the nil server would panic and take the process down
+	// (stable 0.42.19, 2026-10-22, from a stack destroy).
+	var agentDisconnect func(string) error
+	if deps.grpc.server != nil {
+		agentDisconnect = deps.grpc.server.RemoveAgent
+	}
+	deps.orch.ConfigureOfflineServerDisconnect(agentDisconnect)
 	maintenanceRoutes := routes.RegisterServerRuntimeRoutes(router, routes.ServerRuntimeRouteConfig{
 		Store: serverRuntimeStore, PortInventory: deps.portInventory, Detacher: serverRuntimeStore,
-		Policy: inventoryPolicy, AgentDisconnect: deps.grpc.server.RemoveAgent,
+		Policy: inventoryPolicy, AgentDisconnect: agentDisconnect,
 		WalletWithdraw: serverWalletWithdrawer(deps.wallet),
 		Reach:          serverReachReader(deps),
-		Posture:        serverPosture(deps), Workers: workerStore, PostureEntitlements: routes.EntitlementGateForDeployment(deps.startup.cfg.DeploymentMode.IsSaaS()),
+		Posture:        serverPosture(deps), Workers: workerStore, RoundTrips: serverRoundTripReader(deps.typedControl), PostureEntitlements: routes.EntitlementGateForDeployment(deps.startup.cfg.DeploymentMode.IsSaaS()),
 		CurrentMTLSCapabilities: currentMTLSStackKitCapabilities(deps.grpc),
+		CurrentMTLSIdentity:     currentMTLSIdentity(deps.grpc),
 		Network: &routes.ServerNetworkRouteConfig{
 			Rebinder: deps.orch, Workers: workerStore, Jobs: stackStores.Jobs,
 			Entitlements: routes.EntitlementGateForDeployment(deps.startup.cfg.DeploymentMode.IsSaaS()),
@@ -734,6 +758,15 @@ func serverReachReader(deps routeDeps) routes.ServerReachReader {
 	return deps.guardReach
 }
 
+// serverRoundTripReader serves the persisted Guard command/result round trips
+// the Connected readiness fact requires; without a typed hub there are none.
+func serverRoundTripReader(hub *agentcontrol.Hub) routes.ServerRoundTripReader {
+	if hub == nil {
+		return nil
+	}
+	return hub
+}
+
 func workerAgentIdentityIssuer(deps routeDeps) routes.WorkerAgentIdentityIssuer {
 	if deps.grpc == nil {
 		return nil
@@ -824,7 +857,7 @@ func registerRILRoutes(router *httpx.Router, deps routeDeps, inventoryPolicy rou
 		panic(fmt.Sprintf("registerRILRoutes: %v", err))
 	}
 	launcher := &activities.RemediationLauncher{Engine: deps.workflowEngine, Authority: authority}
-	routes.RegisterGovernedActionRoutes(router, routes.GovernedActionRouteConfig{Authority: authority, Workflow: launcher, Policy: inventoryPolicy})
+	routes.RegisterGovernedActionRoutes(router, routes.GovernedActionRouteConfig{Authority: authority, Workflow: launcher, Policy: inventoryPolicy, Servers: ledger})
 	routes.RegisterWorkflowAuditRoutes(router, deps.workflowEngine)
 	routes.RegisterRILHealRoutes(router, ledger)
 }

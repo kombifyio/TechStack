@@ -14,7 +14,7 @@ import (
 // migration owner. Validate the same exact grants and tenant fences used at
 // preparation/startup; read the real authority owner instead of impersonating it.
 func verifyProviderAndIssuerPreDeploy(ctx context.Context) error {
-	if os.Getenv(db.EnvMigrationDatabaseURL) != "" || os.Getenv(db.EnvManagedTestAdminDatabaseURL) != "" ||
+	if os.Getenv(db.EnvMigrationDatabaseURL) != "" ||
 		os.Getenv(db.EnvDatabaseMigrationMode) != "verify" || os.Getenv("TECHSTACK_ALLOW_DB_GENESIS") != "false" {
 		return errors.New("provider preDeploy requires runtime verify-only custody without administrative credentials or genesis")
 	}

@@ -12,7 +12,7 @@
 //
 // TypeScript counterpart:
 //
-//	@kombify/contracts — kombify-Core/packages/contracts/src/role-claims.ts
+//	@kombify/contracts — platform/packages/contracts/src/role-claims.ts
 package role
 
 import (

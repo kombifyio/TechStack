@@ -68,7 +68,6 @@ type Config struct {
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
-	managedTestRole string
 }
 
 // DefaultConfig returns the connection defaults. ConfigFromEnv selects
@@ -117,23 +116,6 @@ func ConfigFromEnv() (Config, error) {
 		}
 		cfg.DSN = databaseURL
 		cfg.DriverName = PostgresDriverName
-		if strings.TrimSpace(os.Getenv(EnvManagedTestAssignment)) != "" || isManagedTestDSN(databaseURL) {
-			a, err := LoadManagedTestAssignment()
-			if err != nil {
-				return Config{}, err
-			}
-			if os.Getenv(EnvMigrationDatabaseURL) != "" || os.Getenv(EnvManagedTestAdminDatabaseURL) != "" ||
-				os.Getenv(EnvDatabaseMigrationMode) != "verify" || genesisOptInFromEnv() {
-				return Config{}, fmt.Errorf("assigned app startup requires verify mode without owner/admin credentials or genesis")
-			}
-			if _, err := a.Connection(databaseURL, ManagedTestApp); err != nil {
-				return Config{}, err
-			}
-			if err := a.VerifyPin(); err != nil {
-				return Config{}, err
-			}
-			cfg.managedTestRole = ManagedTestApp
-		}
 		return cfg, nil
 	default:
 		return Config{}, fmt.Errorf("unsupported %s value %q", EnvStoreBackend, backend)
@@ -153,24 +135,6 @@ func OpenContext(ctx context.Context, cfg Config) (*DB, error) {
 	}
 	if strings.TrimSpace(cfg.DSN) == "" {
 		return nil, fmt.Errorf("%s is required for postgres backend", EnvDatabaseURL)
-	}
-	if os.Getenv(EnvManagedTestAssignment) != "" || isManagedTestDSN(cfg.DSN) {
-		a, err := LoadManagedTestAssignment()
-		if err != nil {
-			return nil, err
-		}
-		if cfg.managedTestRole != ManagedTestApp && cfg.managedTestRole != ManagedTestOwner && cfg.managedTestRole != ManagedTestProvider && cfg.managedTestRole != ManagedTestIssuer {
-			return nil, fmt.Errorf("managed test connection requires an assigned role configuration")
-		}
-		if cfg.DriverName != "" && cfg.DriverName != PostgresDriverName {
-			return nil, fmt.Errorf("managed test runtime requires the PostgreSQL driver")
-		}
-		if _, err := a.Connection(cfg.DSN, cfg.managedTestRole); err != nil {
-			return nil, err
-		}
-		if err := a.VerifyPin(); err != nil {
-			return nil, err
-		}
 	}
 	driverName := cfg.DriverName
 	if driverName == "" {
@@ -241,15 +205,6 @@ func (db *DB) Close() error {
 // Migrate applies governed migrations, or verifies the existing schema in verify mode.
 func (db *DB) Migrate(ctx context.Context) error {
 	return db.migrate(ctx, nil)
-}
-
-// MigrateForward retains the existing locked migration runner while refusing
-// any pending batch except one exact embedded, digest-bound forward migration.
-func (db *DB) MigrateForward(ctx context.Context, version, digest string, verify func(context.Context, *sql.Tx) error) error {
-	if verify == nil {
-		return fmt.Errorf("forward migration requires transactional capability verification")
-	}
-	return db.migrate(ctx, &forwardMigration{version: version, digest: digest, verify: verify})
 }
 
 func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
@@ -325,12 +280,11 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 		return err
 	}
 	if forward != nil {
-		if len(forward.batch) != 0 {
-			return applyForwardBatch(ctx, lockConn, forward.batch, forward.verify)
+		// MigrateForwardBatch refuses an empty batch before this point.
+		if len(forward.batch) == 0 {
+			return fmt.Errorf("exact forward migration identity required")
 		}
-		if err := verifyForwardMigration(ctx, lockConn, *forward); err != nil {
-			return err
-		}
+		return applyForwardBatch(ctx, lockConn, forward.batch, forward.verify)
 	} else {
 
 		// Self-heal a legacy schema_migrations table left by an older, integer-keyed
@@ -447,16 +401,6 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("failed to execute migration %s: %w", version, err)
-		}
-		if forward != nil {
-			if version != forward.version {
-				_ = tx.Rollback()
-				return fmt.Errorf("unexpected forward migration transaction")
-			}
-			if err := forward.verify(ctx, tx); err != nil {
-				_ = tx.Rollback()
-				return fmt.Errorf("forward migration capability verification: %w", err)
-			}
 		}
 
 		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {

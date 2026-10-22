@@ -1,14 +1,14 @@
 {
   "schemaVersion": "stackkits-use-case-catalog/v1",
   "release": {
-    "tag": "v0.54.3",
-    "version": "0.54.3",
-    "sourceSha": "d8f529767582f017d420edfeeec8c7d1f2810676",
-    "publicSourceSha": "721b28cf58d148556aabcc6eec77161fc5a36f8d",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.3"
+    "tag": "v0.54.4",
+    "version": "0.54.4",
+    "sourceSha": "fa83fa6853ae5e2c5833990fcb26a20a6354d934",
+    "publicSourceSha": "9ac1e5d972181599722602257c2da1876a55d032",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.4"
   },
-  "generatedAt": "2026-10-20T18:04:58Z",
-  "generatorVersion": "0.54.3",
+  "generatedAt": "2026-10-21T09:43:26Z",
+  "generatorVersion": "0.54.4",
   "catalog": {
     "useCases": [
       {
@@ -3100,6 +3100,13 @@
             "name": "Coolify",
             "role": "primary",
             "kind": "application"
+          },
+          {
+            "id": "runtipi",
+            "name": "Runtipi",
+            "role": "alternative",
+            "kind": "application",
+            "realization": "recorded"
           }
         ],
         "mainUseCase": {
@@ -3200,7 +3207,8 @@
                   }
                 }
               }
-            ]
+            ],
+            "providesRuntimeAdapterRef": "coolify"
           }
         ]
       },
@@ -5817,5 +5825,5 @@
       }
     ]
   },
-  "contentDigest": "sha256:698703caed919559f21f35bf7e84d15e92b460db3eaed602a819397e97338f64"
+  "contentDigest": "sha256:58c7b37c7402141c4371264c1eb4a0361591021a0bb2589c006e76b3997ef8b2"
 }

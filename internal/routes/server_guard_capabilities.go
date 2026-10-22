@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/kombifyio/techstack/pkg/agentcontrol"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/guardidentity"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 )
@@ -17,6 +20,61 @@ import (
 type ServerWorkerReader interface {
 	ListWorkersByTenant(ctx context.Context, tenantID string) ([]controlplane.Worker, error)
 	GetWorker(ctx context.Context, tenantID, workerID string) (*controlplane.Worker, error)
+}
+
+// ServerRoundTripReader reads the persisted authenticated command/result round
+// trips of a tenant's Guards, keyed by agent ID. agentcontrol.Hub satisfies it.
+// Nil leaves every server without round-trip evidence, so none reads as
+// Connected.
+type ServerRoundTripReader interface {
+	CommandRoundTripsForTenant(ctx context.Context, tenantID string) (map[string]agentcontrol.CommandRoundTrip, error)
+}
+
+// Round-trip states of the capabilities section. Only verified lets the
+// Connected readiness fact pass; every other state demotes it.
+const (
+	serverRoundTripVerified   = "verified"
+	serverRoundTripStale      = "stale"
+	serverRoundTripSuperseded = "superseded"
+	serverRoundTripAbsent     = "absent"
+)
+
+// serverCommandRoundTrip is the Connected evidence of one server: whether the
+// last command the Guard answered under the binding contract was accepted
+// under its current credential generation recently enough. A heartbeat is
+// never part of it.
+type serverCommandRoundTrip struct {
+	State          string     `json:"state"`
+	ReasonCode     string     `json:"reason_code,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	Generation     int64      `json:"generation,omitempty"`
+	// Transport is https (bound HTTPS hub) or mtls (gRPC listener).
+	Transport string `json:"transport,omitempty"`
+}
+
+// commandRoundTripEvidence classifies the persisted round trip at now against
+// the identity the Guard holds now: its credential generation for an HTTPS
+// round trip, the certificate serial of its current mTLS session for an mTLS
+// one (empty when no session is present).
+func commandRoundTripEvidence(trip *agentcontrol.CommandRoundTrip, currentGeneration int64, currentMTLSSerial string, now time.Time) *serverCommandRoundTrip {
+	if trip == nil {
+		return &serverCommandRoundTrip{State: serverRoundTripAbsent, ReasonCode: "no_authenticated_round_trip"}
+	}
+	acknowledged := trip.AcknowledgedAt.UTC()
+	out := &serverCommandRoundTrip{AcknowledgedAt: &acknowledged, Generation: trip.Generation, Transport: trip.Transport}
+	switch {
+	case trip.Transport == agentcontrol.RoundTripTransportMTLS && (currentMTLSSerial == "" || trip.CredentialRef != currentMTLSSerial):
+		out.State, out.ReasonCode = serverRoundTripSuperseded, "mtls_identity_changed"
+	case trip.Transport != agentcontrol.RoundTripTransportMTLS && (currentGeneration <= 0 || trip.Generation != currentGeneration):
+		out.State, out.ReasonCode = serverRoundTripSuperseded, "credential_generation_changed"
+	case acknowledged.After(now.Add(guardcompat.ResultClockMargin)):
+		out.State, out.ReasonCode = serverRoundTripStale, "round_trip_time_invalid"
+	case now.Sub(acknowledged) > guardcompat.CommandRoundTripFreshness:
+		out.State, out.ReasonCode = serverRoundTripStale, "round_trip_stale"
+	default:
+		out.State = serverRoundTripVerified
+	}
+	return out
 }
 
 // Identity binding values of the capabilities section.
@@ -72,6 +130,9 @@ type serverRuntimeCapabilities struct {
 	GuardOperations      *serverGuardOperations `json:"guard_operations,omitempty"`
 	GuardPosture         *serverGuardPosture    `json:"guard_posture,omitempty"`
 	CredentialGeneration int64                  `json:"credential_generation"`
+	// CommandRoundTrip is the persisted Connected evidence; see
+	// serverCommandRoundTrip.
+	CommandRoundTrip     *serverCommandRoundTrip `json:"command_round_trip"`
 	stackKitCapabilities []string
 	runtimeConvergence   *runtimeconvergence.Snapshot
 }
@@ -129,6 +190,39 @@ func serverCapabilitiesFromWorker(worker controlplane.Worker) *serverRuntimeCapa
 	return out
 }
 
+// applyRoundTrips attaches the round-trip evidence of each worker. A read
+// failure leaves every worker absent, which demotes Connected instead of
+// failing the inventory.
+func (h serverRuntimeHandlers) applyRoundTrips(ctx context.Context, tenantID string, capabilities map[string]*serverRuntimeCapabilities) {
+	if len(capabilities) == 0 {
+		return
+	}
+	var trips map[string]agentcontrol.CommandRoundTrip
+	if h.roundTrips != nil {
+		read, err := h.roundTrips.CommandRoundTripsForTenant(ctx, tenantID)
+		if err != nil {
+			slog.Warn("server_round_trip_read_failed", "error", err.Error())
+		} else {
+			trips = read
+		}
+	}
+	now := h.now().UTC()
+	for workerID, item := range capabilities {
+		if item == nil {
+			continue
+		}
+		var trip *agentcontrol.CommandRoundTrip
+		if found, ok := trips[workerID]; ok {
+			trip = &found
+		}
+		serial := ""
+		if h.currentMTLSIdentity != nil {
+			serial = strings.TrimSpace(h.currentMTLSIdentity(tenantID, workerID))
+		}
+		item.CommandRoundTrip = commandRoundTripEvidence(trip, item.CredentialGeneration, serial, now)
+	}
+}
+
 func roundTrip(in any, out any) bool {
 	raw, err := json.Marshal(in)
 	return err == nil && json.Unmarshal(raw, out) == nil
@@ -152,6 +246,7 @@ func (h serverRuntimeHandlers) capabilitiesByWorker(ctx context.Context, tenantI
 			out[strings.TrimSpace(worker.ID)] = serverCapabilitiesFromWorker(worker)
 		}
 	}
+	h.applyRoundTrips(ctx, tenantID, out)
 	return out
 }
 
@@ -163,5 +258,7 @@ func (h serverRuntimeHandlers) capabilitiesForWorker(ctx context.Context, tenant
 	if err != nil || worker == nil || strings.TrimSpace(worker.TenantID) != tenantID {
 		return nil
 	}
-	return serverCapabilitiesFromWorker(*worker)
+	out := serverCapabilitiesFromWorker(*worker)
+	h.applyRoundTrips(ctx, tenantID, map[string]*serverRuntimeCapabilities{strings.TrimSpace(worker.ID): out})
+	return out
 }

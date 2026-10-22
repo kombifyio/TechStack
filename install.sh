@@ -589,6 +589,35 @@ guard_enrollment_resumable() {
     return 1
 }
 
+# pinned_binary_sha256 prints the TECHSTACK_BINARY_SHA256 pin for one
+# architecture. The pin is one bare digest or the dashboard's per-architecture
+# list "amd64=<sha256>,arm64=<sha256>"; a list without an entry for this
+# architecture prints nothing, so the caller fails closed.
+pinned_binary_sha256() {
+    case "$1" in
+        x86_64|amd64) _pin_arch=amd64 ;;
+        aarch64|arm64) _pin_arch=arm64 ;;
+        armv7|armv7l|arm) _pin_arch=arm ;;
+        *) _pin_arch=$1 ;;
+    esac
+    _pins=$(printf '%s' "${TECHSTACK_BINARY_SHA256:-}" | tr 'A-F,' 'a-f ')
+    _pin=""
+    case "$_pins" in
+        *=*)
+            for _entry in $_pins; do
+                case "$_entry" in
+                    "${_pin_arch}="*) _pin=${_entry#*=} ;;
+                esac
+            done
+            ;;
+        *) _pin=$(printf '%s' "$_pins" | tr -d ' ') ;;
+    esac
+    case "$_pin" in
+        *[!0-9a-f]*) _pin="" ;;
+    esac
+    printf '%s' "$_pin"
+}
+
 # Prefer the exact Linux executable currently serving KOMBI_SERVER. This keeps
 # the Guard in lockstep with the deployed HTTPS enrollment contract while the
 # public release mirror is dormant. The download is authorized by the active
@@ -724,6 +753,22 @@ install_binary_from_control_plane() {
             ;;
     esac
 
+    if [ -n "${TECHSTACK_BINARY_SHA256:-}" ]; then
+        PINNED_SHA256=$(pinned_binary_sha256 "$ARCH")
+        if [ "${#PINNED_SHA256}" -ne 64 ]; then
+            echo "${RED}TECHSTACK_BINARY_SHA256 has no valid SHA-256 for ${OS}/${ARCH}.${NC}" >&2
+            cleanup_control_plane_download
+            trap - 0 1 2 15
+            exit 1
+        fi
+        if [ "$PINNED_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "${RED}The control plane served a Guard binary other than the pinned release (TECHSTACK_BINARY_SHA256).${NC}" >&2
+            cleanup_control_plane_download
+            trap - 0 1 2 15
+            exit 1
+        fi
+    fi
+
     ACTUAL_SHA256=$(sha256sum "$BINARY_TMP" | awk '{print tolower($1)}')
     if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
         echo "${RED}Control-plane binary checksum verification failed.${NC}" >&2
@@ -801,7 +846,7 @@ verify_release_archive() {
         return 1
     fi
     if [ -n "${TECHSTACK_BINARY_SHA256:-}" ]; then
-        _expected=$(printf '%s' "$TECHSTACK_BINARY_SHA256" | tr 'A-F' 'a-f')
+        _expected=$(pinned_binary_sha256 "$ARCH")
         _source="TECHSTACK_BINARY_SHA256"
     else
         if ! curl -fsSL "https://github.com/${REPO}/releases/download/${LATEST_VERSION}/SHA256SUMS.txt" -o checksums.txt; then

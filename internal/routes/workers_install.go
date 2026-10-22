@@ -16,7 +16,7 @@ import (
 // after CRLF-to-LF normalization. The runtime image copies that exact artifact;
 // serving any partial, stale, or locally substituted shell fragment fails
 // closed until the contract digest is deliberately updated with the installer.
-const linuxInstallerArtifactSHA256 = "79d7f8978febf1d97317bd870afd1d2e31d4b309b7255d85c014781f87cda453"
+const linuxInstallerArtifactSHA256 = "b89eb1c2d95867de75ddaaf7ee7b5aad52c2a0456f1a2a953101f3092ef5b7eb"
 
 func (h workerRouteHandlers) installScript(e *httpx.Event) error {
 	return serveLinuxInstallScript(e, h.installScriptPaths())
@@ -95,7 +95,8 @@ func getClientIP(e *httpx.Event) string {
 
 // getEmbeddedInstallScriptPS returns a minimal Windows PowerShell worker
 // bootstrap, used when no on-disk install.ps1 is present. It mirrors the POSIX
-// installer contract by registering the worker via KOMBI_SERVER/KOMBI_TOKEN.
+// installer contract: a KOMBI_SERVER/KOMBI_TOKEN one-liner stops before redeeming
+// the capability, and only TECHSTACK_REGISTRATION_ONLY=1 registers the worker.
 // Note: no backtick characters — this Go raw string is backtick-delimited, and
 // a PowerShell backtick would terminate it. Keep the script backtick-free.
 func getEmbeddedInstallScriptPS() string {
@@ -116,6 +117,17 @@ if ([string]::IsNullOrWhiteSpace($server)) {
 if ([string]::IsNullOrWhiteSpace($token)) {
     Write-Host "Error: KOMBI_TOKEN environment variable is required" -ForegroundColor Red
     Write-Host "Copy the full one-liner from the kombify-TechStack wizard."
+    exit 1
+}
+
+# A managed server is enrolled only by the outbound HTTPS Guard, which runs on
+# Linux. Redeeming the one-time capability here would consume it without
+# persisting a credential, so stop before anything is sent unless the legacy
+# one-shot registration is requested explicitly (as in install.sh).
+if ($env:TECHSTACK_REGISTRATION_ONLY -ne "1") {
+    Write-Host "This command enrolls a managed server through the outbound HTTPS kombify Guard, which runs on Linux." -ForegroundColor Red
+    Write-Host "Nothing was sent to the control plane and the pairing capability was not redeemed."
+    Write-Host "Run the Linux command from the dashboard on the server instead, or set TECHSTACK_REGISTRATION_ONLY=1 for a one-shot registration without a persistent Guard."
     exit 1
 }
 

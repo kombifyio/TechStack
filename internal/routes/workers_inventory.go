@@ -106,6 +106,8 @@ type workerInventoryHost struct {
 	Network *workerInventoryNetwork `json:"network,omitempty"`
 	// Hardware is the Guard's machine-level probe; absent from a Guard without it.
 	Hardware *httpguard.HostHardware `json:"hardware,omitempty"`
+	// Volumes are mounted filesystems other than the root disk.
+	Volumes []httpguard.HostVolume `json:"volumes,omitempty"`
 }
 
 type workerInventoryService struct {
@@ -268,6 +270,7 @@ func (h workerRouteHandlers) commitWorkerInventory(
 				walletAuditReasonKey: guardInventoryConflictReason(projectionErr),
 			})
 		}
+		httpx.RecordDependencyFailure(e, "workers.inventory.project_server", projectionErr)
 		return committedWorkerInventory{}, false, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist canonical server inventory", nil)
 	}
 	if projection == nil {
@@ -339,6 +342,7 @@ func (h workerRouteHandlers) recordInventoryPorts(
 		InventoryRevision: committed.revision, ObservedAt: committed.observedAt,
 		ListenersComplete: req.PortsObserved, OpenPorts: append([]string(nil), req.OpenPorts...),
 	}); err != nil {
+		httpx.RecordDependencyFailure(e, "workers.inventory.record_ports", err)
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist runtime listener evidence", nil)
 	}
 	return nil
@@ -1119,6 +1123,28 @@ func inventoryHostMap(host workerInventoryHost) map[string]any {
 	}
 	if hardware := inventoryHardwareMap(host.Hardware); hardware != nil {
 		out[workerHardwareKey] = hardware
+	}
+	if volumes := inventoryVolumeMaps(host.Volumes); len(volumes) > 0 {
+		out["volumes"] = volumes
+	}
+	return out
+}
+
+func inventoryVolumeMaps(volumes []httpguard.HostVolume) []map[string]any {
+	clean := httpguard.SanitizeHostVolumes(volumes)
+	if len(clean) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(clean))
+	for _, volume := range clean {
+		out = append(out, map[string]any{
+			"mount_point": volume.MountPoint,
+			"size_gb":     volume.SizeGB,
+			"free_gb":     volume.FreeGB,
+			"filesystem":  volume.Filesystem,
+			"label":       volume.Label,
+			"external":    volume.External,
+		})
 	}
 	return out
 }

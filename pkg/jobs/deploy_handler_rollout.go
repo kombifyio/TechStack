@@ -396,6 +396,9 @@ func (r *deployRollout) runRollout(ctx context.Context) error {
 		}
 		r.updateJobStepProgress(StepRolloutRunner, 82, "Applying StackKit services on the managed VPS...")
 		result, err := r.runTypedStackKitApply(ctx)
+		// A refusal the owner's own server reports about itself fails the job
+		// as before but is not a Techstack fault to report.
+		err = classifyOwnerHostRefusal(err, r.managedRuntime)
 		if err != nil {
 			if result != nil {
 				proof := runtimeActionProof(string(runtimeaction.ActionStackKitRollout), result, "failed")

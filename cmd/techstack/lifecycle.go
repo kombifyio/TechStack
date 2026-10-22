@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/kombifyio/techstack/pkg/servermaintenance"
 	"sync"
-	"time"
 
 	"github.com/kombifyio/techstack/internal/backupjobs"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -14,7 +13,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/ril/signals"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
@@ -162,22 +160,6 @@ func startRuntimeLifecycle(
 	// this safe across replicas.
 	if requeued, requeueErr := orch.RequeuePendingJobs(ctx); requeueErr != nil {
 		log.Warn("pending_jobs_requeue_failed", "error", requeueErr, "requeued", requeued)
-	}
-	if !releasechannel.Settled() {
-		// Tenants whose channel was still open at boot get their pass once it
-		// settles (pkg/releasechannel); a job admitted twice is fenced.
-		background.run(func(ctx context.Context) {
-			for !releasechannel.Settled() {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(5 * time.Second):
-				}
-			}
-			if requeued, requeueErr := orch.RequeuePendingJobs(ctx); requeueErr != nil {
-				log.Warn("pending_jobs_requeue_failed", "error", requeueErr, "requeued", requeued)
-			}
-		})
 	}
 
 	if jobReclaimer != nil {

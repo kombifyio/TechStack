@@ -63,9 +63,6 @@ func advancedIssuerBootstrapConfigFromEnv() (advancedIssuerBootstrapConfig, erro
 	if len(issuerURL.Query()["sslmode"]) != 1 || issuerURL.Query().Get("sslmode") != "verify-full" {
 		return result, errors.New("issuer bootstrap signing transport must verify the server identity")
 	}
-	if os.Getenv(db.EnvManagedTestAssignment) != "" {
-		return result, errors.New("assigned test custody uses managed-test-bootstrap prepare-issuer")
-	}
 	result.appRole = appURL.User.Username()
 	return result, nil
 }

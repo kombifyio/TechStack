@@ -104,7 +104,7 @@ export const guardMessagesHi: Record<keyof typeof guardMessages.en, string> = {
     "अगली रिपोर्ट की प्रतीक्षा करें। न आए तो सर्वर पर Guard अपडेट करें।",
 
   "guard.fact.connected.ok":
-    "Guard अपने प्रमाणित कनेक्शन से रिपोर्ट कर रहा है।",
+    "Guard ने अपने प्रमाणित कनेक्शन पर एक कमांड का उत्तर दिया।",
   "guard.fact.connected.degraded": "कनेक्शन की गुणवत्ता घटी हुई है।",
   "guard.fact.connected.offline":
     "Guard रिपोर्ट नहीं कर रहा। सर्वर ऑफ़लाइन है या Techstack तक नहीं पहुँच पा रहा।",
@@ -119,6 +119,12 @@ export const guardMessagesHi: Record<keyof typeof guardMessages.en, string> = {
     "इस सर्वर के लिए कोई कनेक्शन स्थिति रिपोर्ट नहीं हुई।",
   "guard.fact.connected.reconnectNext":
     "जाँचें कि सर्वर चालू है और Techstack तक पहुँच सकता है।",
+  "guard.fact.connected.awaitingRoundTrip":
+    "Guard रिपोर्ट कर रहा है, लेकिन उसने अपने वर्तमान क्रेडेंशियल से Techstack की किसी कमांड का अभी तक उत्तर नहीं दिया है।",
+  "guard.fact.connected.roundTripStale":
+    "Guard रिपोर्ट कर रहा है, लेकिन उसकी पिछली उत्तर दी गई कमांड बहुत पुरानी है या पिछले क्रेडेंशियल से दी गई थी।",
+  "guard.fact.connected.roundTripNext":
+    "इस सर्वर पर अगला ऑपरेशन कनेक्शन की पुष्टि करता है; केवल रिपोर्ट पर्याप्त नहीं हैं।",
 
   "guard.fact.operations.ok":
     "ऑपरेशन टिकाऊ ढंग से दर्ज होते हैं और कुछ भी अनसुलझा नहीं बचा।",

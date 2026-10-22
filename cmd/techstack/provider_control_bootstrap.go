@@ -55,9 +55,6 @@ func runProviderControlRuntimeBootstrap(ctx context.Context) error {
 		return errors.New("provider preparation artifact differs from the admitted source")
 	}
 	mode := os.Getenv("TECHSTACK_ADVANCED_ISSUER_PREPARATION_MODE")
-	if mode == "prepare-provider-grants" {
-		return prepareAssignedProviderRuntimeGrants(ctx)
-	}
 	if mode == "prepare" {
 		return prepareProviderAndIssuerRuntime(ctx)
 	}

@@ -60,6 +60,7 @@
   } from "#lib/services/service-action-tracker.svelte.js";
   import {
     actionLabel,
+    adoptionUnavailableReason,
     applicationCardActions,
     componentCardActions,
     runApplicationAction,
@@ -1892,7 +1893,7 @@
           {#if !detailRuntime.adoption?.preview_available}<p
               class="text-sm text-muted-foreground"
             >
-              {tr("ui.services.adoptionUnavailable")}
+              {adoptionUnavailableReason(detailRuntime.adoption)}
             </p>{/if}
         {/if}
         {#if detailRuntime?.adoption?.release_available}<Button

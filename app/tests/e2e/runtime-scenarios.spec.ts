@@ -1445,10 +1445,23 @@ async function registerWorkerThroughInstallScript(
     `runtime-e2e-${scenario}-${resource.droplet.id}`,
     60,
   );
+  // The dashboard command pins the served Guard binary (threat model F4);
+  // the journey runs the same pinned command.
+  const pinsResponse = await fetch(`${API_BASE}/api/v1/workers/install-pins`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(pinsResponse.ok).toBe(true);
+  const pins = ((await pinsResponse.json()) as any)?.data?.pins ?? {};
+  const binaryPin = Object.keys(pins)
+    .sort()
+    .map((arch) => `${arch}=${pins[arch]}`)
+    .join(",");
+  expect(pins.amd64).toMatch(/^[a-f0-9]{64}$/);
   const installCommand = [
     `curl -fsSL ${shellQuote(`${API_BASE}/install.sh`)} |`,
     `KOMBI_SERVER=${shellQuote(API_BASE)}`,
     `KOMBI_TOKEN=${shellQuote(pairing.token)}`,
+    `TECHSTACK_BINARY_SHA256=${shellQuote(binaryPin)}`,
     "sh",
   ].join(" ");
   const result = await runSSH(
@@ -3425,6 +3438,27 @@ test.describe.serial("Runtime E2E scenarios", () => {
       const aggregate = await readServerAggregate(auth.token, serverId);
       expect(aggregate.connection?.state).toBe("connected");
       expect(aggregate.lifecycle?.state).toBe("active");
+      // Connected rests on an answered command, never on the heartbeat alone:
+      // the rollout the Guard just ran is that round trip, accepted under its
+      // current credential generation.
+      expect(
+        aggregate.capabilities?.command_round_trip?.state,
+        "the deployed Guard's command/result round trip must be verified",
+      ).toBe("verified");
+      // A private server is never read as exposed, and keeping it private
+      // never satisfies the governed route: while Connect applies, "not
+      // enabled" is reported only once Connect lists the server.
+      if (aggregate.reach) {
+        expect(aggregate.reach.kombify_me?.applicability).toBe(
+          aggregate.reach.public?.enabled ? "applicable" : "not_applicable",
+        );
+        if (
+          aggregate.reach.state === "not_enabled" &&
+          aggregate.reach.connect?.applicability === "applicable"
+        ) {
+          expect(aggregate.reach.connect?.state).toBe("registered");
+        }
+      }
       await validateMonitoringUi(page, auth.token, "stack-lifecycle", {
         minConnectedAgents: 1,
       });
@@ -3439,6 +3473,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
         service_count: deployed.serviceCount,
         stackkit: deployed.server.stackkit,
         connection: aggregate.connection,
+        command_round_trip: aggregate.capabilities?.command_round_trip,
         lifecycle: aggregate.lifecycle,
       });
 
@@ -3626,7 +3661,10 @@ test.describe.serial("Runtime E2E scenarios", () => {
         lifecycleRecord(lifecycleRecord(wrong.json.error).details).reason_code,
       ).toBe("offline_removal_confirmation_invalid");
 
-      // The exact confirmation removes the stack without its node.
+      // The exact confirmation removes the stack without its node, and the
+      // control-plane process stays up through it.
+      const uptimeBefore = await controlPlaneUptimeSeconds();
+      const removalStartedAt = Date.now();
       const accepted = await requestStackDestroy(auth.token, stackId, [
         serverId,
       ]);
@@ -3639,6 +3677,11 @@ test.describe.serial("Runtime E2E scenarios", () => {
         redactObject(job),
       );
       expect(job.state, runtimeJobFailureSummary(job)).toBe("completed");
+      const uptimeAfter = await controlPlaneUptimeSeconds();
+      expect(
+        uptimeAfter - uptimeBefore,
+        "the control-plane process ran through the whole removal",
+      ).toBeGreaterThan((Date.now() - removalStartedAt) / 1_000 - 5);
       const result = lifecycleRecord(job.result);
       const evidence = lifecycleRecord(result.offline_removal_evidence);
       expect(evidence.basis).toBe("owner_confirmation");
@@ -3753,40 +3796,29 @@ async function createLayoutWizardRun(
   token: string,
   request: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const key = `layout-e2e-${randomUUID()}`;
-  const post = () =>
-    authorizedFetch(token, runtimeApiUrl(API_BASE, "/api/v1/wizard/runs"), {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(API_BASE, "/api/v1/wizard/runs"),
+    {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Idempotency-Key": key,
+        "X-Idempotency-Key": `layout-e2e-${randomUUID()}`,
       },
       body: JSON.stringify(request),
-    });
-  let response = await post();
-  let text = await response.text();
-  // The API marks a failed registration preparation retryable and asks for a
-  // retry with the same key; the client does that once, as the wizard does.
-  if (
-    response.status >= 500 &&
-    /"reason_code"\s*:\s*"wizard_pairing_failed"/.test(text)
-  ) {
-    logRuntimeE2E(
-      "wizard pairing preparation failed; retrying with the same key",
-      {
-        status: response.status,
-        reason_code: "wizard_pairing_failed",
-      },
-    );
-    await delay(5_000);
-    response = await post();
-    text = await response.text();
-  }
+    },
+  );
+  const text = await response.text();
+  // The first request must be accepted (kombify-Techstack-57kp): on stable
+  // 0.42.8 every first request of a keyed install-command run answered 500
+  // `wizard_pairing_failed` and only the replay with the same key passed. The
+  // journey no longer replays, so that failure fails here instead of hiding.
   if (!response.ok) {
     throw new Error(
       `Wizard run failed (HTTP ${response.status}): ${redactText(text)}`,
     );
   }
+  expect(response.status).toBe(202);
   const data = (JSON.parse(text).data ?? {}) as Record<string, unknown>;
   await attachJson(
     `layout-run-${String(data.kit_assignment_mode ?? "run")}.json`,
@@ -4548,6 +4580,23 @@ async function requestStackDestroy(
     json: lifecycleRecord(raw),
     text: redactText(raw),
   };
+}
+
+// The control-plane process's uptime: it only grows while the process runs, so a
+// restart during a step shows as a smaller uptime than the step took.
+async function controlPlaneUptimeSeconds() {
+  return retryTransient("control-plane info", async () => {
+    const response = await fetch(runtimeApiUrl(API_BASE, "/api/v1/info"), {
+      signal: AbortSignal.timeout(10_000),
+    });
+    const uptime = Number(
+      lifecycleRecord(await response.json()).data?.uptime_secs,
+    );
+    if (!Number.isFinite(uptime)) {
+      throw new Error(`Info answered without uptime (HTTP ${response.status})`);
+    }
+    return uptime;
+  });
 }
 
 // A server whose supplier deleted it stops heartbeating; the product shows it

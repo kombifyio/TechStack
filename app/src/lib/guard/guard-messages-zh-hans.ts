@@ -93,7 +93,7 @@ export const guardMessagesZhHans: Record<
   "guard.fact.bound.unknownNext":
     "请等待下一次报告。如果没有出现,请更新服务器上的 Guard。",
 
-  "guard.fact.connected.ok": "Guard 正通过其已认证的连接上报。",
+  "guard.fact.connected.ok": "Guard 已通过其经过认证的连接应答了一条命令。",
   "guard.fact.connected.degraded": "连接已降级。",
   "guard.fact.connected.offline":
     "Guard 没有上报。服务器已离线或无法连接到 Techstack。",
@@ -105,6 +105,12 @@ export const guardMessagesZhHans: Record<
   "guard.fact.connected.unknown": "未报告这台服务器的连接状态。",
   "guard.fact.connected.reconnectNext":
     "请检查服务器是否已开机并能连接到 Techstack。",
+  "guard.fact.connected.awaitingRoundTrip":
+    "Guard 正在上报,但尚未以当前凭据应答过 Techstack 的任何命令。",
+  "guard.fact.connected.roundTripStale":
+    "Guard 正在上报,但它最近应答的命令太旧,或是以先前的凭据应答的。",
+  "guard.fact.connected.roundTripNext":
+    "此服务器上的下一次操作将确认连接;仅有上报并不足够。",
 
   "guard.fact.operations.ok": "操作已被持久记录,没有遗留未解决的项目。",
   "guard.fact.operations.unacked": "等待确认的结果:{count}。",

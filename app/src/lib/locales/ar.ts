@@ -33,6 +33,10 @@ export const ar: Record<string, string> = {
   "ui.services.adoptionChecking": "جارٍ التحقق من العملية المحفوظة",
   "ui.services.adoptionFailed":
     "لم تكتمل العملية. راجع أدلتها قبل المحاولة مجددًا.",
+  "ui.services.adoptionSourceIdentityUnavailable":
+    "لا يملك هذا التطبيق بعد هوية حاوية دقيقة، لذا لا يستطيع Stack it اختيار مصدره. حدّث الاكتشاف على Node الخاص به ثم أعد المحاولة.",
+  "ui.services.adoptionReleaseUnavailable":
+    "لا يملك Guard المتصل بهذه Node بعد إصدار StackKits منشورًا يمكنه تبنّي هذا التطبيق.",
   "ui.services.adoptionUnavailable":
     "لتقييم التبنّي، يحتاج هذا المصدر إلى هوية دقيقة للحاوية وإصدار منشور ومتوافق من StackKits على Guard المتصل به.",
   "ui.services.adoptionVerified":
@@ -2610,8 +2614,6 @@ export const ar: Record<string, string> = {
   "ui.services.fetchLogs": "جلب السجلات",
   "ui.services.freshnessValue": "الحداثة: {value}",
   "ui.services.health": "الصحة",
-  "ui.services.importAsObserved": "استيراد كمُلاحَظ",
-  "ui.services.importUnmanaged": "استيراد غير المُدار",
   "ui.services.internalAddressOnlyOpenIt": "عنوان داخلي فقط؛ افتحه من شبكة الخادم.",
   "ui.services.jobId": "المهمة {id}",
   "ui.services.loadOlderLogs": "تحميل سجلات أقدم",
@@ -2684,7 +2686,6 @@ export const ar: Record<string, string> = {
   "ui.services.serviceFallback": "الخدمة",
   "ui.services.serviceLogCollectionDidNot": "لم يكتمل جمع سجلات الخدمة.",
   "ui.services.serviceLogsCouldNotBe": "تعذّر تحميل سجلات الخدمة.",
-  "ui.services.serviceMode": "وضع الخدمة",
   "ui.services.serviceRegistryCouldNotBe": "تعذّر تحميل Service Registry.",
   "ui.services.services": "الخدمات",
   "ui.services.servicesMode": "وضع الخدمات",
@@ -2711,8 +2712,6 @@ export const ar: Record<string, string> = {
   "ui.services.type2": "النوع",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
     "تظهر هنا مكوّنات وقت التشغيل غير المصنّفة.",
-  "ui.services.unmanagedServiceCouldNotBe":
-    "تعذّر استيراد الخدمة غير المُدارة.",
   "ui.services.uponYourManualVerificationThe":
     "بعد التحقق اليدوي منك، تُعطَّل النسخة القديمة ويمكن إزالتها نهائيًا.",
   "ui.services.url": "URL",

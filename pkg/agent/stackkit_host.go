@@ -73,13 +73,19 @@ const hostSecurityWorkspaceEnv = "TECHSTACK_STACKKIT_WORKSPACE"
 // StackKits workspace; the kit it holds decides which site expectations apply.
 const defaultHostSecurityWorkspace = "/opt/stackkit"
 
+// stackKitWorkspaceRoot is the directory every StackKit command's
+// working_directory must stay inside.
+func stackKitWorkspaceRoot() string {
+	if path := strings.TrimSpace(os.Getenv(hostSecurityWorkspaceEnv)); path != "" {
+		return path
+	}
+	return defaultHostSecurityWorkspace
+}
+
 // HostSecurityWorkspace is the node's StackKits workspace when it exists as a
 // real directory, else "" (the baseline is then judged for an unknown site).
 func HostSecurityWorkspace() string {
-	path := strings.TrimSpace(os.Getenv(hostSecurityWorkspaceEnv))
-	if path == "" {
-		path = defaultHostSecurityWorkspace
-	}
+	path := stackKitWorkspaceRoot()
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !filepath.IsAbs(path) {
 		return ""

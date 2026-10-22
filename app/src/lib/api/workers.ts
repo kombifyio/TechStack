@@ -112,3 +112,24 @@ export async function approveWorker(workerId: string): Promise<void> {
     method: "POST",
   });
 }
+
+/**
+ * The per-architecture SHA-256 pins of the Guard binary this control plane
+ * serves, formatted for install.sh's TECHSTACK_BINARY_SHA256
+ * ("amd64=<sha256>,arm64=<sha256>"). An empty string means no trusted digest
+ * is known, and no enrollment command may be shown.
+ */
+export async function getGuardBinaryPins(): Promise<string> {
+  const res = await fetchApi<{ pins?: Record<string, string> }>(
+    "/api/v1/workers/install-pins",
+  );
+  const pins = res.data?.pins ?? {};
+  return Object.keys(pins)
+    .filter(
+      (arch) =>
+        /^[a-z0-9]+$/.test(arch) && /^[a-f0-9]{64}$/.test(pins[arch] ?? ""),
+    )
+    .sort()
+    .map((arch) => `${arch}=${pins[arch]}`)
+    .join(",");
+}

@@ -351,6 +351,13 @@ export interface ServiceCardActionContext {
    */
   onAdopt?: () => void;
   /**
+   * Why "Stack it" is withheld from an Unstacked service. When set and the
+   * backend did not grant `adopt`, the card keeps the action, disabled with
+   * this reason, so compact and expanded cards explain the denial instead of
+   * silently dropping the offer.
+   */
+  adoptDeniedReason?: string;
+  /**
    * An update is known for this service. A locked service then still shows
    * the Update action, disabled with the lock reason, so the strip never
    * offers something that silently vanished.
@@ -414,6 +421,13 @@ export function serviceCardActions(
   }
   if (context.onAdopt && context.allowedActions.includes("adopt")) {
     actions.push({ id: "adopt", state: "ready", onSelect: context.onAdopt });
+  } else if (context.adoptDeniedReason) {
+    actions.push({
+      id: "adopt",
+      state: "disabled",
+      disabledReason: context.adoptDeniedReason,
+      onSelect: () => {},
+    });
   }
   if (context.onDetails) {
     actions.push({ id: "details", onSelect: context.onDetails });

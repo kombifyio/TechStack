@@ -68,6 +68,9 @@ type RelayTarget struct {
 	WorkerID   string `json:"worker_id,omitempty"`
 	Generation int64  `json:"generation,omitempty"`
 	Address    string `json:"address,omitempty"`
+	// TargetPort is the one loopback port the owner published; the Guard
+	// relays to it and nothing else on the host.
+	TargetPort int `json:"target_port,omitempty"`
 }
 
 // Document is the reach document a Guard receives. It carries no credential.
@@ -136,6 +139,7 @@ func (s *Service) document(row Row, now time.Time) *Document {
 		doc.KombifyMe = &RelayTarget{
 			State: string(TargetRegistered), RelayURL: s.cfg.RelayURL, Audience: guardidentity.AudienceRelay,
 			TenantID: row.TenantID, ServerID: row.ServerID, WorkerID: row.WorkerID, Generation: row.Generation, Address: row.Me.Ref,
+			TargetPort: row.Public.Port,
 		}
 	}
 	if row.ProofWanted(now) {
@@ -159,6 +163,55 @@ func Summary(row Row) string {
 	case row.Me.registeredAt(row.Generation) && row.Connect.registeredAt(row.Generation):
 		return StateReady
 	case row.Me.State == TargetFailed || row.Connect.State == TargetFailed:
+		return StateFailed
+	}
+	return StatePending
+}
+
+// Applicability of one reach target to the server's readiness.
+const (
+	// Applicable: the target must be registered for the current generation
+	// before the server reads as reachable and governed.
+	Applicable = "applicable"
+	// NotApplicable: the server is not held to the target. The kombify.me
+	// address is not applicable to an intentionally private server (the owner
+	// has not published it); Connect is not applicable to a tenant without a
+	// Connect namespace.
+	NotApplicable = "not_applicable"
+)
+
+// MeApplicability is the scope of the public kombify.me address: only an
+// owner-published server is held to it, so a private server is never treated
+// as exposed.
+func MeApplicability(row Row) string {
+	if row.Public.Enabled {
+		return Applicable
+	}
+	return NotApplicable
+}
+
+// ConnectApplicability is the scope of the governed Connect route. Every
+// server of a tenant with a Connect namespace is held to it, published or
+// private: opting out of public reach never opts out of governance.
+func ConnectApplicability(row Row) string {
+	if row.ConnectTenantID != "" {
+		return Applicable
+	}
+	return NotApplicable
+}
+
+// ReadinessState is the reach state of the server read model. It equals
+// Summary except for a server the owner keeps private: Summary calls it
+// not_enabled whatever its governed route does, while readiness calls it
+// not_enabled only once the governed route is satisfied (registered for the
+// current generation) or not applicable, and otherwise pending or failed by
+// the Connect registration. The Guard document keeps Summary.
+func ReadinessState(row Row) string {
+	state := Summary(row)
+	if state != StateNotEnabled || ConnectApplicability(row) != Applicable || row.Connect.registeredAt(row.Generation) {
+		return state
+	}
+	if row.Connect.State == TargetFailed {
 		return StateFailed
 	}
 	return StatePending
@@ -190,10 +243,13 @@ type ViewPublic struct {
 
 // ViewTarget is one registration as shown to the owner.
 type ViewTarget struct {
-	State      string `json:"state"`
-	Address    string `json:"address,omitempty"`
-	NodeID     string `json:"node_id,omitempty"`
-	ReasonCode string `json:"reason_code,omitempty"`
+	State string `json:"state"`
+	// Applicability is Applicable or NotApplicable: whether readiness holds
+	// the server to this target.
+	Applicability string `json:"applicability"`
+	Address       string `json:"address,omitempty"`
+	NodeID        string `json:"node_id,omitempty"`
+	ReasonCode    string `json:"reason_code,omitempty"`
 }
 
 // ViewRelay is the Guard's own report of its relay connection, with its age.
@@ -206,7 +262,7 @@ type ViewRelay struct {
 // ViewOf renders one row for the owner. Stale registrations (an older
 // generation than the binding) read as pending, never as reachable.
 func ViewOf(row Row) View {
-	view := View{State: Summary(row), Generation: row.Generation, UpdatedAt: row.UpdatedAt}
+	view := View{State: ReadinessState(row), Generation: row.Generation, UpdatedAt: row.UpdatedAt}
 	if row.Public.Enabled {
 		view.Public = ViewPublic{
 			Enabled: true, Service: row.Public.Service, Scheme: row.Public.Scheme, TargetPort: row.Public.Port,
@@ -231,6 +287,7 @@ func ViewOf(row Row) View {
 		return out
 	}
 	view.KombifyMe, view.Connect = show(row.Me), show(row.Connect)
+	view.KombifyMe.Applicability, view.Connect.Applicability = MeApplicability(row), ConnectApplicability(row)
 	if view.KombifyMe.State == string(TargetRegistered) {
 		view.KombifyMe.Address = row.Me.Ref
 	}

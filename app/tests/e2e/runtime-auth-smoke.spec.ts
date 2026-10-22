@@ -78,6 +78,7 @@ test.describe.serial("Runtime Auth0 smoke", () => {
           // on the read Nightly serves.
           const stacks = await authenticatedJSON(auth.token, "/api/v1/stacks");
           expect(stacks.status).toBe(200);
+          await verifyOwnerActionCardDecision(auth.token, stacks.body);
         } else {
           await verifyCloudInventoryCore(page, auth.token);
         }
@@ -102,6 +103,90 @@ test.describe.serial("Runtime Auth0 smoke", () => {
     }
   });
 });
+
+// An owner runs an action card on their own server without a per-server
+// grant (platform-0kyfw). The card is not approved, so execute has to pass the
+// operate gate and stop at the card's own approval check (409
+// approval_required, never 403 inventory_access_denied). The owner then
+// turns the proposal down.
+async function verifyOwnerActionCardDecision(token: string, stacks: unknown) {
+  const servers = canonicalRows(
+    (await authenticatedJSON(token, "/api/v1/servers")).body,
+    "servers",
+  );
+  // The card names the server's stack, or the owner's first stack for a
+  // server that is not in one yet.
+  const server =
+    servers.find((row) => String(row.techstack_id ?? "").trim()) ?? servers[0];
+  const stackID =
+    String(server?.techstack_id ?? "").trim() || (uiStackIDs(stacks)[0] ?? "");
+  expect(
+    server && stackID,
+    `the fixture owner needs one server and one stack; observed=${JSON.stringify(serverDiagnostic(servers))}`,
+  ).toBeTruthy();
+  const run = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  const created = await actionCardRequest(token, "/v1/ril/action-cards", {
+    server_id: String(server?.id).trim(),
+    title: "Journey check: owner action on their own server",
+    action: { stack_id: stackID },
+  });
+  expect(created.status, created.diagnostic).toBe(201);
+  const cardID = String(created.body?.data?.id ?? "").trim();
+  expect(cardID).toBeTruthy();
+  const cardPath = `/v1/ril/action-cards/${encodeURIComponent(cardID)}`;
+  let executed: Awaited<ReturnType<typeof actionCardRequest>>;
+  try {
+    executed = await actionCardRequest(token, `${cardPath}/execute`, {
+      execution_id: `journey-execution-${run}`,
+      trace_id: `journey-trace-${run}`,
+      idempotency_key: `journey-idempotency-${run}`,
+    });
+  } finally {
+    // Denied even when execute fails, so no open proposal is left behind.
+    const denied = await actionCardRequest(token, `${cardPath}/deny`, {
+      audit_correlation_id: `journey-deny-${run}`,
+    });
+    expect(denied.status, denied.diagnostic).toBe(200);
+    expect(denied.body?.data?.status).toBe("denied");
+  }
+  expect(executed.status, executed.diagnostic).toBe(409);
+  expect(executed.reason).toBe("approval_required");
+}
+
+async function actionCardRequest(
+  token: string,
+  endpoint: string,
+  body: unknown,
+) {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const text = await response.text();
+  let parsed: any = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(
+      `${endpoint} returned invalid JSON (HTTP ${response.status})`,
+    );
+  }
+  const reason = String(
+    parsed?.error?.details?.reason_code ?? parsed?.error?.code ?? "",
+  ).trim();
+  return {
+    status: response.status,
+    body: parsed,
+    reason,
+    diagnostic: `${endpoint} HTTP ${response.status} reason=${reason || "none"} request_id=${response.headers.get("x-request-id") ?? ""}`,
+  };
+}
 
 async function verifyCloudInventoryCore(
   page: Parameters<typeof authenticateRuntimeUser>[1],

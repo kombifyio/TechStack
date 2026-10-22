@@ -3,7 +3,9 @@
   five modules. Only Goals (which application) and Server (which Node) can
   change here; Access, Users and Login stay inactive with their reason because
   a new application inherits them from the Homelab. Create calls the real
-  registry attach or import and shows the service the backend returned.
+  registry attach and shows the service the backend returned. An existing,
+  unmanaged container joins through "Stack it" on its service card, which
+  opens the source-bound adoption plan; this wizard never registers one.
 -->
 <script lang="ts">
   import { Check, PackagePlus, Server as ServerIcon } from "@lucide/svelte";
@@ -16,7 +18,6 @@
   import { operationStepPlan } from "#lib/wizard/operation-steps.js";
   import {
     attachCatalogService,
-    importObservedService,
     type RegistryCatalogService,
     type RegistryServer,
     type RegistryService,
@@ -46,15 +47,9 @@
   const plan = operationStepPlan(steps, inactiveReasons);
 
   let step = $state(plan.first);
-  let mode = $state<"catalog" | "import">("catalog");
   let catalogId = $state("");
   // svelte-ignore state_referenced_locally
   let serverId = $state(initialServerId);
-  let importName = $state("");
-  let importDisplayName = $state("");
-  let importType = $state("custom");
-  let importPort = $state("");
-  let importUrl = $state("");
   let saving = $state(false);
   let error = $state<string | null>(null);
   let added = $state<RegistryService | null>(null);
@@ -62,11 +57,7 @@
   const selectedApp = $derived(
     registry.catalog.find((service) => service.id === catalogId),
   );
-  const chosenName = $derived(
-    mode === "catalog"
-      ? (selectedApp?.display_name ?? "")
-      : importDisplayName.trim() || importName.trim(),
-  );
+  const chosenName = $derived(selectedApp?.display_name ?? "");
 
   function foundationOf(server: RegistryServer): string | undefined {
     return registry.kit_deployments.find(
@@ -77,7 +68,7 @@
   /** Why a Node cannot take the chosen application, or "" when it can. */
   function nodeBlockedReason(server: RegistryServer): string {
     if (!server.rollout_ready) return tr("wizard.addApp.nodeNotReady");
-    if (mode !== "catalog" || !selectedApp) return "";
+    if (!selectedApp) return "";
     const foundation = foundationOf(server);
     if (
       selectedApp.foundations.length > 0 &&
@@ -102,13 +93,7 @@
       registry.servers.find((server) => !nodeBlockedReason(server))?.id ?? "";
   });
 
-  const canGoNext = $derived(
-    step === 1
-      ? mode === "catalog"
-        ? Boolean(selectedApp)
-        : importName.trim().length > 0
-      : true,
-  );
+  const canGoNext = $derived(step === 1 ? Boolean(selectedApp) : true);
   const canCreate = $derived(
     canGoNext &&
       Boolean(selectedServer) &&
@@ -131,33 +116,18 @@
     saving = true;
     error = null;
     try {
-      const service =
-        mode === "catalog"
-          ? await attachCatalogService({
-              kit_deployment_id: selectedServer.kit_deployment_id,
-              server_id: selectedServer.id,
-              service_id: catalogId,
-            })
-          : await importObservedService({
-              kit_deployment_id: selectedServer.kit_deployment_id,
-              server_id: selectedServer.id,
-              name: importName,
-              display_name: importDisplayName,
-              type: importType,
-              port: importPort ? Number(importPort) : undefined,
-              url: importUrl,
-            });
+      const service = await attachCatalogService({
+        kit_deployment_id: selectedServer.kit_deployment_id,
+        server_id: selectedServer.id,
+        service_id: catalogId,
+      });
       added = service;
       onadded(service);
     } catch (err) {
       error =
         err instanceof Error
           ? err.message
-          : tr(
-              mode === "catalog"
-                ? "ui.services.catalogServiceCouldNotBe"
-                : "ui.services.unmanagedServiceCouldNotBe",
-            );
+          : tr("ui.services.catalogServiceCouldNotBe");
     } finally {
       saving = false;
     }
@@ -216,12 +186,8 @@
         {canGoNext}
         canDeploy={canCreate}
         isDeploying={saving}
-        deployLabel={mode === "catalog"
-          ? tr("wizard.addApp.submit")
-          : tr("ui.services.importAsObserved")}
-        deployingLabel={mode === "catalog"
-          ? tr("ui.serviceDiscovery.adding")
-          : tr("ui.importExportModal.importing")}
+        deployLabel={tr("wizard.addApp.submit")}
+        deployingLabel={tr("ui.serviceDiscovery.adding")}
         onprev={previous}
         onnext={next}
         ondeploy={create}
@@ -236,115 +202,36 @@
         </div>
       {:else if step === 1}
         <section data-testid="add-application-goals">
-          <div
-            class="mb-4 flex gap-2"
-            role="tablist"
-            aria-label={tr("ui.services.serviceMode")}
-          >
-            <Button
-              variant={mode === "catalog" ? "primary" : "secondary"}
-              onclick={() => (mode = "catalog")}
-            >
-              {tr("ui.services.catalog")}
-            </Button>
-            <Button
-              variant={mode === "import" ? "primary" : "secondary"}
-              onclick={() => (mode = "import")}
-            >
-              {tr("ui.services.importUnmanaged")}
-            </Button>
-          </div>
-
-          {#if mode === "catalog"}
-            {#if registry.catalog.length === 0}
-              <p class="text-sm text-muted-foreground">
-                {tr("wizard.addApp.catalogEmpty")}
-              </p>
-            {:else}
-              <div class="grid gap-3 sm:grid-cols-2">
-                {#each registry.catalog as service (service.id)}
-                  <div data-testid={`catalog-service-${service.id}`}>
-                    <EntityCard
-                      kind="application"
-                      size="tile"
-                      name={service.display_name}
-                      meta={typeLabel(service.type)}
-                      imageUrl={logoFor(service)}
-                      icon={PackagePlus}
-                      presence="unknown"
-                      statusLabel={service.recommended
-                        ? tr("wizard.addApp.recommended")
-                        : typeLabel(service.type)}
-                      facts={[
-                        {
-                          label: tr("wizard.addApp.about"),
-                          value: service.description,
-                        },
-                      ]}
-                      selected={catalogId === service.id}
-                      onselect={() => (catalogId = service.id)}
-                    />
-                  </div>
-                {/each}
-              </div>
-            {/if}
+          {#if registry.catalog.length === 0}
+            <p class="text-sm text-muted-foreground">
+              {tr("wizard.addApp.catalogEmpty")}
+            </p>
           {:else}
-            <div class="grid gap-4 md:grid-cols-2">
-              <label class="block">
-                <span class="mb-1 block text-sm text-muted-foreground"
-                  >{tr("ui.credentialForm.name")}</span
-                >
-                <input
-                  bind:value={importName}
-                  class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
-                  placeholder="custom-dashboard"
-                  data-testid="unmanaged-service-name"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-sm text-muted-foreground"
-                  >{tr("ui.services.displayName")}</span
-                >
-                <input
-                  bind:value={importDisplayName}
-                  class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
-                  placeholder="Custom Dashboard"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-sm text-muted-foreground"
-                  >{tr("ui.services.type2")}</span
-                >
-                <input
-                  bind:value={importType}
-                  class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
-                  placeholder="custom"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-sm text-muted-foreground"
-                  >{tr("ui.services.port")}</span
-                >
-                <input
-                  type="number"
-                  min="1"
-                  max="65535"
-                  bind:value={importPort}
-                  class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
-                  placeholder="8080"
-                />
-              </label>
-              <label class="block md:col-span-2">
-                <span class="mb-1 block text-sm text-muted-foreground"
-                  >{tr("ui.services.url")}</span
-                >
-                <input
-                  type="url"
-                  bind:value={importUrl}
-                  class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
-                  placeholder="http://server.local:8080"
-                />
-              </label>
+            <div class="grid gap-3 sm:grid-cols-2">
+              {#each registry.catalog as service (service.id)}
+                <div data-testid={`catalog-service-${service.id}`}>
+                  <EntityCard
+                    kind="application"
+                    size="tile"
+                    name={service.display_name}
+                    meta={typeLabel(service.type)}
+                    imageUrl={logoFor(service)}
+                    icon={PackagePlus}
+                    presence="unknown"
+                    statusLabel={service.recommended
+                      ? tr("wizard.addApp.recommended")
+                      : typeLabel(service.type)}
+                    facts={[
+                      {
+                        label: tr("wizard.addApp.about"),
+                        value: service.description,
+                      },
+                    ]}
+                    selected={catalogId === service.id}
+                    onselect={() => (catalogId = service.id)}
+                  />
+                </div>
+              {/each}
             </div>
           {/if}
         </section>

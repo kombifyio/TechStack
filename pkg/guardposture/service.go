@@ -78,18 +78,23 @@ type ServiceConfig struct {
 	Store      Store
 	Policy     Policy
 	Dispatcher RepairDispatcher
-	Logger     *slog.Logger
-	Now        func() time.Time
+	// LocalRelease resolves the StackKits release a Guard's local repair runs
+	// on. Nil means no local repair grant is issued: Guards only observe while
+	// they cannot reach the control plane.
+	LocalRelease func() (*guardbinding.LocalReleasePin, error)
+	Logger       *slog.Logger
+	Now          func() time.Time
 }
 
 // Service is the posture use-case layer: it reads what a Guard reports, keeps
 // the findings honest and admits, runs and records bounded repairs.
 type Service struct {
-	store      Store
-	policy     Policy
-	dispatcher RepairDispatcher
-	log        *slog.Logger
-	now        func() time.Time
+	store        Store
+	policy       Policy
+	dispatcher   RepairDispatcher
+	localRelease func() (*guardbinding.LocalReleasePin, error)
+	log          *slog.Logger
+	now          func() time.Time
 
 	background context.Context
 	stop       context.CancelFunc
@@ -123,7 +128,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	return &Service{
-		store: cfg.Store, policy: cfg.Policy.Normalize(), dispatcher: cfg.Dispatcher, log: logger.With("component", "guard-posture"),
+		store: cfg.Store, policy: cfg.Policy.Normalize(), dispatcher: cfg.Dispatcher, localRelease: cfg.LocalRelease, log: logger.With("component", "guard-posture"),
 		now: cfg.Now, background: ctx, stop: stop, guardSeen: map[string]guardSeen{},
 	}, nil
 }

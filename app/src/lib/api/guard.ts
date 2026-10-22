@@ -110,6 +110,18 @@ export interface GuardWorkerEvidence {
   credential_generation?: number;
 }
 
+/**
+ * The persisted Connected evidence the server read model classifies: the last
+ * command the Guard answered under its current credential generation. Only
+ * `verified` lets Connected pass; a heartbeat never does.
+ */
+export interface GuardRoundTripEvidence {
+  /** `verified`, `stale`, `superseded` or `absent`. */
+  state: string;
+  reason_code?: string;
+  acknowledged_at?: string;
+}
+
 /** Everything the seven facts are derived from, and nothing else. */
 export interface GuardEvidence {
   server_id?: string;
@@ -121,6 +133,8 @@ export interface GuardEvidence {
     last_heartbeat_at?: string;
   };
   reach?: CanonicalServer["reach"];
+  /** Absent when the backend publishes no round-trip evidence. */
+  round_trip?: GuardRoundTripEvidence;
   worker: GuardWorkerEvidence;
   extension: GuardReadModelExtension;
 }
@@ -305,6 +319,23 @@ export function parseWorkerEvidence(
 }
 
 /**
+ * Read the round-trip evidence of the canonical server's capabilities section.
+ * Only the server read model publishes it; a worker capability map never does.
+ */
+export function parseRoundTripEvidence(
+  capabilities: unknown,
+): GuardRoundTripEvidence | undefined {
+  const raw = record(record(capabilities)?.command_round_trip);
+  const state = text(raw?.state);
+  if (!raw || !state) return undefined;
+  return {
+    state: state.toLowerCase(),
+    reason_code: text(raw.reason_code),
+    acknowledged_at: text(raw.acknowledged_at),
+  };
+}
+
+/**
  * Collect the evidence for one server. `capabilities` is the worker capability
  * map when the caller already holds it (the server detail payload carries it);
  * otherwise it is read from the canonical server, which is where a backend that
@@ -329,6 +360,8 @@ export function collectGuardEvidence(
         }
       : undefined,
     reach: server.reach,
+    round_trip:
+      parseRoundTripEvidence(carried) ?? parseRoundTripEvidence(capabilities),
     worker: parseWorkerEvidence(capabilities ?? carried),
     extension: parseGuardReadModel(server),
   };
@@ -460,7 +493,11 @@ export interface GuardIdentityUpgrade {
   identity_binding: string;
   /** `guard_identity_upgrade_required` while the server is bearer-only. */
   code?: string;
-  pending?: { key_thumbprint: string; requested_at: string; expires_at: string };
+  pending?: {
+    key_thumbprint: string;
+    requested_at: string;
+    expires_at: string;
+  };
   approved_by?: string;
 }
 

@@ -50,19 +50,6 @@ func OpenBound(ctx context.Context, application *db.DB, encryptor *auth.SecretEn
 	cfg := db.DefaultConfig()
 	cfg.Backend, cfg.DriverName, cfg.DSN = db.StoreBackendPostgres, db.PostgresDriverName, dsn
 	cfg.MaxOpenConns, cfg.MaxIdleConns = 1, 1
-	var assignment *db.ManagedTestAssignment
-	if os.Getenv(db.EnvManagedTestAssignment) != "" || parsed.Hostname() == db.ManagedTestHost {
-		a, err := db.LoadManagedTestAssignment()
-		if err != nil {
-			return nil, nil, err
-		}
-		assignment = a
-		cfg, err = db.ManagedTestConfig(*a, dsn, db.ManagedTestIssuer)
-		if err != nil {
-			return nil, nil, err
-		}
-		cfg.MaxOpenConns, cfg.MaxIdleConns = 1, 1
-	}
 	pool, err := db.OpenContext(ctx, cfg)
 	if err != nil {
 		return nil, nil, errors.New("advanced issuer custody login failed")
@@ -78,13 +65,7 @@ func OpenBound(ctx context.Context, application *db.DB, encryptor *auth.SecretEn
 	if application.QueryRowContext(ctx, `SELECT session_user`).Scan(&applicationLogin) != nil {
 		return fail("advanced issuer application identity is unavailable")
 	}
-	var privilegeErr error
-	if assignment != nil {
-		privilegeErr = db.VerifyManagedTestIssuerRuntimePrivileges(ctx, pool.DB, *assignment)
-	} else {
-		privilegeErr = db.VerifyAdvancedIssuerRuntimePrivileges(ctx, pool.DB, parsed.User.Username(), applicationLogin)
-	}
-	if privilegeErr != nil {
+	if db.VerifyAdvancedIssuerRuntimePrivileges(ctx, pool.DB, parsed.User.Username(), applicationLogin) != nil {
 		return fail("advanced issuer custody login has unassigned authority")
 	}
 	issuer, err := OpenWithKeyCustody(ctx, application, pool, encryptor)

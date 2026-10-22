@@ -53,8 +53,3 @@ func (e *CommandExecutor) runCommand(ctx context.Context, command string, args [
 
 	return stdout.String(), stderr.String(), exitCode, err
 }
-
-// isWindows returns true if running on Windows.
-func isWindows() bool {
-	return os.PathSeparator == '\\' && os.PathListSeparator == ';'
-}

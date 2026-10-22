@@ -1,6 +1,6 @@
 // Package denial is the single client-error-envelope/v1 type for cost-bearing
 // and entitlement denials. The schema lives in the workspace
-// (kombify-Core/standards/client-error-envelope.v1.schema.json). Callers must
+// (platform/standards/client-error-envelope.v1.schema.json). Callers must
 // not declare a parallel envelope; user_guidance is always an object.
 package denial
 

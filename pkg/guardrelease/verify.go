@@ -216,12 +216,22 @@ func (v *Verifier) verifyArtifactEntity(manifest *Manifest, goos, goarch, path s
 	if denial := manifest.Admit(manifest.Version, digest); denial != nil {
 		return Evidence{}, denial
 	}
-	if installedVersion != "" {
-		if order, ok := CompareVersions(manifest.Version, installedVersion); ok && order < 0 {
-			return Evidence{}, &Denial{CodeDowngrade, fmt.Sprintf("version %s is older than the installed %s", manifest.Version, installedVersion)}
-		}
+	if denial := manifest.CheckDowngrade(installedVersion); denial != nil {
+		return Evidence{}, denial
 	}
 	return Evidence{Version: manifest.Version, SHA256: digest, Size: size}, nil
+}
+
+// CheckDowngrade refuses a manifest whose release is older than the installed
+// version. An empty installedVersion disables the check.
+func (m *Manifest) CheckDowngrade(installedVersion string) *Denial {
+	if installedVersion == "" {
+		return nil
+	}
+	if order, ok := CompareVersions(m.Version, installedVersion); ok && order < 0 {
+		return &Denial{CodeDowngrade, fmt.Sprintf("version %s is older than the installed %s", m.Version, installedVersion)}
+	}
+	return nil
 }
 
 func decodeBundle(bundleJSON []byte) (verify.SignedEntity, error) {

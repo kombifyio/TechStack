@@ -160,7 +160,7 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 				http.Error(e.Response, "invalid edge authentication", http.StatusUnauthorized)
 				return nil
 			}
-			stepUp, stepUpBound, err := verifyEdgeSignature(e.Request, cfg)
+			stepUp, stepUpBound, emailVerified, err := verifyEdgeSignature(e.Request, cfg)
 			if err != nil {
 				slog.Warn("edge identity: signature verification failed", "error", err)
 				stripIdentityHeaders(e.Request)
@@ -184,6 +184,9 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 			}
 			e.Request = e.Request.WithContext(markEdgeAuthenticatedContext(e.Request.Context()))
 			id := identity.FromHeaders(e.Request.Header.Get)
+			// Only a verified v9 envelope signs email_verified together with
+			// the email; every other version leaves it false (fail closed).
+			id.EmailVerified = emailVerified && strings.TrimSpace(id.Email) != ""
 			if id.IsAuthenticated() {
 				ctx := identity.NewContext(e.Request.Context(), id)
 				e.Request = e.Request.WithContext(ctx)
@@ -267,6 +270,7 @@ func stripIdentityHeaders(r *http.Request) {
 	r.Header.Del("X-User-Plan")
 	r.Header.Del("X-User-Tier")
 	r.Header.Del(headerUserScope)
+	r.Header.Del(commonedgeauth.HeaderUserEmailVerified)
 	// Step-up headers are read only from a verified v7 envelope, into the
 	// request context (see step_up.go); the raw headers never reach handlers.
 	r.Header.Del(HeaderUserAMR)
@@ -282,7 +286,7 @@ func stripIdentityHeaders(r *http.Request) {
 }
 
 // attachSignedEdgeEntitlements copies only entitlements cryptographically
-// bound to a verified v2 or v7 (a v2 superset) Edge envelope into an immutable
+// bound to a verified v2, v7 or v9 (both v2 supersets) Edge envelope into an immutable
 // request-context set. V1 and shared-secret requests deliberately receive no
 // authorization grants.
 func attachSignedEdgeEntitlements(e *httpx.Event) error {
@@ -290,7 +294,9 @@ func attachSignedEdgeEntitlements(e *httpx.Event) error {
 		return nil
 	}
 	signature := strings.TrimSpace(e.Request.Header.Get(headerEdgeSignature))
-	if !strings.HasPrefix(signature, "v2=") && !strings.HasPrefix(signature, commonedgeauth.EdgeSignatureVersionV7+"=") {
+	if !strings.HasPrefix(signature, "v2=") &&
+		!strings.HasPrefix(signature, commonedgeauth.EdgeSignatureVersionV7+"=") &&
+		!strings.HasPrefix(signature, commonedgeauth.EdgeSignatureVersionV9+"=") {
 		return nil
 	}
 	raw := strings.TrimSpace(e.Request.Header.Get(commonedgeauth.HeaderEntitlements))
@@ -436,10 +442,12 @@ var edgeExpectedServices = []string{
 var edgeReplayGuard = commonedgeauth.NewMemoryReplayGuard(10*time.Minute, 0)
 
 // verifyEdgeSignature delegates HMAC envelope verification to the shared
-// go-common edgeauth verifier, which accepts v1, v2 and v7 signatures. The v2
-// payload additionally binds X-Kombify-Entitlements + X-Kombify-Knowledge-Tier
+// go-common edgeauth verifier, which accepts v1, v2, v7 and v9 signatures. The
+// v2 payload additionally binds X-Kombify-Entitlements + X-Kombify-Knowledge-Tier
 // so those headers cannot be forged downstream; v7 also binds the step-up
-// facts, which it returns with bound=true. Techstack no longer hand-rolls
+// facts, which it returns with bound=true; v9 also binds the Auth0
+// email_verified fact, returned as emailVerified (false for every other
+// version). Techstack no longer hand-rolls
 // the edge-signature crypto — go-common is the single source of truth for the
 // contract (platform/standards/EDGE-AUTH-RESPONSIBILITY-STANDARD.md), so the
 // Gateway flip from v1 to v2 is accepted here without a further code change.
@@ -447,7 +455,7 @@ var edgeReplayGuard = commonedgeauth.NewMemoryReplayGuard(10*time.Minute, 0)
 // The caller only invokes this after confirming X-Kombify-Edge-Auth is present
 // and supported, so RequireEdgeAuth is set; go-common performs the version
 // negotiation, timestamp-window, signed-path and dual-key-rotation checks.
-func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) (stepUp commonedgeauth.StepUpClaims, bound bool, err error) {
+func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) (stepUp commonedgeauth.StepUpClaims, bound bool, emailVerified bool, err error) {
 	commonCfg := commonedgeauth.Config{
 		Enabled:            true,
 		RequireEdgeAuth:    true,
@@ -465,11 +473,14 @@ func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) (stepUp common
 	commonedgeauth.Middleware(commonCfg)(http.HandlerFunc(func(_ http.ResponseWriter, accepted *http.Request) {
 		verified = true
 		stepUp, bound = commonedgeauth.StepUpFromContext(accepted.Context())
+		if id := identity.FromContext(accepted.Context()); id != nil {
+			emailVerified = id.EmailVerified
+		}
 	})).ServeHTTP(recorder, r)
 	if !verified {
-		return commonedgeauth.StepUpClaims{}, false, fmt.Errorf("edge signature rejected (status %d)", recorder.Code)
+		return commonedgeauth.StepUpClaims{}, false, false, fmt.Errorf("edge signature rejected (status %d)", recorder.Code)
 	}
-	return stepUp, bound, nil
+	return stepUp, bound, emailVerified, nil
 }
 
 func isSupportedEdgeAuthValue(value string) bool {

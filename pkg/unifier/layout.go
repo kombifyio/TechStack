@@ -149,7 +149,7 @@ func layoutNodeFromWorker(worker core.Worker, index int, ownerID string) layout.
 		ID: layoutNodeKey(worker, index), Name: firstNonEmptyRecommendation(worker.Name, worker.ID),
 		Operator: ownerID, TrustClass: layout.TrustOwnerControlled, State: layout.NodeConnected,
 		Capacity: layout.Resources{
-			CPUCores: float64(worker.Capabilities.CPU), RAMGB: float64(worker.Capabilities.RAM) / 1024, StorageGB: float64(worker.Capabilities.Disk),
+			CPUCores: float64(worker.Capabilities.CPU), RAMGB: float64(worker.Capabilities.RAM) / 1024, StorageGB: dataStorageGB(worker.Capabilities),
 		},
 		CapacitySource: "inventory",
 		Arch:           strings.ToLower(strings.TrimSpace(worker.Capabilities.Arch)),
@@ -165,10 +165,15 @@ func layoutNodeFromWorker(worker core.Worker, index int, ownerID string) layout.
 	}
 	if worker.UsageObserved || worker.Usage.RAM > 0 || worker.Usage.CPU > 0 || worker.Usage.Disk > 0 {
 		// Quantized so heartbeat noise does not change the snapshot digest.
+		// Root usage is not package data once that data lives on a larger volume.
+		usageStorage := float64(worker.Usage.Disk)
+		if volume, ok := placedDataVolume(worker.Capabilities); ok {
+			usageStorage = externalVolumeUsedGB(volume)
+		}
 		node.Usage = &layout.Resources{
 			CPUCores:  quantize(float64(worker.Usage.CPU), 0.25),
 			RAMGB:     quantize(float64(worker.Usage.RAM)/1024, 0.25),
-			StorageGB: quantize(float64(worker.Usage.Disk), 1),
+			StorageGB: quantize(usageStorage, 1),
 		}
 	} else {
 		node.Missing = append(node.Missing, "usage")

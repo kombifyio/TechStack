@@ -61,8 +61,6 @@ export interface V2WhoAmIResponse {
   email?: string;
   provider?: string;
   role?: string;
-  /** The release channel the person chose in kombify Cloud, when known. */
-  releaseChannel?: string;
 }
 
 export interface V2AuthProviderInfo {

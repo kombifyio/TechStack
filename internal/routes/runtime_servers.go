@@ -48,6 +48,14 @@ type ServerRuntimeRouteConfig struct {
 	// operations, isolation and update posture, credential generation) to the
 	// server read model. Nil leaves the section absent.
 	Workers ServerWorkerReader
+	// RoundTrips adds the persisted authenticated command/result round trip
+	// that the Connected readiness fact requires. Nil leaves every server
+	// without it, so none reads as Connected.
+	RoundTrips ServerRoundTripReader
+	// CurrentMTLSIdentity returns the client certificate serial of the
+	// worker's current mTLS session, empty without one. An mTLS round trip is
+	// verified only under the certificate that is connected now.
+	CurrentMTLSIdentity func(tenantID, workerID string) string
 	// CurrentMTLSCapabilities distinguishes a present transport with no ABI
 	// grant from an absent transport. HTTPS reports are considered only absent it.
 	CurrentMTLSCapabilities func(controlplane.ServerRuntime) ([]string, bool)
@@ -107,6 +115,8 @@ type serverRuntimeHandlers struct {
 	posture                 ServerPosture
 	postureEntitlements     EntitlementGate
 	workers                 ServerWorkerReader
+	roundTrips              ServerRoundTripReader
+	currentMTLSIdentity     func(tenantID, workerID string) string
 	currentMTLSCapabilities func(controlplane.ServerRuntime) ([]string, bool)
 	network                 *ServerNetworkRouteConfig
 	// availabilityReader and availabilityConfirmer back the node availability
@@ -235,6 +245,8 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 		store: cfg.Store, ports: cfg.PortInventory, detacher: cfg.Detacher, policy: cfg.Policy,
 		agentDisconnect: cfg.AgentDisconnect, now: cfg.Now, maintenance: newServerMaintenanceHandlers(cfg.Maintenance),
 		reach: cfg.Reach, posture: cfg.Posture, postureEntitlements: cfg.PostureEntitlements, workers: cfg.Workers,
+		roundTrips:              cfg.RoundTrips,
+		currentMTLSIdentity:     cfg.CurrentMTLSIdentity,
 		network:                 cfg.Network,
 		currentMTLSCapabilities: cfg.CurrentMTLSCapabilities,
 		walletWithdraw:          cfg.WalletWithdraw,

@@ -38,6 +38,25 @@ func readHandoff(dir, name string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(file, limit+1))
 }
 
+// readBounded reads one bounded regular file an operator named on the command
+// line. Unlike a handoff file it is not confined to a directory: the caller is
+// root acting for itself, not the unprivileged daemon.
+func readBounded(path string, limit int64) ([]byte, error) {
+	file, err := os.Open(path) // #nosec G304 -- a path the root operator names on the command line.
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if info.Size() > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, limit)
+	}
+	return io.ReadAll(io.LimitReader(file, limit+1))
+}
+
 // copyHandoff copies one handoff file into a file only root can reach and
 // returns its sha256. Everything after this point reads the private copy, so
 // the daemon cannot change the bytes between verification and installation.

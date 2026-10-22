@@ -4,7 +4,8 @@
  * A stacked application is managed, so its card offers more: Restart sits on
  * the card next to Back up now, Start, Stop and Update (when one is
  * available) in the "…" menu.
- * An unstacked application only offers "Stack it". Every action comes from
+ * An unstacked application only offers "Stack it", disabled with the
+ * backend's reason when adoption is withheld. Every action comes from
  * the backend's `allowed_actions` grant, so a card never shows an action the
  * control plane cannot run. Logs and Copy address are always in the menu.
  *
@@ -27,7 +28,7 @@ import { confirmInApp } from "../dialogs/in-app-dialog";
 import { tr } from "../i18n.svelte";
 import { serviceIsLocked } from "../service-card-adapter";
 import { applicationOpenUrl, isStackedApp } from "../dashboard/homelab-model";
-import { actionLabel } from "./application-actions";
+import { actionLabel, adoptionDeniedReason } from "./application-actions";
 import {
   ServiceActionTracker,
   isActionActive,
@@ -42,6 +43,11 @@ export interface AppCardAction {
   /** A management action, styled so a stacked card reads as more capable. */
   managed?: boolean;
   busy?: boolean;
+  /**
+   * Set when the backend withholds the action: the card keeps it, disabled
+   * with this reason, instead of silently dropping it.
+   */
+  disabledReason?: string;
   href?: string;
   onSelect?: () => void | Promise<void>;
 }
@@ -163,13 +169,27 @@ export function createAppQuickActions(options: {
       fanout("stop", Square, false);
     } else {
       const adoptable = granting(members, "adopt")[0];
+      const unstacked = members.find(
+        (member) => member.management_state === "observed",
+      );
+      const deniedReason =
+        !adoptable && unstacked ? adoptionDeniedReason(unstacked) : undefined;
       if (adoptable) {
+        // Opens the source-bound adoption plan on the services page.
         actions.push({
           id: "adopt",
           label: tr("ui.nodeRow.stackIt"),
           icon: Layers,
           direct: true,
           href: servicesHref(adoptable.id, "&adopt=1"),
+        });
+      } else if (deniedReason) {
+        actions.push({
+          id: "adopt",
+          label: tr("ui.nodeRow.stackIt"),
+          icon: Layers,
+          direct: true,
+          disabledReason: deniedReason,
         });
       }
     }

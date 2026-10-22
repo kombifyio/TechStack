@@ -29,7 +29,7 @@ features:
     description: "Phase 3+4: Worker Registry integration and system-info collection"
     status: implemented
     entry_point: "./pkg/grpcserver/server.go"
-    tests: "./pkg/grpcserver/server_test.go"
+    tests: null
 
   - id: "unified-spec"
     description: "Phase 5: UnifiedSpec generation with placement engine"

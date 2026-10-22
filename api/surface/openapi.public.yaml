@@ -2953,7 +2953,7 @@ paths:
       tags: [Workers]
       summary: Report kombify Guard host security and backup observations
       description: >-
-        The Guard's posture channel. A full report carries what the Guard observed through the privileged executor's read-only StackKits operations: the `stackkit.host-security-evidence/v1` document of `stackkit host security verify` and the receipt states of `stackkit backup status`. A check-in (`check_in: true`) carries nothing and only asks whether a fresh observation was requested. The identity is the authenticated worker's; the control plane recomputes the verdict from the controls, judges time by its own clock, and records a document it cannot read (unknown schema version, unknown control or state, bad freshness window) as `evidence_rejected`, which leaves no earlier pass standing. A StackKits release without the command is reported as `unsupported` and shows as `security.state: unknown` with `reason_code: stackkit_cli_unsupported`. The answer is the directive: `verify_requested` and the routine cadence. Editions without posture answer `state: disabled`.
+        The Guard's posture channel. A full report carries what the Guard observed through the privileged executor's read-only StackKits operations: the `stackkit.host-security-evidence/v1` document of `stackkit host security verify` and the receipt states of `stackkit backup status`. A check-in (`check_in: true`) carries nothing and only asks whether a fresh observation was requested. The identity is the authenticated worker's; the control plane recomputes the verdict from the controls, judges time by its own clock, and records a document it cannot read (unknown schema version, unknown control or state, bad freshness window) as `evidence_rejected`, which leaves no earlier pass standing. A StackKits release without the command is reported as `unsupported` and shows as `security.state: unknown` with `reason_code: stackkit_cli_unsupported`. The answer is the directive: `verify_requested` and the routine cadence, and while the owner's approval of automatic repair is active, `local_policy`: the signed grant of that policy version. Editions without posture answer `state: disabled`. The same channel carries the evidence of a repair the Guard ran on its own under a local policy while the control plane was unreachable (a body with `operation_id`, `GuardLocalOperationEvidence`). It is accepted only against the registered policy version it names (same tenant, worker and exact expiry, a credential generation no newer than the authenticating one, started inside that version's lifetime, for controls it covers, within the persisted cooldown, attempt budget and circuit breaker) and acknowledged only after it is recorded in the server's repair journal. An identical repeat is acknowledged again (`duplicate: true`); anything else is refused with a structured `reason` and leaves no record.
       security:
         - runtimeAgentAuth: []
       parameters:
@@ -2963,21 +2963,27 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/GuardPostureReport"
+              oneOf:
+                - $ref: "#/components/schemas/GuardPostureReport"
+                - $ref: "#/components/schemas/GuardLocalOperationEvidence"
       responses:
         "200":
-          description: The directive for the next observation
+          description: The directive for the next observation, or the acknowledgement of local-policy evidence
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   data:
-                    type: object
-                    properties:
-                      posture: {$ref: "#/components/schemas/GuardPostureDirective"}
+                    oneOf:
+                      - type: object
+                        properties:
+                          posture: {$ref: "#/components/schemas/GuardPostureDirective"}
+                      - $ref: "#/components/schemas/GuardLocalOperationAcknowledgement"
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {description: "Access token or proof not accepted"}
+        "403": {description: "Local-policy evidence of a stale credential generation, or started after the policy version ended (`reason`: stale_generation, authority_expired)"}
+        "409": {description: "Local-policy evidence refused (`reason`: local_policy_unregistered, local_policy_scope, local_evidence_invalid, repair_cooldown, repair_attempts_exhausted, repair_circuit_open, result_revision_conflict, result_revision_out_of_order, command_not_pending)"}
         "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /api/v1/workers/{id}/telemetry:
     post:
@@ -6574,8 +6580,8 @@ components:
       properties:
         id: {type: string}
         server_id: {type: string}
-        mode: {type: string, enum: [operator, auto]}
-        requested_by: {type: string, description: "The authenticated operator, or the owner who approved automatic repair."}
+        mode: {type: string, enum: [operator, auto, local], description: "local is a repair the Guard ran on its own under a local policy version and reported as evidence."}
+        requested_by: {type: string, description: "The authenticated operator, the owner who approved automatic repair, or `guard-local-policy:<policy_id>@v<version>`."}
         controls: {type: array, items: {type: string}}
         status:
           type: string
@@ -6597,6 +6603,16 @@ components:
         expires_at: {type: string, format: date-time}
         dispatched_at: {type: string, format: date-time}
         finished_at: {type: string, format: date-time}
+        local:
+          type: object
+          description: Set only for mode local.
+          properties:
+            operation_id: {type: string}
+            policy_id: {type: string}
+            policy_version: {type: integer, format: int64}
+            generation: {type: integer, format: int64}
+            revision: {type: integer, format: int64}
+            digest: {type: string}
     SecurityAutoRepairRequest:
       type: object
       additionalProperties: false
@@ -6666,6 +6682,107 @@ components:
           type: string
           description: Opaque token of the pending request. The Guard echoes it as `verify_request_id` in the report of the fresh observation it starts for the request; only that report answers it. A Guard that does not echo it keeps working, and its second report without the token answers the request.
         verify_interval_seconds: {type: integer, minimum: 0}
+        local_policy: {$ref: "#/components/schemas/GuardLocalRepairGrant"}
+    GuardLocalRepairGrant:
+      type: object
+      description: >-
+        The control plane's Ed25519-signed grant of the owner's current repair approval for this Guard (contract `guard.local-repair/v1`, signed with the worker's binding key the Guard pinned at pairing). Absent while no approval is active: the Guard then only observes. The Guard holds it in memory only and drops it on an answer without one. It admits a repair on its own only while the control plane is unreachable, for at most 15 minutes after `issued_at` (the command authority lifetime) and never past `policy_expires_at`, on a clock that agreed with `issued_at` at receipt and still continues from it; after a restart it only observes until a fresh online answer. The privileged executor verifies the signature, the operation ID and the lifetime again before it runs the typed StackKits host-security repair, at most once per operation.
+      required: [contract_version, policy_id, policy_version, tenant_id, worker_id, generation, action, controls, release, policy_expires_at, issued_at, bounds, history, key_id, signature]
+      properties:
+        contract_version: {type: string, enum: ["guard.local-repair/v1"]}
+        policy_id: {type: string}
+        policy_version: {type: integer, format: int64, minimum: 1}
+        tenant_id: {type: string}
+        worker_id: {type: string}
+        server_id: {type: string}
+        generation: {type: integer, format: int64, minimum: 1}
+        action: {type: string, enum: [stackkit.host-security-repair]}
+        controls:
+          type: array
+          items:
+            type: string
+            enum: [bruteforce.fail2ban, firewall.default_inbound, kernel.sysctl, updates.unattended_upgrades]
+        release:
+          type: object
+          required: [version, platform_os, platform_arch, archive_sha256, release_index_sha256]
+          properties:
+            version: {type: string}
+            platform_os: {type: string}
+            platform_arch: {type: string}
+            archive_sha256: {type: string}
+            release_index_sha256: {type: string}
+        policy_expires_at: {type: string, format: date-time}
+        issued_at: {type: string, format: date-time}
+        bounds:
+          type: object
+          required: [cooldown_seconds, max_attempts_per_day, breaker_failures, breaker_open_seconds]
+          properties:
+            cooldown_seconds: {type: integer, format: int64}
+            max_attempts_per_day: {type: integer}
+            breaker_failures: {type: integer}
+            breaker_open_seconds: {type: integer, format: int64}
+        history:
+          type: array
+          maxItems: 64
+          description: The server's most recent repairs, which the Guard counts toward the bounds together with its own unreported local repairs.
+          items:
+            type: object
+            required: [controls, requested_at]
+            properties:
+              operation_id: {type: string}
+              controls: {type: array, items: {type: string}}
+              requested_at: {type: string, format: date-time}
+              finished_at: {type: string, format: date-time}
+              failed: {type: boolean}
+        key_id: {type: string}
+        signature: {type: string}
+    GuardLocalOperationEvidence:
+      type: object
+      description: >-
+        Evidence of one repair a Guard ran on its own under a local policy version. The operation ID is Guard-generated and names the policy version (`local:<policy_id>:v<version>:<nonce>`). Each revision is immutable; `report.digest` covers every other field. A first revision is `terminal` or `outcome_unknown`; a later revision only resolves an `outcome_unknown` and names the digest it supersedes.
+      required: [operation_id, tenant_id, worker_id, generation, policy_id, policy_version, policy_expires_at, action, controls, started_at, report]
+      properties:
+        operation_id: {type: string, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$"}
+        tenant_id: {type: string}
+        worker_id: {type: string}
+        generation: {type: integer, format: int64, minimum: 1}
+        policy_id: {type: string}
+        policy_version: {type: integer, format: int64, minimum: 1}
+        policy_expires_at: {type: string, format: date-time}
+        action: {type: string, enum: [stackkit.host-security-repair]}
+        controls: {type: array, items: {type: string}}
+        started_at: {type: string, format: date-time}
+        report:
+          type: object
+          required: [revision, state, digest]
+          properties:
+            revision: {type: integer, format: int64, minimum: 1}
+            state: {type: string, enum: [terminal, outcome_unknown, resolved]}
+            digest: {type: string}
+            prior_digest: {type: string}
+            reason: {type: string, maxLength: 512}
+            resolution: {type: string, enum: [observed_converged, not_applied, operator_escalation]}
+            truncated: {type: boolean}
+        outcome: {type: string, pattern: "^[a-z0-9_]{1,64}$", description: "The stackkit.host-security-repair/v1 outcome of a terminal report."}
+        steps:
+          type: array
+          items:
+            type: object
+            required: [control, status]
+            properties:
+              control: {type: string}
+              status: {type: string}
+              reason_code: {type: string}
+    GuardLocalOperationAcknowledgement:
+      type: object
+      required: [command_id, revision, digest, accepted, acknowledged]
+      properties:
+        command_id: {type: string, description: "The operation ID of the acknowledged evidence."}
+        revision: {type: integer, format: int64}
+        digest: {type: string}
+        accepted: {type: boolean}
+        acknowledged: {type: boolean}
+        duplicate: {type: boolean, description: "True when an identical revision had already been recorded."}
     GuardTelemetryBatch:
       type: object
       additionalProperties: false

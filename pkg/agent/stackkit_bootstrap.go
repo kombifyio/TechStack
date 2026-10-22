@@ -78,6 +78,18 @@ type StackKitRuntimeBundle struct {
 	SHA256      string
 }
 
+// stackKitReleaseDownloadAttempts bounds how often a gateway answer (502, 503,
+// 504) to the release download is retried before the command fails.
+const stackKitReleaseDownloadAttempts = 3
+
+// stackKitReleaseDownloadRetryDelay is the base pause between those attempts;
+// the n-th retry waits n times as long.
+var stackKitReleaseDownloadRetryDelay = 2 * time.Second
+
+func stackKitReleaseGatewayStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+}
+
 // FetchStackKitRuntimeBundle downloads the bundle the authenticated control
 // plane currently publishes into cfg.StageDir (the system temp directory when
 // empty). It needs the Guard's credential and never installs anything, so an
@@ -90,23 +102,40 @@ func FetchStackKitRuntimeBundle(ctx context.Context, cfg StackKitRuntimeBootstra
 	if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname()))) {
 		return StackKitRuntimeBundle{}, fmt.Errorf("StackKits release URL must use HTTPS or loopback HTTP")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, nil)
-	if err != nil {
-		return StackKitRuntimeBundle{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(cfg.AgentToken))
-	request.Header.Set("X-Kombify-Runtime-Agent-ID", strings.TrimSpace(cfg.RuntimeAgentID))
-	request.Header.Set("X-Kombify-Tenant-ID", strings.TrimSpace(cfg.TenantID))
-	if len(installedDigest) == sha256.Size*2 {
-		request.Header.Set("If-None-Match", `"`+installedDigest+`"`)
-	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
-	response, err := client.Do(request)
-	if err != nil {
-		return StackKitRuntimeBundle{}, err
+	var response *http.Response
+	for attempt := 1; ; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, nil)
+		if err != nil {
+			return StackKitRuntimeBundle{}, err
+		}
+		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(cfg.AgentToken))
+		request.Header.Set("X-Kombify-Runtime-Agent-ID", strings.TrimSpace(cfg.RuntimeAgentID))
+		request.Header.Set("X-Kombify-Tenant-ID", strings.TrimSpace(cfg.TenantID))
+		if len(installedDigest) == sha256.Size*2 {
+			request.Header.Set("If-None-Match", `"`+installedDigest+`"`)
+		}
+		response, err = client.Do(request)
+		if err != nil {
+			return StackKitRuntimeBundle{}, err
+		}
+		if !stackKitReleaseGatewayStatus(response.StatusCode) || attempt >= stackKitReleaseDownloadAttempts {
+			break
+		}
+		// A gateway answer (the control plane restarting behind its proxy) is
+		// transient: close it unread (a stalled error body must not hold the
+		// retry for the client timeout) and ask again after a short pause.
+		_ = response.Body.Close()
+		timer := time.NewTimer(stackKitReleaseDownloadRetryDelay * time.Duration(attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return StackKitRuntimeBundle{}, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotModified {
@@ -523,10 +552,6 @@ func (executor *StackKitExecutor) currentStackKitRuntimeEvidence() (StackKitRunt
 func isLoopbackHost(host string) bool {
 	host = strings.TrimSpace(strings.ToLower(host))
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
-}
-
-func installStackKitRuntimeBundleValidated(bundlePath, targetRoot, bundleDigest string, validate func() error) error {
-	return installStackKitRuntimeBundleChecked(bundlePath, targetRoot, bundleDigest, nil, validate)
 }
 
 // installStackKitRuntimeBundleChecked extracts the bundle into a staging

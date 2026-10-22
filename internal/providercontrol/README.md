@@ -192,12 +192,3 @@ settings. Triggers compare that binding to the existing capability and use
 Caller-supplied timestamps therefore cannot steal or prematurely consume a
 live claim.
 
-Run the isolated PostgreSQL integration lane with:
-
-```text
-mise run test:providercontrol:postgres
-```
-
-It creates a unique schema and a temporary restricted runtime role, exercises
-concurrent coordinators, expiry takeover, token secrecy, raw-SQL bypass
-rejection, and tenant RLS, then removes only those generated test objects.

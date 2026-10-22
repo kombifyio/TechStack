@@ -140,6 +140,9 @@ type Host struct {
 	// Hardware is the machine-level sysfs/procfs probe (CPU level, GPU, media,
 	// disk and power class). Absent when the Guard has no probe or it read nothing.
 	Hardware *HostHardware `json:"hardware,omitempty"`
+	// Volumes are mounted filesystems other than the root disk. The root disk
+	// stays in DiskGB. Absent when the host has no separate data volume.
+	Volumes []HostVolume `json:"volumes,omitempty"`
 }
 
 type Service struct {
@@ -659,6 +662,7 @@ func collectHost(ctx context.Context, configuredPublicIP string) (Host, error) {
 		UptimeSeconds:    float64(info.Uptime),
 		SSHHostKeys:      observedSSHHostKeys(),
 		Network:          collectNetwork(ctx, firstNonEmpty(localIP, privateIP, publicIP)),
+		Volumes:          ObserveDataVolumes(ctx),
 	}, nil
 }
 

@@ -194,31 +194,39 @@ export function calculateRequirements(config: {
   };
 }
 
+const binaryPinPattern = /^[a-z0-9]+=[a-f0-9]{64}(,[a-z0-9]+=[a-f0-9]{64})*$/;
+
 /**
- * Generate worker installation command
+ * Generate worker installation command. binaryPin is the Guard binary pin set
+ * from getGuardBinaryPins; without a valid one there is no command, so the
+ * installer never runs unpinned.
  */
 export function generateInstallCommand(
   serverUrl: string,
   registrationToken: string,
-  lanPin = "",
+  lanPin: string,
+  binaryPin: string,
 ): string {
+  if (!binaryPinPattern.test(binaryPin)) return "";
   const baseUrl = normalizeWorkerInstallBaseUrl(serverUrl);
-  return linuxInstallCommand(baseUrl, registrationToken, lanPin);
+  return linuxInstallCommand(baseUrl, registrationToken, lanPin, binaryPin);
 }
 
 /**
  * A private-LAN bridge presents a self-signed key. curl and the installer
- * trust it only by the pin carried in the pasted command.
+ * trust it only by the pin carried in the pasted command. TECHSTACK_BINARY_SHA256
+ * makes install.sh refuse any Guard binary other than the pinned release.
  */
 function linuxInstallCommand(
   baseUrl: string,
   registrationToken: string,
   lanPin: string,
+  binaryPin: string,
 ): string {
   if (lanPin) {
-    return `curl -fsSL --insecure --pinnedpubkey "${lanPin}" ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" KOMBI_PRIVATE_LAN_PIN="${lanPin}" TECHSTACK_AS_SERVICE=1 bash`;
+    return `curl -fsSL --insecure --pinnedpubkey "${lanPin}" ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" KOMBI_PRIVATE_LAN_PIN="${lanPin}" TECHSTACK_BINARY_SHA256="${binaryPin}" TECHSTACK_AS_SERVICE=1 bash`;
   }
-  return `curl -fsSL ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" TECHSTACK_AS_SERVICE=1 bash`;
+  return `curl -fsSL ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" TECHSTACK_BINARY_SHA256="${binaryPin}" TECHSTACK_AS_SERVICE=1 bash`;
 }
 
 export function normalizeWorkerInstallBaseUrl(serverUrl: string): string {
@@ -240,12 +248,14 @@ export function normalizeWorkerInstallBaseUrl(serverUrl: string): string {
 export function generateInstallCommands(
   serverUrl: string,
   registrationToken: string,
-  lanPin = "",
+  lanPin: string,
+  binaryPin: string,
 ): { platform: string; command: string; description: string }[] {
+  if (!binaryPinPattern.test(binaryPin)) return [];
   const baseUrl = normalizeWorkerInstallBaseUrl(serverUrl);
   const linux = {
     platform: "linux",
-    command: linuxInstallCommand(baseUrl, registrationToken, lanPin),
+    command: linuxInstallCommand(baseUrl, registrationToken, lanPin, binaryPin),
     description: tr("ui.requirements.linuxRecommendedInstallsThePersistent"),
   };
   // The other paths cannot pin the bridge key, so a LAN bridge offers none.

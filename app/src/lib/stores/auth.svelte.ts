@@ -36,8 +36,6 @@ import {
   resolveLoginExperience,
 } from "#lib/auth/login-experience.js";
 import { clearReprojectionReauthMarker } from "#lib/api/session-reprojection.js";
-import { loadClientBootstrap } from "#lib/client/bootstrap.js";
-import { previewHopTarget } from "#lib/release-channel-hop.js";
 import {
   hasWindowsLocalClientContext,
   windowsLocalClientReturnUrl,
@@ -310,27 +308,12 @@ class AuthStore {
       this.cloudUser = v2WhoAmIToCloudUser(whoami);
       this.v2SessionActive = true;
       clearReprojectionReauthMarker();
-      void this.followChosenChannel(whoami.releaseChannel);
       return true;
     } catch {
       this.cloudUser = null;
       this.v2SessionActive = false;
       return false;
     }
-  }
-
-  /** Stable sends a person who chose Preview to Techstack's Preview. */
-  private async followChosenChannel(chosen: string | undefined): Promise<void> {
-    if (!browser || chosen !== "preview") return;
-    const bootstrap = await loadClientBootstrap();
-    const target = previewHopTarget({
-      chosen,
-      running: bootstrap.releaseChannel,
-      previewOrigin: bootstrap.previewOrigin,
-      href: window.location.href,
-      embedded: window.parent !== window,
-    });
-    if (target) window.location.replace(target);
   }
 
   /** Check for hosted OIDC callback params. */

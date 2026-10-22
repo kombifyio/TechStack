@@ -8,18 +8,9 @@ import (
 	"strings"
 )
 
-// The assigned wrapper retains its exact fixed identities and private helper.
-func InstallManagedTestApplicationCapabilities(ctx context.Context, tx *sql.Tx) error {
-	return installApplicationCapabilities(ctx, tx, ApplicationPrincipal{Role: ManagedTestApp, AuthorityOwner: ManagedTestOwner}, true)
-}
-
 // Production changes only the explicit application's direct capabilities.
 // PUBLIC/default/foreign-owner excess fails closed; no blanket custody reset.
 func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal ApplicationPrincipal) error {
-	return installApplicationCapabilities(ctx, tx, principal, false)
-}
-
-func installApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal ApplicationPrincipal, managed bool) error {
 	if err := principal.validate(); err != nil {
 		return err
 	}
@@ -27,13 +18,10 @@ func installApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 	if err := tx.QueryRowContext(ctx, "SELECT current_database(),current_user").Scan(&databaseName, &login); err != nil || login != principal.AuthorityOwner {
 		return fmt.Errorf("application grants require exact existing migration authority")
 	}
-	if managed && databaseName != ManagedTestDatabase {
-		return fmt.Errorf("assigned application grants require the original managed test database")
-	}
-	if err := verifyApplicationPrivileges(ctx, tx, principal, false, "", managed); err != nil {
+	if err := verifyApplicationPrivileges(ctx, tx, principal, false); err != nil {
 		return err
 	}
-	policy, err := loadApplicationPolicy(ctx, tx, true, "", managed)
+	policy, err := loadApplicationPolicy(ctx, tx, true)
 	if err != nil {
 		return err
 	}
@@ -65,19 +53,17 @@ func installApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 			return err
 		}
 	}
-	if !managed {
-		pin, pinned, err := ExpectedDatabaseIdentityFromEnv()
-		if err != nil {
-			return err
-		}
-		if !pinned || pin.SystemIdentifier == "" {
-			return fmt.Errorf("application preparation requires the exact physical identity pin")
-		}
-		if _, err = tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO "+role); err != nil {
-			return err
-		}
+	pin, pinned, err := ExpectedDatabaseIdentityFromEnv()
+	if err != nil {
+		return err
 	}
-	if err := verifyApplicationPrivileges(ctx, tx, principal, true, "", managed); err != nil {
+	if !pinned || pin.SystemIdentifier == "" {
+		return fmt.Errorf("application preparation requires the exact physical identity pin")
+	}
+	if _, err = tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO "+role); err != nil {
+		return err
+	}
+	if err := verifyApplicationPrivileges(ctx, tx, principal, true); err != nil {
 		return err
 	}
 	return nil

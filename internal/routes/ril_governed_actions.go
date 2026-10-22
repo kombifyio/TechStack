@@ -11,6 +11,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/denial"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/middleware"
 	"github.com/kombifyio/techstack/pkg/ril/actioncontract"
@@ -29,14 +30,19 @@ type GovernedActionRouteConfig struct {
 	Authority actions.Authority
 	Workflow  GovernedActionWorkflow
 	Policy    InventoryPolicy
-	Now       func() time.Time
+	// Servers is the owner-scoped server read: the card owner executes on
+	// their own server without a per-server grant (authorizeOwnerServerOperate).
+	Servers interface {
+		GetServerRuntime(ctx context.Context, tenantID, serverID string) (*controlplane.ServerRuntime, error)
+	}
+	Now func() time.Time
 }
 
 type governedActionHandler struct{ config GovernedActionRouteConfig }
 
 func RegisterGovernedActionRoutes(r *httpx.Router, config GovernedActionRouteConfig) {
-	if config.Authority == nil || config.Workflow == nil || config.Policy == nil {
-		panic("RegisterGovernedActionRoutes: authority, workflow, and inventory policy required")
+	if config.Authority == nil || config.Workflow == nil || config.Policy == nil || config.Servers == nil {
+		panic("RegisterGovernedActionRoutes: authority, workflow, inventory policy, and server store required")
 	}
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
@@ -146,7 +152,7 @@ func (h governedActionHandler) execute(e *httpx.Event) error {
 	if err != nil {
 		return writeGovernedActionError(e, err)
 	}
-	if err := authorizeInventoryServerOperate(e.Request.Context(), h.config.Policy, scope, card.ServerID); err != nil {
+	if err := authorizeOwnerServerOperate(e.Request.Context(), h.config.Policy, h.config.Servers, scope, card.ServerID); err != nil {
 		return writeGovernedActionError(e, err)
 	}
 	var body executeGovernedActionRequest

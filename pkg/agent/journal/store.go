@@ -368,10 +368,10 @@ func encodeRecord(rec record) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	buf := make([]byte, recHeaderLen+len(payload))
 	if len(payload) > math.MaxUint32 {
 		return nil, ErrEntryTooLarge
 	}
+	buf := make([]byte, recHeaderLen+len(payload))
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(len(payload))) // #nosec G115 -- bounded above.
 	binary.LittleEndian.PutUint32(buf[4:8], crc32.Checksum(payload, crcTable))
 	copy(buf[recHeaderLen:], payload)

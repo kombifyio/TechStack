@@ -260,7 +260,8 @@ func buildWizardRecommendationDecisionContext(request core.WizardRecommendationR
 		context.Environment.ComputeNodes = append(context.Environment.ComputeNodes, core.EnvironmentComputeNode{
 			ID: worker.ID, Name: worker.Name, Role: worker.Type, Provider: worker.Provider,
 			Status: status, CPU: worker.Capabilities.CPU, RAMMB: worker.Capabilities.RAM,
-			DiskGB: worker.Capabilities.Disk, Arch: worker.Capabilities.Arch, OS: worker.Capabilities.OS,
+			DiskGB: worker.Capabilities.Disk, Volumes: append([]core.StorageVolume(nil), worker.Capabilities.Volumes...),
+			Arch: worker.Capabilities.Arch, OS: worker.Capabilities.OS,
 			Source: "worker-registry", Tags: cloneRecommendationTags(worker.Tags),
 			GPU: worker.Capabilities.GPU, AMD64MicroarchitectureLevel: worker.Capabilities.AMD64MicroarchitectureLevel,
 		})

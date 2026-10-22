@@ -11,6 +11,8 @@ import (
 	"time"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
+	"github.com/kombifyio/techstack/pkg/grpcserver"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardposture"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/logger"
@@ -65,6 +67,9 @@ func bootGuardPosture(ctx context.Context, v2 *v2Boot, orch *orchestrator.Orches
 	if dispatcher := guardPostureRepairDispatcher(orch); dispatcher != nil {
 		cfg.Dispatcher = dispatcher
 	}
+	// A Guard's local repair runs on the release a managed Guard is admitted
+	// to run; without one no local repair grant is issued.
+	cfg.LocalRelease = guardLocalRepairRelease
 	service, err := guardposture.NewService(cfg)
 	if err != nil {
 		log.Warn("guard_posture_disabled", "reason", err.Error())
@@ -86,6 +91,20 @@ func guardPostureRepairDispatcher(orch *orchestrator.Orchestrator) guardposture.
 		return nil
 	}
 	return jobs.NewLazyHostSecurityRepairDispatcher(orch.StackKitCommander)
+}
+
+// guardLocalRepairRelease is the admitted managed-Guard StackKits release as a
+// local repair grant names it.
+func guardLocalRepairRelease() (*guardbinding.LocalReleasePin, error) {
+	release, err := jobs.CachedTargetStackKitRelease()
+	if err != nil || release == nil {
+		return nil, err
+	}
+	pin := grpcserver.StackKitReleasePinFor(*release)
+	return &guardbinding.LocalReleasePin{
+		Version: pin.GetVersion(), PlatformOS: pin.GetPlatformOs(), PlatformArch: pin.GetPlatformArch(),
+		ArchiveSHA256: pin.GetArchiveSha256(), ReleaseIndexSHA256: pin.GetReleaseIndexSha256(),
+	}, nil
 }
 
 func durationEnv(name string, fallback time.Duration) time.Duration {

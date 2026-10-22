@@ -3,7 +3,7 @@
   "product": "techstack",
   "source": {
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "2435b25038f5c58cd2d3eae70d71638443f5112e3b15679ce2ffee6e4ae349a2"
+    "sha256": "2df940ea806dd597aff31fc95180839c919ff56c071a0eac525697a6d26550bb"
   },
   "envelope": "data",
   "cli": {
@@ -15533,10 +15533,39 @@
                   "id": {
                     "type": "string"
                   },
+                  "local": {
+                    "description": "Set only for mode local.",
+                    "properties": {
+                      "digest": {
+                        "type": "string"
+                      },
+                      "generation": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "operation_id": {
+                        "type": "string"
+                      },
+                      "policy_id": {
+                        "type": "string"
+                      },
+                      "policy_version": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "revision": {
+                        "format": "int64",
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
                   "mode": {
+                    "description": "local is a repair the Guard ran on its own under a local policy version and reported as evidence.",
                     "enum": [
                       "operator",
-                      "auto"
+                      "auto",
+                      "local"
                     ],
                     "type": "string"
                   },
@@ -15548,7 +15577,7 @@
                     "type": "string"
                   },
                   "requested_by": {
-                    "description": "The authenticated operator, or the owner who approved automatic repair.",
+                    "description": "The authenticated operator, the owner who approved automatic repair, or `guard-local-policy:<policy_id>@v<version>`.",
                     "type": "string"
                   },
                   "server_id": {
@@ -15736,10 +15765,39 @@
             "id": {
               "type": "string"
             },
+            "local": {
+              "description": "Set only for mode local.",
+              "properties": {
+                "digest": {
+                  "type": "string"
+                },
+                "generation": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "operation_id": {
+                  "type": "string"
+                },
+                "policy_id": {
+                  "type": "string"
+                },
+                "policy_version": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "revision": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
             "mode": {
+              "description": "local is a repair the Guard ran on its own under a local policy version and reported as evidence.",
               "enum": [
                 "operator",
-                "auto"
+                "auto",
+                "local"
               ],
               "type": "string"
             },
@@ -15751,7 +15809,7 @@
               "type": "string"
             },
             "requested_by": {
-              "description": "The authenticated operator, or the owner who approved automatic repair.",
+              "description": "The authenticated operator, the owner who approved automatic repair, or `guard-local-policy:<policy_id>@v<version>`.",
               "type": "string"
             },
             "server_id": {
@@ -24741,7 +24799,7 @@
       "method": "POST",
       "path": "/api/v1/workers/{id}/posture",
       "summary": "Report kombify Guard host security and backup observations",
-      "description": "The Guard's posture channel. A full report carries what the Guard observed through the privileged executor's read-only StackKits operations: the `stackkit.host-security-evidence/v1` document of `stackkit host security verify` and the receipt states of `stackkit backup status`. A check-in (`check_in: true`) carries nothing and only asks whether a fresh observation was requested. The identity is the authenticated worker's; the control plane recomputes the verdict from the controls, judges time by its own clock, and records a document it cannot read (unknown schema version, unknown control or state, bad freshness window) as `evidence_rejected`, which leaves no earlier pass standing. A StackKits release without the command is reported as `unsupported` and shows as `security.state: unknown` with `reason_code: stackkit_cli_unsupported`. The answer is the directive: `verify_requested` and the routine cadence. Editions without posture answer `state: disabled`.",
+      "description": "The Guard's posture channel. A full report carries what the Guard observed through the privileged executor's read-only StackKits operations: the `stackkit.host-security-evidence/v1` document of `stackkit host security verify` and the receipt states of `stackkit backup status`. A check-in (`check_in: true`) carries nothing and only asks whether a fresh observation was requested. The identity is the authenticated worker's; the control plane recomputes the verdict from the controls, judges time by its own clock, and records a document it cannot read (unknown schema version, unknown control or state, bad freshness window) as `evidence_rejected`, which leaves no earlier pass standing. A StackKits release without the command is reported as `unsupported` and shows as `security.state: unknown` with `reason_code: stackkit_cli_unsupported`. The answer is the directive: `verify_requested` and the routine cadence, and while the owner's approval of automatic repair is active, `local_policy`: the signed grant of that policy version. Editions without posture answer `state: disabled`. The same channel carries the evidence of a repair the Guard ran on its own under a local policy while the control plane was unreachable (a body with `operation_id`, `GuardLocalOperationEvidence`). It is accepted only against the registered policy version it names (same tenant, worker and exact expiry, a credential generation no newer than the authenticating one, started inside that version's lifetime, for controls it covers, within the persisted cooldown, attempt budget and circuit breaker) and acknowledged only after it is recorded in the server's repair journal. An identical repeat is acknowledged again (`duplicate: true`); anything else is refused with a structured `reason` and leaves no record.",
       "tags": [
         "Workers"
       ],
@@ -24758,205 +24816,509 @@
           }
         },
         {
-          "name": "backup",
+          "name": "body",
           "in": "body",
-          "wireName": "backup",
-          "schema": {
-            "properties": {
-              "last_restore_at": {
-                "format": "date-time",
-                "type": "string"
-              },
-              "last_snapshot_at": {
-                "format": "date-time",
-                "type": "string"
-              },
-              "ready": {
-                "type": "boolean"
-              },
-              "reason_code": {
-                "pattern": "^[a-z0-9_]{1,64}$",
-                "type": "string"
-              },
-              "restore_state": {
-                "enum": [
-                  "recorded",
-                  "unverified",
-                  "clock-skew"
-                ],
-                "type": "string"
-              },
-              "snapshot_state": {
-                "enum": [
-                  "recorded",
-                  "unverified",
-                  "clock-skew"
-                ],
-                "type": "string"
-              },
-              "status": {
-                "enum": [
-                  "observed",
-                  "unsupported",
-                  "unavailable",
-                  "failed"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "status"
-            ],
-            "type": "object"
-          }
-        },
-        {
-          "name": "check_in",
-          "in": "body",
-          "wireName": "check_in",
-          "description": "A check-in carries no observation.",
-          "schema": {
-            "description": "A check-in carries no observation.",
-            "type": "boolean"
-          }
-        },
-        {
-          "name": "guard_signed",
-          "in": "body",
-          "wireName": "guard_signed",
-          "schema": {
-            "type": "boolean"
-          }
-        },
-        {
-          "name": "guard_version",
-          "in": "body",
-          "wireName": "guard_version",
-          "schema": {
-            "maxLength": 64,
-            "type": "string"
-          }
-        },
-        {
-          "name": "observed_at",
-          "in": "body",
-          "wireName": "observed_at",
           "required": true,
           "schema": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        {
-          "name": "schema_version",
-          "in": "body",
-          "wireName": "schema_version",
-          "required": true,
-          "schema": {
-            "enum": [
-              "kombify.guard-posture/v1"
-            ],
-            "type": "string"
-          }
-        },
-        {
-          "name": "security",
-          "in": "body",
-          "wireName": "security",
-          "schema": {
-            "properties": {
-              "evidence": {
-                "description": "The stackkit.host-security-evidence/v1 document (schemas/stackkit-host-security-evidence-v1.schema.json), at most 256 KiB.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "backup": {
+                    "properties": {
+                      "last_restore_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "last_snapshot_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "ready": {
+                        "type": "boolean"
+                      },
+                      "reason_code": {
+                        "pattern": "^[a-z0-9_]{1,64}$",
+                        "type": "string"
+                      },
+                      "restore_state": {
+                        "enum": [
+                          "recorded",
+                          "unverified",
+                          "clock-skew"
+                        ],
+                        "type": "string"
+                      },
+                      "snapshot_state": {
+                        "enum": [
+                          "recorded",
+                          "unverified",
+                          "clock-skew"
+                        ],
+                        "type": "string"
+                      },
+                      "status": {
+                        "enum": [
+                          "observed",
+                          "unsupported",
+                          "unavailable",
+                          "failed"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  "check_in": {
+                    "description": "A check-in carries no observation.",
+                    "type": "boolean"
+                  },
+                  "guard_signed": {
+                    "type": "boolean"
+                  },
+                  "guard_version": {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "observed_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "schema_version": {
+                    "enum": [
+                      "kombify.guard-posture/v1"
+                    ],
+                    "type": "string"
+                  },
+                  "security": {
+                    "properties": {
+                      "evidence": {
+                        "description": "The stackkit.host-security-evidence/v1 document (schemas/stackkit-host-security-evidence-v1.schema.json), at most 256 KiB.",
+                        "type": "object"
+                      },
+                      "reason_code": {
+                        "pattern": "^[a-z0-9_]{1,64}$",
+                        "type": "string"
+                      },
+                      "status": {
+                        "enum": [
+                          "observed",
+                          "unsupported",
+                          "unavailable",
+                          "failed"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  "source_epoch": {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "source_sequence": {
+                    "format": "int64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "verify_request_id": {
+                    "description": "The `verify_request_id` of the directive being answered. Set only on a report whose observation the Guard started after it received that directive; a routine observation carries none.",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "source_epoch",
+                  "source_sequence",
+                  "observed_at"
+                ],
                 "type": "object"
               },
-              "reason_code": {
-                "pattern": "^[a-z0-9_]{1,64}$",
-                "type": "string"
-              },
-              "status": {
-                "enum": [
-                  "observed",
-                  "unsupported",
-                  "unavailable",
-                  "failed"
+              {
+                "description": "Evidence of one repair a Guard ran on its own under a local policy version. The operation ID is Guard-generated and names the policy version (`local:<policy_id>:v<version>:<nonce>`). Each revision is immutable; `report.digest` covers every other field. A first revision is `terminal` or `outcome_unknown`; a later revision only resolves an `outcome_unknown` and names the digest it supersedes.",
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "stackkit.host-security-repair"
+                    ],
+                    "type": "string"
+                  },
+                  "controls": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "generation": {
+                    "format": "int64",
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "operation_id": {
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9._:-]+$",
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "description": "The stackkit.host-security-repair/v1 outcome of a terminal report.",
+                    "pattern": "^[a-z0-9_]{1,64}$",
+                    "type": "string"
+                  },
+                  "policy_expires_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "policy_id": {
+                    "type": "string"
+                  },
+                  "policy_version": {
+                    "format": "int64",
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "report": {
+                    "properties": {
+                      "digest": {
+                        "type": "string"
+                      },
+                      "prior_digest": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "maxLength": 512,
+                        "type": "string"
+                      },
+                      "resolution": {
+                        "enum": [
+                          "observed_converged",
+                          "not_applied",
+                          "operator_escalation"
+                        ],
+                        "type": "string"
+                      },
+                      "revision": {
+                        "format": "int64",
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "state": {
+                        "enum": [
+                          "terminal",
+                          "outcome_unknown",
+                          "resolved"
+                        ],
+                        "type": "string"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "revision",
+                      "state",
+                      "digest"
+                    ],
+                    "type": "object"
+                  },
+                  "started_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "steps": {
+                    "items": {
+                      "properties": {
+                        "control": {
+                          "type": "string"
+                        },
+                        "reason_code": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "control",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "tenant_id": {
+                    "type": "string"
+                  },
+                  "worker_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "operation_id",
+                  "tenant_id",
+                  "worker_id",
+                  "generation",
+                  "policy_id",
+                  "policy_version",
+                  "policy_expires_at",
+                  "action",
+                  "controls",
+                  "started_at",
+                  "report"
                 ],
-                "type": "string"
+                "type": "object"
               }
-            },
-            "required": [
-              "status"
-            ],
-            "type": "object"
-          }
-        },
-        {
-          "name": "source_epoch",
-          "in": "body",
-          "wireName": "source_epoch",
-          "required": true,
-          "schema": {
-            "maxLength": 64,
-            "type": "string"
-          }
-        },
-        {
-          "name": "source_sequence",
-          "in": "body",
-          "wireName": "source_sequence",
-          "required": true,
-          "schema": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        {
-          "name": "verify_request_id",
-          "in": "body",
-          "wireName": "verify_request_id",
-          "description": "The `verify_request_id` of the directive being answered. Set only on a report whose observation the Guard started after it received that directive; a routine observation carries none.",
-          "schema": {
-            "description": "The `verify_request_id` of the directive being answered. Set only on a report whose observation the Guard started after it received that directive; a routine observation carries none.",
-            "pattern": "^[A-Za-z0-9_-]{1,64}$",
-            "type": "string"
+            ]
           }
         }
       ],
       "body": {
         "contentType": "application/json",
         "required": true,
-        "mode": "properties"
+        "mode": "json"
       },
       "output": {
         "contentType": "application/json",
         "envelope": "data",
         "schema": {
-          "properties": {
-            "posture": {
+          "oneOf": [
+            {
               "properties": {
-                "state": {
-                  "description": "Present only where posture is off.",
-                  "enum": [
-                    "disabled"
-                  ],
-                  "type": "string"
-                },
-                "verify_interval_seconds": {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "verify_request_id": {
-                  "description": "Opaque token of the pending request. The Guard echoes it as `verify_request_id` in the report of the fresh observation it starts for the request; only that report answers it. A Guard that does not echo it keeps working, and its second report without the token answers the request.",
-                  "type": "string"
-                },
-                "verify_requested": {
-                  "type": "boolean"
+                "posture": {
+                  "properties": {
+                    "local_policy": {
+                      "description": "The control plane's Ed25519-signed grant of the owner's current repair approval for this Guard (contract `guard.local-repair/v1`, signed with the worker's binding key the Guard pinned at pairing). Absent while no approval is active: the Guard then only observes. The Guard holds it in memory only and drops it on an answer without one. It admits a repair on its own only while the control plane is unreachable, for at most 15 minutes after `issued_at` (the command authority lifetime) and never past `policy_expires_at`, on a clock that agreed with `issued_at` at receipt and still continues from it; after a restart it only observes until a fresh online answer. The privileged executor verifies the signature, the operation ID and the lifetime again before it runs the typed StackKits host-security repair, at most once per operation.",
+                      "properties": {
+                        "action": {
+                          "enum": [
+                            "stackkit.host-security-repair"
+                          ],
+                          "type": "string"
+                        },
+                        "bounds": {
+                          "properties": {
+                            "breaker_failures": {
+                              "type": "integer"
+                            },
+                            "breaker_open_seconds": {
+                              "format": "int64",
+                              "type": "integer"
+                            },
+                            "cooldown_seconds": {
+                              "format": "int64",
+                              "type": "integer"
+                            },
+                            "max_attempts_per_day": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "cooldown_seconds",
+                            "max_attempts_per_day",
+                            "breaker_failures",
+                            "breaker_open_seconds"
+                          ],
+                          "type": "object"
+                        },
+                        "contract_version": {
+                          "enum": [
+                            "guard.local-repair/v1"
+                          ],
+                          "type": "string"
+                        },
+                        "controls": {
+                          "items": {
+                            "enum": [
+                              "bruteforce.fail2ban",
+                              "firewall.default_inbound",
+                              "kernel.sysctl",
+                              "updates.unattended_upgrades"
+                            ],
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "generation": {
+                          "format": "int64",
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "history": {
+                          "description": "The server's most recent repairs, which the Guard counts toward the bounds together with its own unreported local repairs.",
+                          "items": {
+                            "properties": {
+                              "controls": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "failed": {
+                                "type": "boolean"
+                              },
+                              "finished_at": {
+                                "format": "date-time",
+                                "type": "string"
+                              },
+                              "operation_id": {
+                                "type": "string"
+                              },
+                              "requested_at": {
+                                "format": "date-time",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "controls",
+                              "requested_at"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 64,
+                          "type": "array"
+                        },
+                        "issued_at": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "key_id": {
+                          "type": "string"
+                        },
+                        "policy_expires_at": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "policy_id": {
+                          "type": "string"
+                        },
+                        "policy_version": {
+                          "format": "int64",
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "release": {
+                          "properties": {
+                            "archive_sha256": {
+                              "type": "string"
+                            },
+                            "platform_arch": {
+                              "type": "string"
+                            },
+                            "platform_os": {
+                              "type": "string"
+                            },
+                            "release_index_sha256": {
+                              "type": "string"
+                            },
+                            "version": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "platform_os",
+                            "platform_arch",
+                            "archive_sha256",
+                            "release_index_sha256"
+                          ],
+                          "type": "object"
+                        },
+                        "server_id": {
+                          "type": "string"
+                        },
+                        "signature": {
+                          "type": "string"
+                        },
+                        "tenant_id": {
+                          "type": "string"
+                        },
+                        "worker_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "contract_version",
+                        "policy_id",
+                        "policy_version",
+                        "tenant_id",
+                        "worker_id",
+                        "generation",
+                        "action",
+                        "controls",
+                        "release",
+                        "policy_expires_at",
+                        "issued_at",
+                        "bounds",
+                        "history",
+                        "key_id",
+                        "signature"
+                      ],
+                      "type": "object"
+                    },
+                    "state": {
+                      "description": "Present only where posture is off.",
+                      "enum": [
+                        "disabled"
+                      ],
+                      "type": "string"
+                    },
+                    "verify_interval_seconds": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "verify_request_id": {
+                      "description": "Opaque token of the pending request. The Guard echoes it as `verify_request_id` in the report of the fresh observation it starts for the request; only that report answers it. A Guard that does not echo it keeps working, and its second report without the token answers the request.",
+                      "type": "string"
+                    },
+                    "verify_requested": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
                 }
               },
               "type": "object"
+            },
+            {
+              "properties": {
+                "accepted": {
+                  "type": "boolean"
+                },
+                "acknowledged": {
+                  "type": "boolean"
+                },
+                "command_id": {
+                  "description": "The operation ID of the acknowledged evidence.",
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string"
+                },
+                "duplicate": {
+                  "description": "True when an identical revision had already been recorded.",
+                  "type": "boolean"
+                },
+                "revision": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "command_id",
+                "revision",
+                "digest",
+                "accepted",
+                "acknowledged"
+              ],
+              "type": "object"
             }
-          },
-          "type": "object"
+          ]
         }
       },
       "cli": {

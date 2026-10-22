@@ -1074,3 +1074,80 @@ func TestEdgeIdentityMiddleware_EdgeAuth_RejectsEnvelopeSignedForAnotherService(
 		t.Fatalf("status=%d want 401", rec.Code)
 	}
 }
+
+// signEdgeRequestV9 signs the v9 envelope: the v7 payload (issuer, AI and
+// resource context, principal/agent attestation, step-up facts) plus
+// X-User-Email-Verified, before timestamp and nonce (go-common edgeauth).
+func signEdgeRequestV9(t *testing.T, e *httpx.Event, secret string) {
+	t.Helper()
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	nonce := "test-nonce-v9-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
+	if e.Request.Header.Get(headerEdgeService) == "" {
+		e.Request.Header.Set(headerEdgeService, "techstack")
+	}
+	signedPath := e.Request.URL.RequestURI()
+	h := e.Request.Header.Get
+	payload := strings.Join([]string{
+		commonedgeauth.EdgeSignatureVersionV9, defaultEdgeKeyID, e.Request.Method, signedPath,
+		h(headerEdgeAuth), h(headerEdgeService), h(headerPublicPrefix),
+		h(commonedgeauth.HeaderUserIssuer),
+		h("X-User-ID"), h("X-Org-ID"), h("X-User-Email"), h("X-User-Tier"), h("X-User-Roles"), h("X-User-Scope"),
+		h(commonedgeauth.HeaderEntitlements), h(commonedgeauth.HeaderKnowledgeTier),
+		h(commonedgeauth.HeaderClientID), h(commonedgeauth.HeaderProductID), h(commonedgeauth.HeaderAIWorkload),
+		h(commonedgeauth.HeaderResourceScope),
+		h(commonedgeauth.HeaderPrincipalType), h(commonedgeauth.HeaderAgentID), h(commonedgeauth.HeaderAgentClass),
+		h(commonedgeauth.HeaderAgentPerimeter), h(commonedgeauth.HeaderAgentPolicy),
+		h(commonedgeauth.HeaderUserAMR), h(commonedgeauth.HeaderUserACR), h(commonedgeauth.HeaderUserAuthTime),
+		h(commonedgeauth.HeaderUserEmailVerified),
+		ts, nonce,
+	}, "\n")
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	e.Request.Header.Set(headerEdgeTimestamp, ts)
+	e.Request.Header.Set(headerEdgeNonce, nonce)
+	e.Request.Header.Set(headerEdgeSignedPath, signedPath)
+	e.Request.Header.Set(headerEdgeKeyID, defaultEdgeKeyID)
+	e.Request.Header.Set(headerEdgeSignature, commonedgeauth.EdgeSignatureVersionV9+"="+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
+}
+
+// Regression (kombify-Techstack-7kf0): only a verified v9 envelope that signs
+// email_verified=true carries Identity.EmailVerified; v9 keeps the signed
+// entitlements of v2/v7; an unsigned (v2) email-verified header is ignored and
+// stripped.
+func TestEdgeIdentityMiddleware_V9SignedEmailVerified(t *testing.T) {
+	mw := EdgeIdentityMiddlewareWithConfig(EdgeIdentityConfig{Mode: config.ModeSaaS, EdgeAuthSecret: testEdgeAuthSecret})
+	run := func(verifiedHeader string, sign func(*testing.T, *httpx.Event, string)) *httpx.Event {
+		e := newTestEvent("POST", "/v1/techstack/wizard/runs")
+		e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
+		e.Request.Header.Set("X-User-ID", "auth0|direct")
+		e.Request.Header.Set("X-User-Email", "direct@example.com")
+		e.Request.Header.Set(commonedgeauth.HeaderEntitlements, "managed.ionos")
+		e.Request.Header.Set(commonedgeauth.HeaderUserEmailVerified, verifiedHeader)
+		sign(t, e, testEdgeAuthSecret)
+		if err := mw(e); err != nil {
+			t.Fatalf("middleware error: %v", err)
+		}
+		if code := e.Response.(*httptest.ResponseRecorder).Code; code != 200 {
+			t.Fatalf("expected signed request to pass, got %d", code)
+		}
+		if got := e.Request.Header.Get(commonedgeauth.HeaderUserEmailVerified); got != "" {
+			t.Fatalf("raw email-verified header was not stripped: %q", got)
+		}
+		return e
+	}
+
+	e := run("true", signEdgeRequestV9)
+	if id := identity.FromContext(e.Request.Context()); id == nil || !id.EmailVerified || id.Email != "direct@example.com" {
+		t.Fatalf("v9 verified email not attached: %#v", id)
+	}
+	if ents, ok := SignedEntitlementsFromContext(e.Request.Context()); !ok || !ents.Has("managed.ionos") {
+		t.Fatalf("v9 signed entitlements dropped: %#v", ents)
+	}
+
+	if id := identity.FromContext(run("false", signEdgeRequestV9).Request.Context()); id == nil || id.EmailVerified {
+		t.Fatalf("v9 email_verified=false produced verified identity: %#v", id)
+	}
+	if id := identity.FromContext(run("true", signEdgeRequestV2).Request.Context()); id == nil || id.EmailVerified {
+		t.Fatalf("unsigned v2 email-verified header was trusted: %#v", id)
+	}
+}

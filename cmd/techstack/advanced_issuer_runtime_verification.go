@@ -24,7 +24,7 @@ func verifyAdvancedIssuerRuntime(ctx context.Context) error {
 }
 
 func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[string]any) error {
-	if os.Getenv(db.EnvMigrationDatabaseURL) != "" || os.Getenv(db.EnvManagedTestAdminDatabaseURL) != "" ||
+	if os.Getenv(db.EnvMigrationDatabaseURL) != "" ||
 		os.Getenv(db.EnvDatabaseMigrationMode) != "verify" || os.Getenv("TECHSTACK_ALLOW_DB_GENESIS") != "false" ||
 		strings.TrimSpace(os.Getenv("TECHSTACK_EXPECTED_DATABASE_IDENTITY")) == "" || len(os.Getenv("TECHSTACK_ENCRYPTION_KEY")) != 32 {
 		return errors.New("runtime verification requires physical identity, preserved wrapping custody, verify mode and no administrative credential or genesis")
@@ -81,29 +81,12 @@ func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[s
 	}
 	signingConfig := db.DefaultConfig()
 	signingConfig.Backend, signingConfig.DriverName, signingConfig.DSN = db.StoreBackendPostgres, db.PostgresDriverName, issuerDSN
-	var assignment *db.ManagedTestAssignment
-	if os.Getenv(db.EnvManagedTestAssignment) != "" {
-		a, err := db.LoadManagedTestAssignment()
-		if err != nil {
-			return err
-		}
-		assignment = a
-		signingConfig, err = db.ManagedTestConfig(*a, issuerDSN, db.ManagedTestIssuer)
-		if err != nil {
-			return err
-		}
-		if err = db.VerifyManagedTestApplicationPrivileges(ctx, application.DB, true); err != nil {
-			return err
-		}
+	owner, err := db.ApplicationAuthorityOwner(ctx, application.DB)
+	if err != nil {
+		return err
 	}
-	if assignment == nil {
-		owner, err := db.ApplicationAuthorityOwner(ctx, application.DB)
-		if err != nil {
-			return err
-		}
-		if err = db.VerifyApplicationPrivileges(ctx, application.DB, db.ApplicationPrincipal{Role: login, AuthorityOwner: owner}, true); err != nil {
-			return err
-		}
+	if err = db.VerifyApplicationPrivileges(ctx, application.DB, db.ApplicationPrincipal{Role: login, AuthorityOwner: owner}, true); err != nil {
+		return err
 	}
 	signing, err := db.OpenContext(ctx, signingConfig)
 	if err != nil {
@@ -113,12 +96,7 @@ func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[s
 	if err = db.VerifyExpectedDatabaseIdentity(ctx, signing.DB); err != nil {
 		return err
 	}
-	if assignment != nil {
-		err = db.VerifyManagedTestIssuerRuntimePrivileges(ctx, signing.DB, *assignment)
-	} else {
-		err = db.VerifyAdvancedIssuerRuntimePrivileges(ctx, signing.DB, issuerURL.User.Username(), login)
-	}
-	if err != nil {
+	if err = db.VerifyAdvancedIssuerRuntimePrivileges(ctx, signing.DB, issuerURL.User.Username(), login); err != nil {
 		return err
 	}
 	store, err := advancedissuer.NewPostgresStoreWithKeyCustody(application, signing, auth.GetEncryptor())
@@ -130,14 +108,10 @@ func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[s
 		return errors.New("governed installation signing preparation or retained wrapping custody is unavailable")
 	}
 	keyID := wire.KeyID(key.Public().(ed25519.PublicKey))
-	serviceID := ""
-	if assignment != nil {
-		serviceID = assignment.ServiceID
-	}
 	receipt := map[string]any{
 		"schema": "techstack.credential-preparation/v1", "operation": "verify", "status": "acknowledged", "source_sha": buildRevision,
 		"application_role": login, "signing_role": issuerURL.User.Username(), "database_identity": os.Getenv("TECHSTACK_EXPECTED_DATABASE_IDENTITY"),
-		"service_id":        serviceID,
+		"service_id":        "",
 		"application_admin": false, "application_key_read": false, "genesis": false, "migration_mode": "verify", "issuer_id": issuerID, "key_id": keyID,
 	}
 	for key, value := range evidence {

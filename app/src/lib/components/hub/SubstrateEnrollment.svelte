@@ -2,6 +2,7 @@
   import { tr } from "#lib/i18n.svelte.js";
   import { API_BASE, fetchApi } from "#lib/api/client.js";
   import { parseApiError } from "#lib/api/errors.js";
+  import { getGuardBinaryPins } from "#lib/api/workers.js";
 
   // A hypervisor belongs to the owner's infrastructure and may precede the
   // first deployment. Keep the old prop accepted for existing Hub callers.
@@ -21,6 +22,11 @@
     try {
       const origin = new URL(API_BASE || window.location.origin).origin;
       const shellOrigin = origin.replaceAll("'", "'\\''");
+      // Fail closed: without a trusted Guard binary digest there is no command.
+      const binaryPin = await getGuardBinaryPins();
+      if (!binaryPin) {
+        throw new Error(tr("ui.substrateEnrollment.aConnectionCommandCouldNot"));
+      }
       const result = await fetchApi<{ token: string; expires_at: string }>(
         "/api/v1/trust/pairing-tokens",
         {
@@ -41,7 +47,7 @@
         throw new Error(tr("ui.substrateEnrollment.aConnectionCommandCouldNot"));
       }
       // Only URL origins and the closed token alphabet enter the shell command.
-      command = `curl -fsSL '${shellOrigin}/install.sh' | KOMBI_SERVER='${shellOrigin}' KOMBI_TOKEN='${result.data.token}' TECHSTACK_AS_SERVICE=1 bash`;
+      command = `curl -fsSL '${shellOrigin}/install.sh' | KOMBI_SERVER='${shellOrigin}' KOMBI_TOKEN='${result.data.token}' TECHSTACK_BINARY_SHA256='${binaryPin}' TECHSTACK_AS_SERVICE=1 bash`;
       expiresAt = result.data.expires_at;
     } catch (cause) {
       error =

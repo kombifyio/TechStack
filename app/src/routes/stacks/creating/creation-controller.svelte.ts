@@ -35,6 +35,7 @@ import {
 } from "#lib/api/registry.js";
 import { getNetworks } from "#lib/discovery/api.js";
 import { getWorkerRegistryUrl } from "#lib/api/tunnel.js";
+import { getGuardBinaryPins } from "#lib/api/workers.js";
 import {
   resolveGuidance,
   retryDispatchFor,
@@ -185,6 +186,9 @@ let serverUrl = $state("");
 // The private-LAN bridge pin applies only while serverUrl is that bridge.
 let lanBridge = $state<{ url: string; pin: string } | null>(null);
 let lanPin = $derived(lanBridge && lanBridge.url === serverUrl ? lanBridge.pin : "");
+// The Guard binary pin set the install command carries; empty until the
+// control plane names a trusted digest, and no command is shown without it.
+let binaryPin = $state("");
 let copiedCommand = $state<string | null>(null);
 let copiedErrorDetails = $state(false);
 let showAllCommands = $state(false);
@@ -676,12 +680,12 @@ function syncTaskListForOperation() {
 // Generate install command
 let installCommand = $derived(
   showInstallCommand && registrationToken && serverUrl
-    ? generateInstallCommand(serverUrl, registrationToken, lanPin)
+    ? generateInstallCommand(serverUrl, registrationToken, lanPin, binaryPin)
     : "",
 );
 let allInstallCommands = $derived(
   showInstallCommand && registrationToken && serverUrl
-    ? generateInstallCommands(serverUrl, registrationToken, lanPin)
+    ? generateInstallCommands(serverUrl, registrationToken, lanPin, binaryPin)
     : [],
 );
 
@@ -1176,11 +1180,27 @@ function scheduleStreamRetry() {
   }, delay);
 }
 
+// loadBinaryPins fails closed: without a trusted Guard binary digest the
+// person sees why there is no command instead of an unpinned one.
+async function loadBinaryPins() {
+  try {
+    binaryPin = await getGuardBinaryPins();
+  } catch {
+    binaryPin = "";
+  }
+  if (!binaryPin && !pageDestroyed && showInstallCommand) {
+    pairingRecoveryError = tr(
+      "ui.substrateEnrollment.aConnectionCommandCouldNot",
+    );
+  }
+}
+
 async function recoverPairingCommand() {
   if (pairingRecoveryBusy || !stackId || !showInstallCommand) return;
   pairingRecoveryBusy = true;
   pairingRecoveryError = "";
   try {
+    if (!binaryPin) await loadBinaryPins();
     const job = await getJob(pairingJobId || jobId);
     const metadata = normalizeJobResult(job.result);
     const pairing = await renewNodePairing(stackId, metadata || {});
@@ -1898,6 +1918,7 @@ async function mount() {
   }
   serverUrl = bestUrl || window.location.origin;
   if (pageDestroyed) return;
+  void loadBinaryPins();
 
   if (jobId) {
     beginJobTracking();

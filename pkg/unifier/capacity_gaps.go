@@ -59,41 +59,103 @@ func capacityGaps(spec *core.KombinationSpec, inventory *core.EnvironmentInvento
 			largest = node
 		}
 	}
-	unmet := map[string]string{}
+	var loaded []loadedGoalFootprints
+	var all []stackkitrelease.WorkloadFootprint
 	for _, goal := range goals {
 		footprints, err := selectedFootprints(catalog, []string{goal}, profile, nil, nil)
 		if err != nil {
 			continue
 		}
-		for _, footprint := range footprints {
-			if floorMetByAny(footprint.HostFloor, reported) {
+		loaded = append(loaded, loadedGoalFootprints{id: goal, footprints: footprints})
+		all = append(all, footprints...)
+	}
+	selectionNeed := selectionStorageNeed(all)
+	computeGaps := map[string]string{}
+	diskGaps := map[string]string{}
+	for _, item := range loaded {
+		for _, footprint := range item.footprints {
+			if floorMetByAny(footprint.HostFloor, reported, selectionNeed) {
 				continue
 			}
-			unmet[goal] = fmt.Sprintf("%s needs a server with at least %s CPU cores, %s GB of memory and %s GB of disk; the largest connected server has %d cores, %s GB and %d GB.",
-				goal, trimNumber(footprint.HostFloor.MinCPUCores), trimNumber(footprint.HostFloor.MinRAMGB), trimNumber(footprint.HostFloor.MinStorageGB),
+			if cpuAndRAMMetByAny(footprint.HostFloor, reported) {
+				diskGaps[item.id] = externalStorageGapMessage(item.id, footprint.HostFloor, selectionNeed, largestCapableDiskGB(footprint.HostFloor, reported))
+				continue
+			}
+			computeGaps[item.id] = fmt.Sprintf("%s needs a server with at least %s CPU cores, %s GB of memory and %s GB of disk; the largest connected server has %d cores, %s GB and %d GB.",
+				item.id, trimNumber(footprint.HostFloor.MinCPUCores), trimNumber(footprint.HostFloor.MinRAMGB), trimNumber(footprint.HostFloor.MinStorageGB),
 				largest.CPU, trimNumber(float64(largest.RAMMB)/1024), largest.DiskGB)
 		}
 	}
-	ids := make([]string, 0, len(unmet))
-	for goal := range unmet {
-		ids = append(ids, goal)
+	for goal := range computeGaps {
+		delete(diskGaps, goal)
 	}
-	sort.Strings(ids)
-	for _, goal := range ids {
-		gaps = append(gaps, core.EnvironmentGap{
-			Code: "use_case_host_floor_unmet", Message: unmet[goal], Severity: "requirement", Source: "stackkits-release-footprints",
-		})
-	}
+	gaps = append(gaps, requirementGaps("use_case_host_floor_unmet", "stackkits-release-footprints", computeGaps)...)
+	gaps = append(gaps, requirementGaps("external_storage_required", "environment-inventory", diskGaps)...)
 	return gaps
 }
 
-func floorMetByAny(floor stackkitrelease.UseCaseHostFloor, nodes []core.EnvironmentComputeNode) bool {
+type loadedGoalFootprints struct {
+	id         string
+	footprints []stackkitrelease.WorkloadFootprint
+}
+
+func floorMetByAny(floor stackkitrelease.UseCaseHostFloor, nodes []core.EnvironmentComputeNode, selectionNeed float64) bool {
 	for _, node := range nodes {
-		if float64(node.CPU) >= floor.MinCPUCores && float64(node.RAMMB)/1024 >= floor.MinRAMGB && float64(node.DiskGB) >= floor.MinStorageGB {
+		if float64(node.CPU) >= floor.MinCPUCores && float64(node.RAMMB)/1024 >= floor.MinRAMGB && diskHolds(node, floor.MinStorageGB, selectionNeed) {
 			return true
 		}
 	}
 	return false
+}
+
+func cpuAndRAMMetByAny(floor stackkitrelease.UseCaseHostFloor, nodes []core.EnvironmentComputeNode) bool {
+	for _, node := range nodes {
+		if float64(node.CPU) >= floor.MinCPUCores && float64(node.RAMMB)/1024 >= floor.MinRAMGB {
+			return true
+		}
+	}
+	return false
+}
+
+// largestCapableDiskGB is the biggest internal disk among nodes that meet
+// this footprint's CPU and RAM. A large disk on a node that cannot run the
+// use case is not the disk the message asks the customer to extend.
+func largestCapableDiskGB(floor stackkitrelease.UseCaseHostFloor, nodes []core.EnvironmentComputeNode) int {
+	largest := 0
+	for _, node := range nodes {
+		if float64(node.CPU) >= floor.MinCPUCores && float64(node.RAMMB)/1024 >= floor.MinRAMGB && node.DiskGB > largest {
+			largest = node.DiskGB
+		}
+	}
+	return largest
+}
+
+func externalStorageGapMessage(goal string, floor stackkitrelease.UseCaseHostFloor, selectionNeed float64, diskGB int) string {
+	need := selectionNeed
+	if floor.MinStorageGB > need {
+		need = floor.MinStorageGB
+	}
+	if need > floor.MinStorageGB {
+		return fmt.Sprintf("%s needs %s GB of package data, and the selected use cases together need %s GB. The largest connected internal disk has %d GB. Connect an ext4, xfs, or btrfs drive with at least %s GB free. kombify does not format the drive.",
+			goal, trimNumber(floor.MinStorageGB), trimNumber(need), diskGB, trimNumber(need))
+	}
+	return fmt.Sprintf("%s needs %s GB of package data. The largest connected internal disk has %d GB. Connect an ext4, xfs, or btrfs drive with at least %s GB free. kombify does not format the drive.",
+		goal, trimNumber(need), diskGB, trimNumber(need))
+}
+
+func requirementGaps(code, source string, messages map[string]string) []core.EnvironmentGap {
+	ids := make([]string, 0, len(messages))
+	for goal := range messages {
+		ids = append(ids, goal)
+	}
+	sort.Strings(ids)
+	gaps := make([]core.EnvironmentGap, 0, len(ids))
+	for _, goal := range ids {
+		gaps = append(gaps, core.EnvironmentGap{
+			Code: code, Message: messages[goal], Severity: "requirement", Blocking: false, Source: source,
+		})
+	}
+	return gaps
 }
 
 func trimNumber(value float64) string {

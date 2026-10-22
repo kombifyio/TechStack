@@ -13,8 +13,9 @@ param(
 #
 # Env fallbacks (used when piped through iex, where -switches cannot be passed):
 #   $env:TECHSTACK_NO_INSTALL=1        # registration only, skip binary
+#   $env:TECHSTACK_REGISTRATION_ONLY=1 # legacy one-shot registration, no persistent Guard
 #   $env:TECHSTACK_AS_SERVICE=1        # install + register Windows Service
-#   $env:TECHSTACK_INSTALL_BINARY=1    # after worker bootstrap, also install the binary
+#   $env:TECHSTACK_INSTALL_BINARY=1    # install the server runtime binary
 #   $env:TECHSTACK_VERSION=v0.6.0      # pin a release (escape hatch)
 #   $env:TECHSTACK_ALLOW_STALE=1       # allow a release below the supported baseline
 #   $env:INSTALL_DIR=<path>            # override install directory
@@ -33,8 +34,7 @@ $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $env:L
 if ($env:TECHSTACK_NO_INSTALL -eq "1") { $NoInstall = $true }
 if ($env:TECHSTACK_AS_SERVICE -eq "1") { $Service = $true }
 if ($env:TECHSTACK_STAGE_ONLY -eq "1") { $StageOnly = $true }
-
-$script:WorkerRegistered = $false
+$RegistrationOnly = ($env:TECHSTACK_REGISTRATION_ONLY -eq "1") -or $NoInstall
 
 function Show-Usage {
     Write-Host "Usage: install.ps1 [-NoInstall] [-Service]"
@@ -43,6 +43,25 @@ function Show-Usage {
     Write-Host "  -NoInstall   Skip binary installation (registration only)"
     Write-Host "  -Service     Install and register a Windows Service"
     Write-Host "  -StageOnly   Stage the verified server runtime only; no PATH, service or enrollment changes"
+    Write-Host ""
+    Write-Host "A KOMBI_SERVER/KOMBI_TOKEN one-liner enrolls a managed server through the outbound HTTPS Guard,"
+    Write-Host "which is published for Linux; on Windows it stops before the pairing capability is redeemed."
+    Write-Host "Set TECHSTACK_REGISTRATION_ONLY=1 for the legacy one-shot registration behavior."
+}
+
+# Stop-UnsupportedManagedGuard refuses a managed enrollment before anything is
+# sent to the control plane. A managed server is enrolled only by the outbound
+# HTTPS Guard its control plane signs and serves, which persists the credential
+# atomically and resumes an interrupted redemption with a host-bound key. No
+# Windows Guard is published, and redeeming the one-time capability here would
+# consume it without persisting any credential, so the command must stay valid
+# for the supported Linux installer instead.
+function Stop-UnsupportedManagedGuard {
+    Write-Host "This command enrolls a managed server through the outbound HTTPS kombify Guard, which runs on Linux." -ForegroundColor Red
+    Write-Host "No Windows Guard is published, so nothing was sent to the control plane and the pairing capability was not redeemed." -ForegroundColor Yellow
+    Write-Host "Run the Linux command from the dashboard on the server instead; the capability stays valid until it expires."
+    Write-Host "Set `$env:TECHSTACK_REGISTRATION_ONLY='1' only for the legacy one-shot registration without a persistent Guard."
+    exit 1
 }
 
 function Register-WorkerIfEnvSet {
@@ -83,7 +102,6 @@ function Register-WorkerIfEnvSet {
         Write-Host "Worker registered but pending approval in the UI." -ForegroundColor Yellow
         Write-Host "Open the kombify Techstack dashboard and approve the worker to continue."
     }
-    $script:WorkerRegistered = $true
 }
 
 function Get-Arch {
@@ -249,15 +267,17 @@ Write-Host "   The Hybrid Infrastructure Unifier" -ForegroundColor Cyan
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 Write-Host ""
 
+$managedEnrollment = -not $StageOnly -and -not [string]::IsNullOrWhiteSpace($env:KOMBI_SERVER) -and -not [string]::IsNullOrWhiteSpace($env:KOMBI_TOKEN)
+if ($managedEnrollment) {
+    # Mirrors install.sh: the worker one-liner means a durable outbound HTTPS
+    # Guard, and the one-shot registration remains an explicit opt-in.
+    if (-not $RegistrationOnly) { Stop-UnsupportedManagedGuard }
+    Register-WorkerIfEnvSet
+    Write-Host "Worker registration completed, but persistent health monitoring is not installed." -ForegroundColor Yellow
+    return
+}
 if (-not $StageOnly -and $env:KOMBI_SERVER -and ($Service -or $env:TECHSTACK_INSTALL_BINARY -eq "1") -and -not $NoInstall) {
     throw "A managed Guard must come from its enrolling control plane's signed release. This public installer stages the server runtime; use the supported Linux Guard enrollment path."
-}
-if (-not $StageOnly) { Register-WorkerIfEnvSet }
-
-if ($script:WorkerRegistered -and -not $Service -and $env:TECHSTACK_INSTALL_BINARY -ne "1") {
-    Write-Host "Worker bootstrap complete." -ForegroundColor Green
-    Write-Host "Set `$env:TECHSTACK_INSTALL_BINARY='1' or pass -Service to also install the TechStack binary."
-    return
 }
 
 if ($NoInstall) {

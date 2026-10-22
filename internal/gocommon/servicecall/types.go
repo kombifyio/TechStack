@@ -1,7 +1,7 @@
 // Package servicecall provides authenticated service-to-service HTTP calls
 // within the kombify Render Private Network.
 //
-// Standards reference: kombify-Core/standards/API-FIRST-STANDARD.md §10.4.
+// Standards reference: platform/standards/API-FIRST-STANDARD.md §10.4.
 //
 // Why HS256 shared-secret and not Auth0 M2M:
 //   - Render Private Network is already isolated; auth here is for caller

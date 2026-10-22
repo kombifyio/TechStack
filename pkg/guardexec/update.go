@@ -334,9 +334,6 @@ func (u *Updater) authenticate(params StageParams, artifact, digest string) (str
 // revocation ever seen; the newest verified manifest also decides which StackKits
 // runtime may install.
 func (u *Updater) AuthenticateManifest(manifestFileName, bundleFileName string) (*guardrelease.Manifest, error) {
-	if u.cfg.Verifier == nil {
-		return nil, deny(CodeUnavailable, "the release verifier is not configured")
-	}
 	manifestRaw, err := readHandoff(u.cfg.HandoffDir, manifestFileName, maxManifestFile)
 	if err != nil {
 		return nil, err
@@ -345,19 +342,11 @@ func (u *Updater) AuthenticateManifest(manifestFileName, bundleFileName string) 
 	if err != nil {
 		return nil, err
 	}
-	manifest, err := u.cfg.Verifier.VerifyManifest(manifestRaw, manifestSig)
-	if err != nil {
-		return nil, asDenial(err)
-	}
 	u.floorMu.Lock()
 	defer u.floorMu.Unlock()
-	floor, err := u.loadFloor()
+	manifest, next, err := u.acceptManifest(manifestRaw, manifestSig)
 	if err != nil {
 		return nil, err
-	}
-	next, denial := floor.Accept(manifest)
-	if denial != nil {
-		return nil, &Denial{Code: denial.Code, Message: denial.Message}
 	}
 	// The floor is written before the cached manifest: a crash between the two
 	// leaves the stricter state.
@@ -371,6 +360,95 @@ func (u *Updater) AuthenticateManifest(manifestFileName, bundleFileName string) 
 		return nil, err
 	}
 	return manifest, nil
+}
+
+// acceptManifest verifies a manifest and applies the host's floor to it without
+// persisting anything. It returns the trusted manifest and the floor that
+// includes it; a manifest the floor refuses is returned with its denial. The
+// caller holds floorMu.
+func (u *Updater) acceptManifest(raw, bundle []byte) (*guardrelease.Manifest, guardrelease.Floor, error) {
+	if u.cfg.Verifier == nil {
+		return nil, guardrelease.Floor{}, deny(CodeUnavailable, "the release verifier is not configured")
+	}
+	manifest, err := u.cfg.Verifier.VerifyManifest(raw, bundle)
+	if err != nil {
+		return nil, guardrelease.Floor{}, asDenial(err)
+	}
+	floor, err := u.loadFloor()
+	if err != nil {
+		return nil, guardrelease.Floor{}, err
+	}
+	next, denial := floor.Accept(manifest)
+	if denial != nil {
+		return manifest, guardrelease.Floor{}, &Denial{Code: denial.Code, Message: denial.Message}
+	}
+	return manifest, next, nil
+}
+
+// platformDenial applies, in Stage's order, what a verified manifest decides for
+// this platform's artifact: presence, the manifest's version policy, the
+// downgrade guard and the host's accumulated floor.
+func (u *Updater) platformDenial(manifest *guardrelease.Manifest, floor guardrelease.Floor) *guardrelease.Denial {
+	entry, ok := manifest.Artifact(u.cfg.GOOS, u.cfg.GOARCH)
+	if !ok {
+		return &guardrelease.Denial{Code: guardrelease.CodeNotInManifest, Message: fmt.Sprintf("the release has no %s/%s artifact", u.cfg.GOOS, u.cfg.GOARCH)}
+	}
+	if denial := manifest.Admit(manifest.Version, entry.SHA256); denial != nil {
+		return denial
+	}
+	if denial := manifest.CheckDowngrade(u.cfg.CurrentVersion); denial != nil {
+		return denial
+	}
+	return floor.Admit(manifest.Version, entry.SHA256)
+}
+
+// ManifestAdmission is the read-only answer to "would this host admit the
+// release this signed manifest describes?".
+type ManifestAdmission struct {
+	Admitted         bool   `json:"admitted"`
+	Code             string `json:"code,omitempty"`
+	Message          string `json:"message,omitempty"`
+	InstalledVersion string `json:"installed_version"`
+	ManifestVersion  string `json:"manifest_version,omitempty"`
+}
+
+// CheckManifest runs the decision Stage takes for a release, from the signed
+// manifest alone: signature, freshness, the host's floor (manifest_superseded),
+// this platform's artifact, the version policy and the downgrade guard, against
+// the installed version. It reads the host's state and changes nothing: the
+// floor, the cached manifest, the status and every executable stay as they are.
+// A refusal is the returned decision; only an unreadable input or state is an
+// error.
+func (u *Updater) CheckManifest(manifestPath, bundlePath string) (ManifestAdmission, error) {
+	result := ManifestAdmission{InstalledVersion: u.cfg.CurrentVersion}
+	manifestRaw, err := readBounded(manifestPath, maxManifestFile)
+	if err != nil {
+		return result, err
+	}
+	manifestSig, err := readBounded(bundlePath, maxBundleFile)
+	if err != nil {
+		return result, err
+	}
+	u.floorMu.Lock()
+	defer u.floorMu.Unlock()
+	manifest, floor, err := u.acceptManifest(manifestRaw, manifestSig)
+	if manifest != nil {
+		result.ManifestVersion = manifest.Version
+	}
+	if err != nil {
+		var denied *Denial
+		if errors.As(err, &denied) {
+			result.Code, result.Message = denied.Code, denied.Message
+			return result, nil
+		}
+		return result, err
+	}
+	if denial := u.platformDenial(manifest, floor); denial != nil {
+		result.Code, result.Message = denial.Code, denial.Message
+		return result, nil
+	}
+	result.Admitted = true
+	return result, nil
 }
 
 // loadFloor reads the persisted manifest floor. A host that has none yet starts

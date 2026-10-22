@@ -1372,8 +1372,6 @@ export const screenMessages = {
     "ui.services.fetchLogs": "Fetch logs",
     "ui.services.freshnessValue": "Freshness: {value}",
     "ui.services.health": "Health",
-    "ui.services.importAsObserved": "Import as Observed",
-    "ui.services.importUnmanaged": "Import unmanaged",
     "ui.services.internalAddressOnlyOpenIt":
       "Internal address only; open it from the server network.",
     "ui.services.jobId": "job {id}",
@@ -1455,7 +1453,6 @@ export const screenMessages = {
     "ui.services.serviceLogCollectionDidNot":
       "Service log collection did not complete.",
     "ui.services.serviceLogsCouldNotBe": "Service logs could not be loaded.",
-    "ui.services.serviceMode": "Service mode",
     "ui.services.serviceRegistryCouldNotBe":
       "Service Registry could not be loaded.",
     "ui.services.services": "Services",
@@ -1489,8 +1486,6 @@ export const screenMessages = {
     "ui.services.type2": "Type",
     "ui.services.unclassifiedRuntimeComponentsAppearHere":
       "Unclassified runtime components appear here.",
-    "ui.services.unmanagedServiceCouldNotBe":
-      "Unmanaged service could not be imported.",
     "ui.services.uponYourManualVerificationThe":
       "Upon your manual verification, the old instance is deactivated and can be permanently removed.",
     "ui.services.url": "URL",
@@ -4146,8 +4141,6 @@ export const screenMessages = {
     "ui.services.fetchLogs": "Logs abrufen",
     "ui.services.freshnessValue": "Aktualität: {value}",
     "ui.services.health": "Health",
-    "ui.services.importAsObserved": "Als beobachtet importieren",
-    "ui.services.importUnmanaged": "Nicht Verwaltetes importieren",
     "ui.services.internalAddressOnlyOpenIt":
       "Nur interne Adresse; öffne sie aus dem Netzwerk des Servers.",
     "ui.services.jobId": "Job {id}",
@@ -4234,7 +4227,6 @@ export const screenMessages = {
       "Die Erfassung der Service-Logs wurde nicht abgeschlossen.",
     "ui.services.serviceLogsCouldNotBe":
       "Service-Logs konnten nicht geladen werden.",
-    "ui.services.serviceMode": "Service-Modus",
     "ui.services.serviceRegistryCouldNotBe":
       "Service Registry konnte nicht geladen werden.",
     "ui.services.services": "Services",
@@ -4268,8 +4260,6 @@ export const screenMessages = {
     "ui.services.type2": "Typ",
     "ui.services.unclassifiedRuntimeComponentsAppearHere":
       "Nicht klassifizierte Runtime-Komponenten erscheinen hier.",
-    "ui.services.unmanagedServiceCouldNotBe":
-      "Nicht verwalteter Service konnte nicht importiert werden.",
     "ui.services.uponYourManualVerificationThe":
       "Nach deiner manuellen Verifizierung wird die alte Instanz deaktiviert und kann dauerhaft entfernt werden.",
     "ui.services.url": "URL",

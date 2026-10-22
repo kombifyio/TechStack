@@ -7,7 +7,7 @@
 // (e.g. viewer/user/admin). Platform roles only apply in SaaS context via
 // Auth0; delivered to origins via the Cloudflare edge signed X-User-Roles header.
 //
-// Canonical SSOT: kombify-Core/standards/PLATFORM-CONSOLIDATION-PLAN.md §K1.
+// Canonical SSOT: platform/standards/PLATFORM-CONSOLIDATION-PLAN.md §K1.
 package role
 
 import "github.com/kombifyio/techstack/internal/gocommon/entitlements"
@@ -71,7 +71,7 @@ func (r Role) String() string {
 }
 
 // Plan represents a subscription plan (entitlement tier).
-// Canonical enum per kombify-Core/standards/ENTITLEMENTS-ARCHITECTURE.md §3 /
+// Canonical enum per platform/standards/ENTITLEMENTS-ARCHITECTURE.md §3 /
 // ENTITLEMENTS-ARCHITECTURE.md §12: anonymous, free, starter, pro, ayn.
 // Mirrors the Cloudflare edge normalizer
 // (kombify-Gateway/cloudflare-edge/src/entitlements.ts).

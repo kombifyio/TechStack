@@ -343,6 +343,9 @@ func (s *Server) GetAgent(id string) (*ConnectedAgent, bool) {
 // RemoveAgent removes an agent from the server.
 // Note: The agent's gRPC stream will be terminated when it next tries to communicate.
 func (s *Server) RemoveAgent(id string) error {
+	if s == nil {
+		return fmt.Errorf("agent gRPC server is not running; no connection to remove for %s", id)
+	}
 	s.agentsMu.Lock()
 	defer s.agentsMu.Unlock()
 

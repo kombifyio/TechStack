@@ -661,13 +661,6 @@ func providerControlRuntimeDatabaseConfigFromEnv() (db.Config, error) {
 			return db.Config{}, fmt.Errorf("provider-control runtime database configuration must not override role or session authority")
 		}
 	}
-	if os.Getenv(db.EnvManagedTestAssignment) != "" || parsed.Host == db.ManagedTestHost || parsed.Database == db.ManagedTestDatabase {
-		a, err := db.LoadManagedTestAssignment()
-		if err != nil {
-			return db.Config{}, err
-		}
-		return db.ManagedTestConfig(*a, dsn, db.ManagedTestProvider)
-	}
 	return db.Config{
 		Backend:         db.StoreBackendPostgres,
 		DSN:             dsn,
@@ -703,16 +696,6 @@ func verifyProviderControlRuntimeRolePosture(ctx context.Context, runtimeDatabas
 	// its catalog owner is the canonical authority, never the app session role.
 	if migrationIdentity.roleOID != migrationIdentity.authorityOwnerOID {
 		ownerOID := migrationIdentity.authorityOwnerOID
-		if os.Getenv(db.EnvManagedTestAssignment) != "" {
-			a, err := db.LoadManagedTestAssignment()
-			if err != nil {
-				return err
-			}
-			ownerOID, err = db.ManagedTestAuthorityOwnerOID(ctx, migrationDatabase, *a)
-			if err != nil {
-				return err
-			}
-		}
 		if ownerOID == migrationIdentity.roleOID || ownerOID == posture.identity.roleOID {
 			return fmt.Errorf("provider runtime authority must have a distinct canonical owner")
 		}
@@ -800,23 +783,6 @@ func validateProviderControlRuntimeAuthorityForOwner(posture providerControlRunt
 
 func loadProviderControlRuntimeRolePosture(ctx context.Context, database *sql.DB) (providerControlRuntimeRolePosture, error) {
 	return loadProviderControlPostureQuery(ctx, database, providerControlRuntimeRolePostureQuery)
-}
-
-// Preparation reads effective catalog capabilities for the existing provider
-// through the authenticated app/owner helper. This is not runtime impersonation;
-// the independent provider login must still pass the ordinary gate after commit.
-func loadProviderControlGrantCatalog(ctx context.Context, database providerControlPostureQuerier) (providerControlRuntimeRolePosture, error) {
-	query := strings.Replace(providerControlRuntimeRolePostureQuery, "WHERE runtime_role.rolname = current_user", "WHERE runtime_role.rolname = $1", 1)
-	return loadProviderControlPostureQuery(ctx, database, query, providerControlRuntimeRoleName)
-}
-
-func loadProviderControlGrantPreparationCatalog(ctx context.Context, database providerControlPostureQuerier) (providerControlRuntimeRolePosture, error) {
-	query := strings.Replace(providerControlRuntimeRolePostureQuery, "WHERE runtime_role.rolname = current_user", "WHERE runtime_role.rolname = $1", 1)
-	// Required EXECUTE is the diagnosed absent effect being prepared. Keep all
-	// structural owner/search-path/PUBLIC fences and forbid unexpected EXECUTE;
-	// the full unmodified predicate is required before commit and in runtime.
-	query = strings.Replace(query, "IS DISTINCT FROM boundary.runtime_executable", "AND NOT boundary.runtime_executable", 1)
-	return loadProviderControlPostureQuery(ctx, database, query, providerControlRuntimeRoleName)
 }
 
 type providerControlPostureQuerier interface {

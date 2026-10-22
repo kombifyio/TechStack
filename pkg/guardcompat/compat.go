@@ -157,6 +157,18 @@ const (
 	StaleAfter        = 90 * time.Second
 	OfflineAfter      = 5 * time.Minute
 	ReconnectTarget   = 60 * time.Second
+	// CommandRoundTripFreshness bounds how old the last authenticated
+	// command/result round trip under the current credential generation may be
+	// for the server to read as Connected. A heartbeat alone never does.
+	CommandRoundTripFreshness = 24 * time.Hour
+	// CommandRoundTripProbeAfter is how old the last round trip of a connected
+	// Guard may grow before the control plane sends it a read-only probe
+	// command (the typed host update plan). Real commands refresh the evidence
+	// too, so a busy Guard is never probed.
+	CommandRoundTripProbeAfter = 6 * time.Hour
+	// CommandRoundTripProbeInterval is how often the control plane looks for
+	// Guards whose round trip is due a probe.
+	CommandRoundTripProbeInterval = 15 * time.Minute
 )
 
 // Compile-time invariants of the contract: each expression underflows an
@@ -183,4 +195,10 @@ const (
 	// stale precedes offline.
 	_ = uint64(StaleAfter - 2*HeartbeatInterval)
 	_ = uint64(OfflineAfter - StaleAfter)
+	// A round trip is never fresher than the heartbeat that must accompany it.
+	_ = uint64(CommandRoundTripFreshness - OfflineAfter)
+	// A healthy idle Guard gets at least three probe attempts before its round
+	// trip goes stale, and a probe is looked for several times per window.
+	_ = uint64(CommandRoundTripFreshness - 3*CommandRoundTripProbeAfter - CommandRoundTripProbeInterval)
+	_ = uint64(CommandRoundTripProbeAfter - 4*CommandRoundTripProbeInterval)
 )

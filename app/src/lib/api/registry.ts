@@ -82,6 +82,12 @@ export interface CanonicalRuntimeTargetEvidence {
 /** One kombify Guard reach registration; `reason_code` names why it is not registered. */
 export interface CanonicalGuardReachTarget {
   state: "pending" | "registered" | "failed" | "revoked" | "not_enabled";
+  /**
+   * Whether readiness holds the server to this target: kombify_me applies only
+   * to an owner-published server, connect to every server of a tenant with a
+   * Connect namespace (published or private).
+   */
+  applicability?: "applicable" | "not_applicable";
   /** kombify.me address, set on the kombify_me target once registered. */
   address?: string;
   /** Connect techstack-node id, set on the connect target once registered. */
@@ -96,12 +102,7 @@ export interface CanonicalGuardReachTarget {
  */
 export interface CanonicalGuardReach {
   state:
-    | "not_enrolled"
-    | "pending"
-    | "failed"
-    | "ready"
-    | "revoked"
-    | "not_enabled";
+    "not_enrolled" | "pending" | "failed" | "ready" | "revoked" | "not_enabled";
   generation?: number;
   /** The owner's publication choice; nothing is published until enabled. */
   public?: {
@@ -112,7 +113,11 @@ export interface CanonicalGuardReach {
   };
   kombify_me: CanonicalGuardReachTarget;
   connect: CanonicalGuardReachTarget;
-  relay?: { state: "connecting" | "connected" | "denied" | "stopped"; reason_code?: string; reported_at?: string };
+  relay?: {
+    state: "connecting" | "connected" | "denied" | "stopped";
+    reason_code?: string;
+    reported_at?: string;
+  };
   updated_at: string;
 }
 
@@ -232,6 +237,15 @@ export interface CanonicalServerCapabilities {
     update_state?: string;
     update_version?: string;
     update_reason?: string;
+  };
+  /** Persisted Connected evidence; see GuardRoundTripEvidence. */
+  command_round_trip?: {
+    state: "verified" | "stale" | "superseded" | "absent";
+    reason_code?: string;
+    acknowledged_at?: string;
+    generation?: number;
+    /** `https` (bound HTTPS hub) or `mtls` (gRPC listener). */
+    transport?: "https" | "mtls";
   };
 }
 
@@ -651,19 +665,6 @@ export async function attachCatalogService(
     },
   );
   return normalizeRegistryService(res.data.service, "attach.service");
-}
-
-export async function importObservedService(
-  request: RegistryServiceMutationRequest,
-): Promise<RegistryService> {
-  const res = await fetchApi<{ service: RegistryServiceWire }>(
-    "/api/v1/registry/services/import",
-    {
-      method: "POST",
-      body: JSON.stringify(registryServiceMutationWire(request)),
-    },
-  );
-  return normalizeRegistryService(res.data.service, "import.service");
 }
 
 export async function migrateRegistryService(

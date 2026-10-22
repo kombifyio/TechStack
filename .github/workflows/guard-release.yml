@@ -192,14 +192,26 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      # Least privilege: Contents read on exactly the private module repos.
+      - name: Mint the CI App private-module read token
+        id: modules-token
+        if: steps.version.outputs.public != 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.KOMBIFY_CI_APP_ID }}
+          private-key: ${{ secrets.KOMBIFY_CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            kombify-go-common
+            kombify-runtime-contracts-go
+          permission-contents: read
+
       # The token lives only in this step's environment and a temporary git
       # config the script removes; later steps build from the verified cache.
       - name: Download Go modules
         shell: bash
         env:
-          # Use the existing dependency-release credential first: the legacy
-          # read token does not cover the newer private runtime-contracts repo.
-          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.KOMBIFY_CROSS_REPO_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.modules-token.outputs.token }}
           PUBLIC_PROFILE: ${{ steps.version.outputs.public }}
         run: |
           set -euo pipefail
@@ -209,7 +221,7 @@ jobs:
             unset GITHUB_TOKEN GOPRIVATE GONOSUMDB GONOPROXY
             go mod download
           else
-            test -n "${GITHUB_TOKEN:-}" || { echo "::error::Existing cross-repo read credential is required" >&2; exit 1; }
+            test -n "${GITHUB_TOKEN:-}" || { echo "::error::The CI App private-module read token is required" >&2; exit 1; }
             export GOPRIVATE=github.com/kombifyio/*
             node scripts/go-mod-download.mjs
           fi

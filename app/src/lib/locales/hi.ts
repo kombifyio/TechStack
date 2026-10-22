@@ -33,6 +33,10 @@ export const hi: Record<string, string> = {
   "ui.services.adoptionChecking": "सहेजे गए ऑपरेशन की जाँच हो रही है",
   "ui.services.adoptionFailed":
     "ऑपरेशन पूरा नहीं हुआ। दोबारा कोशिश करने से पहले उसके प्रमाण देखें।",
+  "ui.services.adoptionSourceIdentityUnavailable":
+    "इस एप्लिकेशन की अभी कोई सटीक कंटेनर पहचान नहीं है, इसलिए Stack it इसका स्रोत नहीं चुन सकता। इसके Node पर खोज रीफ़्रेश करें, फिर दोबारा कोशिश करें।",
+  "ui.services.adoptionReleaseUnavailable":
+    "इस Node से जुड़े Guard के पास अभी ऐसी कोई प्रकाशित StackKits रिलीज़ नहीं है जो इस एप्लिकेशन को अपना सके।",
   "ui.services.adoptionUnavailable":
     "अपनाने का आकलन करने के लिए इस स्रोत को कंटेनर की सटीक पहचान और जुड़े Guard पर StackKits का समर्थित प्रकाशित संस्करण चाहिए।",
   "ui.services.adoptionVerified":
@@ -2676,8 +2680,6 @@ export const hi: Record<string, string> = {
   "ui.services.fetchLogs": "लॉग प्राप्त करें",
   "ui.services.freshnessValue": "ताज़गी: {value}",
   "ui.services.health": "हेल्थ",
-  "ui.services.importAsObserved": "ऑब्ज़र्व्ड के रूप में इम्पोर्ट करें",
-  "ui.services.importUnmanaged": "अप्रबंधित इम्पोर्ट करें",
   "ui.services.internalAddressOnlyOpenIt": "केवल आंतरिक पता; इसे सर्वर के नेटवर्क से खोलिए।",
   "ui.services.jobId": "जॉब {id}",
   "ui.services.loadOlderLogs": "पुराने लॉग लोड करें",
@@ -2753,7 +2755,6 @@ export const hi: Record<string, string> = {
   "ui.services.serviceFallback": "सेवा",
   "ui.services.serviceLogCollectionDidNot": "सेवा लॉग का संग्रह पूरा नहीं हुआ।",
   "ui.services.serviceLogsCouldNotBe": "सेवा लॉग लोड नहीं हो सके।",
-  "ui.services.serviceMode": "सेवा मोड",
   "ui.services.serviceRegistryCouldNotBe": "Service Registry लोड नहीं हो सकी।",
   "ui.services.services": "सेवाएँ",
   "ui.services.servicesMode": "सेवाएँ मोड",
@@ -2782,8 +2783,6 @@ export const hi: Record<string, string> = {
   "ui.services.type2": "प्रकार",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
     "अवर्गीकृत रनटाइम कॉम्पोनेंट यहाँ दिखते हैं।",
-  "ui.services.unmanagedServiceCouldNotBe":
-    "अप्रबंधित सेवा इम्पोर्ट नहीं हो सकी।",
   "ui.services.uponYourManualVerificationThe":
     "आपके मैन्युअल सत्यापन के बाद पुराना इंस्टेंस निष्क्रिय हो जाता है और उसे स्थायी रूप से हटाया जा सकता है।",
   "ui.services.url": "URL",

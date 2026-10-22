@@ -97,7 +97,7 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.fact.bound.unknownNext":
     "انتظر التقرير التالي. إن لم يظهر فحدّث Guard على الخادم.",
 
-  "guard.fact.connected.ok": "يُبلِّغ Guard عبر اتصاله الموثَّق.",
+  "guard.fact.connected.ok": "أجاب Guard عن أمر عبر اتصاله الموثَّق.",
   "guard.fact.connected.degraded": "الاتصال متدهور.",
   "guard.fact.connected.offline":
     "لا يُبلِّغ Guard. الخادم غير متصل أو لا يستطيع الوصول إلى Techstack.",
@@ -111,6 +111,12 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
     "لا توجد حالة اتصال مُبلَّغ عنها لهذا الخادم.",
   "guard.fact.connected.reconnectNext":
     "تأكد من أن الخادم يعمل ويستطيع الوصول إلى Techstack.",
+  "guard.fact.connected.awaitingRoundTrip":
+    "يرسل Guard تقاريره، لكنه لم يُجب بعد عن أي أمر من Techstack ببيانات اعتماده الحالية.",
+  "guard.fact.connected.roundTripStale":
+    "يرسل Guard تقاريره، لكن آخر أمر أجاب عنه قديم جدًا أو أُجيب عنه ببيانات اعتماد سابقة.",
+  "guard.fact.connected.roundTripNext":
+    "تؤكد العملية التالية على هذا الخادم الاتصال؛ التقارير وحدها لا تكفي.",
 
   "guard.fact.operations.ok":
     "تُسجَّل العمليات بشكل دائم ولا يبقى شيء دون حسم.",

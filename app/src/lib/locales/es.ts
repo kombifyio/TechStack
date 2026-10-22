@@ -33,6 +33,10 @@ export const es: Record<string, string> = {
   "ui.services.adoptionChecking": "Comprobando la operación guardada",
   "ui.services.adoptionFailed":
     "La operación no se completó. Revisa sus evidencias antes de volver a intentarlo.",
+  "ui.services.adoptionSourceIdentityUnavailable":
+    "Esta aplicación aún no tiene una identidad exacta de contenedor, por lo que Stack it no puede seleccionar su origen. Actualiza la detección en su Node y vuelve a intentarlo.",
+  "ui.services.adoptionReleaseUnavailable":
+    "El Guard conectado a este Node aún no tiene una versión publicada de StackKits que pueda adoptar esta aplicación.",
   "ui.services.adoptionUnavailable":
     "Para evaluar la adopción, este origen necesita una identidad exacta del contenedor y una versión publicada de StackKits compatible en su Guard conectado.",
   "ui.services.adoptionVerified":
@@ -2741,8 +2745,6 @@ export const es: Record<string, string> = {
   "ui.services.fetchLogs": "Obtener registros",
   "ui.services.freshnessValue": "Frescura: {value}",
   "ui.services.health": "Salud",
-  "ui.services.importAsObserved": "Importar como observado",
-  "ui.services.importUnmanaged": "Importar no gestionados",
   "ui.services.internalAddressOnlyOpenIt": "Solo dirección interna; ábrela desde la red del servidor.",
   "ui.services.jobId": "trabajo {id}",
   "ui.services.loadOlderLogs": "Cargar registros anteriores",
@@ -2823,7 +2825,6 @@ export const es: Record<string, string> = {
     "La recopilación de registros del servicio no se completó.",
   "ui.services.serviceLogsCouldNotBe":
     "No se pudieron cargar los registros del servicio.",
-  "ui.services.serviceMode": "Modo de servicio",
   "ui.services.serviceRegistryCouldNotBe":
     "No se pudo cargar el Service Registry.",
   "ui.services.services": "Servicios",
@@ -2856,8 +2857,6 @@ export const es: Record<string, string> = {
   "ui.services.type2": "Tipo",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
     "Aquí aparecen los componentes de runtime sin clasificar.",
-  "ui.services.unmanagedServiceCouldNotBe":
-    "No se pudo importar el servicio no gestionado.",
   "ui.services.uponYourManualVerificationThe":
     "Tras tu verificación manual, la instancia antigua se desactiva y se puede eliminar de forma permanente.",
   "ui.services.url": "URL",

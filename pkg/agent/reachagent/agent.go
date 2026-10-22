@@ -242,9 +242,11 @@ func (a *Agent) apply(ctx context.Context, document *guardreach.Document) time.D
 }
 
 // acceptTarget refuses a relay target that is not this Guard's own binding on
-// an allowed relay host.
+// an allowed relay host, or that names no published loopback port: the relay
+// dials that port only, so a document without one stays dark.
 func (a *Agent) acceptTarget(target *guardreach.RelayTarget) bool {
 	if target.State != string(guardreach.TargetRegistered) || target.Generation < 1 ||
+		target.TargetPort < 1 || target.TargetPort > 65535 ||
 		target.WorkerID != a.cfg.WorkerID || target.ServerID != a.cfg.ServerID || target.TenantID != a.cfg.TenantID ||
 		!a.cfg.AllowRelayURL(target.RelayURL) {
 		a.log.Warn("guard_reach_relay_target_refused")

@@ -341,7 +341,7 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 			confirmGuardUpdateTrial(execution, log)
 			relay.Start()
 			startGuardReach(execCtx, cfg, enrollment, identity, manager, log)
-			startGuardPosture(execCtx, enrollment, identity, execution, log)
+			startGuardPosture(execCtx, custodyRoot, enrollment, identity, manager, execution, log)
 			startGuardTelemetry(execCtx, cfg, custodyRoot, enrollment, identity, execution, log)
 			if forwarder := newHTTPSNoticeForwarder(enrollment, identity); forwarder != nil {
 				startUserNotificationListener(execCtx, cfg, forwarder, log)

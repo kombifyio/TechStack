@@ -24,12 +24,14 @@ func isGuardExecutorMode(args []string) bool { return len(args) > 1 && args[1] =
 //	layout-trial  supervise the first run of the split layout
 //	recover  clear the recovery flag after an operator restored a verified Guard
 //	status   print the executor's status as JSON
+//	admission-check  --manifest F --bundle F: print, as JSON, whether this host would
+//	         admit the release a signed manifest describes (root, read-only)
 func runGuardExecutor(ctx context.Context, args []string) error {
 	if runtime.GOOS != "linux" {
 		return errors.New("the privileged executor is only available on Linux")
 	}
 	if len(args) == 0 {
-		return errors.New("usage: techstack guard-executor serve|trial|recover|status")
+		return errors.New("usage: techstack guard-executor serve|trial|recover|status|admission-check")
 	}
 	flags := flag.NewFlagSet("techstack guard-executor "+args[0], flag.ContinueOnError)
 	opts := guardexec.Options{Version: version}
@@ -39,6 +41,8 @@ func runGuardExecutor(ctx context.Context, args []string) error {
 	flags.StringVar(&opts.OperationsPath, "operations-path", envDefault("TECHSTACK_OPERATIONS_EXECUTABLE_PATH", ""), "installed StackKits operations executable")
 	flags.StringVar(&opts.GuardUser, "guard-user", envDefault("TECHSTACK_GUARD_USER", ""), "the daemon's system user")
 	trialID := flags.String("id", "", "update trial ID")
+	manifestPath := flags.String("manifest", "", "admission-check: signed release manifest (release-manifest.json)")
+	bundlePath := flags.String("bundle", "", "admission-check: its Sigstore bundle (release-manifest.sigstore.json)")
 	socket := flags.String("socket", envDefault("TECHSTACK_GUARD_EXECUTOR_SOCKET", guardexec.DefaultSocket), "executor socket for status")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -63,6 +67,12 @@ func runGuardExecutor(ctx context.Context, args []string) error {
 		return guardexec.RunLayoutTrial(ctx, opts, layoutTrialOptions(opts), *trialID, describeLayoutBudget(opts))
 	case "recover":
 		return guardexec.Recover(opts)
+	case "admission-check":
+		decision, err := guardexec.CheckManifestAdmission(opts, *manifestPath, *bundlePath)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(decision)
 	case "status":
 		var status guardexec.Status
 		if err := (&guardexec.Client{Socket: *socket}).CallInto(ctx, guardexec.OpStatus, nil, &status); err != nil {

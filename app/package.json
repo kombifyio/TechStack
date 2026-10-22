@@ -21,7 +21,7 @@
     "test:unit": "vitest run"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@kombify/notifications": "npm:@kombiverselabs/cloud-notifications@0.3.120",
     "@kombiverselabs/execution-contracts": "0.13.7",
     "@kombiverselabs/speechkit-voiceagent-client": "0.77.7",
@@ -32,18 +32,18 @@
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.19.1",
-    "eslint": "^9.39.5",
+    "eslint": "^10.13.0",
     "eslint-plugin-svelte": "^3.23.0",
     "globals": "^17.13.0",
     "jsdom": "^29.1.1",
     "prettier": "^3.9.9",
-    "prettier-plugin-svelte": "^3.5.2",
+    "prettier-plugin-svelte": "^4.1.1",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.1",
     "vite": "^8.3.4",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.5"
   },
   "dependencies": {
     "@auth0/auth0-spa-js": "^2.28.2",

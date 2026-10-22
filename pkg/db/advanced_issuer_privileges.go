@@ -39,7 +39,7 @@ const advancedIssuerKeyPrivilegesSQL = `SELECT
  has_table_privilege(r.oid,'public.advanced_issuer_keys','SELECT') AND has_table_privilege(r.oid,'public.advanced_issuer_keys','INSERT')
  FROM pg_catalog.pg_roles r WHERE r.rolname=$1`
 
-func inspectAdvancedIssuerKeyPrivileges(ctx context.Context, q ManagedTestPrivilegeQuerier, role, identityFunction string, requireGrants bool) error {
+func inspectAdvancedIssuerKeyPrivileges(ctx context.Context, q PrivilegeQuerier, role, identityFunction string, requireGrants bool) error {
 	var unsafe, allowed bool
 	if q == nil || role == "" {
 		return errors.New("advanced issuer custody principal is absent")
@@ -63,17 +63,6 @@ func inspectAdvancedIssuerKeyPrivileges(ctx context.Context, q ManagedTestPrivil
 // VerifyAdvancedIssuerRuntimePrivileges admits only signing-key custody.
 // Tenant tables and administrative/provider authority use other connections.
 func VerifyAdvancedIssuerRuntimePrivileges(ctx context.Context, database *sql.DB, expectedLogin, applicationLogin string) error {
-	return verifyAdvancedIssuerRuntimePrivileges(ctx, database, expectedLogin, applicationLogin, "")
-}
-
-func VerifyManagedTestIssuerRuntimePrivileges(ctx context.Context, database *sql.DB, a ManagedTestAssignment) error {
-	if err := VerifyManagedTestSession(ctx, database, a, ManagedTestIssuer); err != nil {
-		return err
-	}
-	return verifyAdvancedIssuerRuntimePrivileges(ctx, database, ManagedTestIssuer, ManagedTestApp, "public.techstack_test_database_identity()")
-}
-
-func verifyAdvancedIssuerRuntimePrivileges(ctx context.Context, database *sql.DB, expectedLogin, applicationLogin, identityFunction string) error {
 	if database == nil || expectedLogin == "" || applicationLogin == "" || expectedLogin == applicationLogin {
 		return errors.New("advanced issuer custody requires a distinct declared principal")
 	}
@@ -81,5 +70,5 @@ func verifyAdvancedIssuerRuntimePrivileges(ctx context.Context, database *sql.DB
 	if database.QueryRowContext(ctx, `SELECT current_user,session_user,current_schema()`).Scan(&login, &session, &schema) != nil || login != expectedLogin || session != login || schema != "public" {
 		return errors.New("advanced issuer custody has an unassigned principal or schema")
 	}
-	return inspectAdvancedIssuerKeyPrivileges(ctx, database, expectedLogin, identityFunction, true)
+	return inspectAdvancedIssuerKeyPrivileges(ctx, database, expectedLogin, "", true)
 }

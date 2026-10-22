@@ -17,7 +17,7 @@ features:
     description: "gRPC agent protocol (Register, Heartbeat, CommandStream, ReportStatus, RunPreChecks)"
     status: implemented
     entry_point: "./pkg/grpcserver/server.go"
-    tests: "./pkg/grpcserver/server_test.go"
+    tests: null
 
   - id: "mtls-certs"
     description: "mTLS certificate management (generation, validation, per-agent certs)"
@@ -35,7 +35,7 @@ features:
     description: "Bidirectional command streaming (Core↔Agent)"
     status: implemented
     entry_point: "./pkg/grpcserver/server.go"
-    tests: "./pkg/grpcserver/server_test.go"
+    tests: null
 
   - id: "iac-agent-exec"
     description: "OpenTofu + Terramate agent execution"
@@ -47,7 +47,7 @@ features:
     description: "Drift detection (scheduler + handler + UI)"
     status: implemented
     entry_point: "./pkg/jobs/drift_handler.go"
-    tests: "./pkg/jobs/drift_handler_test.go"
+    tests: null
 
   - id: "health-endpoints"
     description: "Health endpoints (/live, /ready, /startup)"

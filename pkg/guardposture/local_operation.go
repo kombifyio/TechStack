@@ -15,7 +15,7 @@ import (
 // LocalActionHostSecurityRepair is the only action a local repair policy
 // admits: the existing typed StackKits host-security repair of named controls.
 // There is no shell and no other executor behind a local policy.
-const LocalActionHostSecurityRepair = "stackkit.host-security-repair"
+const LocalActionHostSecurityRepair = guardbinding.LocalRepairAction
 
 // Denial codes of local-policy operation evidence, in addition to the shared
 // guardbinding codes and the repair bound codes (cooldown, attempts, breaker).

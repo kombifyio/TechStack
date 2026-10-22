@@ -9,13 +9,16 @@ package main
 // (covered in internal/routes inventory tests).
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
@@ -182,4 +185,165 @@ func TestSessionReprojectionMatrixEmitsTenantLabeledCounter(t *testing.T) {
 		observed[1] != (observation{tenant: "org_gone", outcome: "reauth_required"}) {
 		t.Fatalf("counter observations = %#v, want tenant-labeled recovered + reauth_required", observed)
 	}
+}
+
+// contextErrAuthStore answers GetMembership with a context error. Other
+// methods keep the empty-store behavior, so an owner-tenant bootstrap would
+// still be visible if the middleware treated the lookup as absence.
+type contextErrAuthStore struct {
+	stubAuthStore
+	err error
+}
+
+func (s *contextErrAuthStore) GetMembership(context.Context, string, string) (*controlplane.Membership, error) {
+	return nil, s.err
+}
+
+func sessionReprojectionReason(err error) string {
+	var apiErr *httpx.APIError
+	if !errors.As(err, &apiErr) {
+		return ""
+	}
+	details, _ := apiErr.Details.(map[string]any)
+	reason, _ := details["reason_code"].(string)
+	if reason == "" {
+		reason, _ = details["error_code"].(string)
+	}
+	if reason == "" && apiErr.Code == sessionreauth.ReasonCode {
+		reason = sessionreauth.ReasonCode
+	}
+	return reason
+}
+
+// A canceled or deadline-exceeded membership read is not proof the membership
+// is gone. The providers request that observed this on the public runtime
+// must keep its session cookie and must not be told to re-project.
+func TestCanceledMembershipLookupDoesNotReprojectSession(t *testing.T) {
+	t.Setenv(config.EnvReleaseChannel, "stable")
+	sessionreauth.Configure("techstack_session", false)
+	mgr := mustSessionManager(t)
+	claims := authsession.Claims{Subject: "auth0|user-1", TenantID: "org_alive"}
+
+	for _, lookupErr := range []error{
+		context.Canceled,
+		context.DeadlineExceeded,
+		fmt.Errorf("set tenant guc: %w", context.Canceled),
+	} {
+		t.Run(lookupErr.Error(), func(t *testing.T) {
+			sessionreauth.SetCounterHook(func(tenantID, outcome string) {
+				t.Errorf("reprojection counter tenant=%s outcome=%s", tenantID, outcome)
+			})
+			t.Cleanup(func() { sessionreauth.SetCounterHook(nil) })
+
+			store := &contextErrAuthStore{err: lookupErr}
+			event, recorder := sessionReprojectionTestEvent(t, mgr, claims)
+			event.Request.URL.Path = "/api/v2/auth/providers"
+
+			err := v2SessionIdentityMiddleware(&v2Boot{
+				session: mgr, authStore: store, defaultTenant: "default", cookieName: "techstack_session", saasMode: true,
+			})(event)
+			if err == nil {
+				t.Fatal("middleware returned nil, want interrupted lookup rather than a signed-in continuation")
+			}
+			if reason := sessionReprojectionReason(err); reason == sessionreauth.ReasonCode {
+				t.Fatalf("reason_code = %q, want no %s", reason, sessionreauth.ReasonCode)
+			}
+			var apiErr *httpx.APIError
+			if !errors.As(err, &apiErr) || apiErr.Status == http.StatusUnauthorized || apiErr.Code == sessionreauth.ReasonCode {
+				t.Fatalf("middleware error = %#v, want a non-401 interruption, not session denial", err)
+			}
+			if cookie := clearedSessionCookie(t, recorder); cookie != nil {
+				t.Fatalf("session cookie = %+v, want it left in place", cookie)
+			}
+			if id := identity.FromContext(event.Request.Context()); id != nil {
+				t.Fatalf("identity = %+v, want no signed-in projection after an interrupted lookup", id)
+			}
+			if len(store.tenants) != 0 || len(store.memberships) != 0 {
+				t.Fatalf("store mutated on interrupted lookup: tenants=%#v memberships=%#v", store.tenants, store.memberships)
+			}
+		})
+	}
+
+	t.Run("edge identity canceled lookup keeps cookie", func(t *testing.T) {
+		sessionreauth.SetCounterHook(func(tenantID, outcome string) {
+			t.Errorf("reprojection counter tenant=%s outcome=%s", tenantID, outcome)
+		})
+		t.Cleanup(func() { sessionreauth.SetCounterHook(nil) })
+
+		store := &contextErrAuthStore{err: context.Canceled}
+		event, recorder := sessionReprojectionTestEvent(t, mgr, claims)
+		event.Request.URL.Path = "/api/v2/auth/providers"
+		event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{
+			UserID: "auth0|user-1", OrgID: "org_alive",
+		}))
+
+		err := v2SessionIdentityMiddleware(&v2Boot{
+			session: mgr, authStore: store, defaultTenant: "default", cookieName: "techstack_session", saasMode: true,
+		})(event)
+		if err == nil {
+			t.Fatal("middleware returned nil, want interrupted lookup rather than a signed-in continuation")
+		}
+		if reason := sessionReprojectionReason(err); reason == sessionreauth.ReasonCode {
+			t.Fatalf("reason_code = %q, want no %s", reason, sessionreauth.ReasonCode)
+		}
+		var apiErr *httpx.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status == http.StatusUnauthorized || apiErr.Code == sessionreauth.ReasonCode {
+			t.Fatalf("middleware error = %#v, want a non-401 interruption, not session denial", err)
+		}
+		if cookie := clearedSessionCookie(t, recorder); cookie != nil {
+			t.Fatalf("session cookie = %+v, want it left in place", cookie)
+		}
+		if id := identity.FromContext(event.Request.Context()); id == nil || id.OrgID != "org_alive" {
+			t.Fatalf("identity = %+v, want the edge tenant left unrebound", id)
+		}
+		if len(store.tenants) != 0 || len(store.memberships) != 0 {
+			t.Fatalf("store mutated on interrupted lookup: tenants=%#v memberships=%#v", store.tenants, store.memberships)
+		}
+	})
+
+	t.Run("missing membership still denies", func(t *testing.T) {
+		store := &stubAuthStore{}
+		event, recorder := sessionReprojectionTestEvent(t, mgr, authsession.Claims{
+			Subject: "auth0|user-1", TenantID: "org_gone",
+		})
+		event.Request.URL.Path = "/api/v2/auth/providers"
+
+		err := v2SessionIdentityMiddleware(&v2Boot{
+			session: mgr, authStore: store, defaultTenant: "default", cookieName: "techstack_session", saasMode: false,
+		})(event)
+		var apiErr *httpx.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
+			t.Fatalf("middleware error = %v, want 401 session_reprojection_required", err)
+		}
+		if reason := sessionReprojectionReason(err); reason != sessionreauth.ReasonCode {
+			t.Fatalf("reason_code = %q, want %s", reason, sessionreauth.ReasonCode)
+		}
+		cookie := clearedSessionCookie(t, recorder)
+		if cookie == nil || cookie.Value != "" || cookie.MaxAge != -1 {
+			t.Fatalf("session cookie = %+v, want cleared techstack_session", cookie)
+		}
+	})
+
+	t.Run("inactive membership still denies", func(t *testing.T) {
+		store := &stubAuthStore{membership: &controlplane.Membership{
+			TenantID: "org_alive", UserID: "auth0|user-1", RoleKey: "member", Status: "inactive",
+		}}
+		event, recorder := sessionReprojectionTestEvent(t, mgr, claims)
+		event.Request.URL.Path = "/api/v2/auth/providers"
+
+		err := v2SessionIdentityMiddleware(&v2Boot{
+			session: mgr, authStore: store, defaultTenant: "default", cookieName: "techstack_session", saasMode: false,
+		})(event)
+		var apiErr *httpx.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
+			t.Fatalf("middleware error = %v, want 401 session_reprojection_required", err)
+		}
+		if reason := sessionReprojectionReason(err); reason != sessionreauth.ReasonCode {
+			t.Fatalf("reason_code = %q, want %s", reason, sessionreauth.ReasonCode)
+		}
+		cookie := clearedSessionCookie(t, recorder)
+		if cookie == nil || cookie.Value != "" || cookie.MaxAge != -1 {
+			t.Fatalf("session cookie = %+v, want cleared techstack_session", cookie)
+		}
+	})
 }

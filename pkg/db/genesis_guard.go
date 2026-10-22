@@ -97,16 +97,6 @@ func VerifyExpectedDatabaseIdentity(ctx context.Context, querier migrationTableQ
 	systemIdentifier := ""
 	if pin.SystemIdentifier != "" {
 		query := "SELECT system_identifier::text FROM pg_catalog.pg_control_system()"
-		if os.Getenv(EnvManagedTestAssignment) != "" {
-			a, err := LoadManagedTestAssignment()
-			if err != nil {
-				return err
-			}
-			if err := a.VerifyPin(); err != nil {
-				return err
-			}
-			query = "SELECT system_identifier FROM public.techstack_test_database_identity()"
-		}
 		if err := querier.QueryRowContext(
 			ctx,
 			query,

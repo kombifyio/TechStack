@@ -80,9 +80,10 @@ func withJobSentryScope(ctx context.Context, job *Job) (context.Context, func(er
 			flushSentryHub(hub)
 			panic(rec)
 		}
-		if err != nil {
+		if err != nil && !isOwnerHostRefusal(err) {
 			hub.WithScope(func(scope *sentry.Scope) {
 				scope.SetContext("job", jobSentryContext(job))
+				applyJobErrorContext(scope, err)
 				applyJobCorrelationTags(scope, job)
 				applyErrorDerivedCorrelation(scope, err)
 				if pe, ok := err.(*ProvisionError); ok {
@@ -149,7 +150,7 @@ func breadcrumbWait(ctx context.Context, stepID string, waited time.Duration, me
 // (e.g. a lease resolver error during a wait loop) that should be visible in
 // Sentry even when the step ultimately recovers and continues.
 func captureJobError(ctx context.Context, err error, extra map[string]interface{}) {
-	if err == nil {
+	if err == nil || isOwnerHostRefusal(err) {
 		return
 	}
 	hub := sentry.GetHubFromContext(ctx)
@@ -174,6 +175,25 @@ func captureJobError(ctx context.Context, err error, extra map[string]interface{
 		hub.CaptureException(errors.New(safeSentryText(err.Error())))
 	})
 	flushSentryHub(hub)
+}
+
+// applyJobErrorContext adds the redacted step, message and details a JobError
+// carries. Its message alone is often generic ("Drift check failed"); the
+// details name the cause.
+func applyJobErrorContext(scope *sentry.Scope, err error) {
+	var jobErr *JobError
+	if scope == nil || !errors.As(err, &jobErr) || len(jobErr.Context) == 0 {
+		return
+	}
+	fields := sentry.Context{}
+	for _, key := range []string{stepField, sentryMessageField, "details"} {
+		if value, ok := jobErr.Context[key].(string); ok && strings.TrimSpace(value) != "" {
+			fields[key] = safeSentryText(value)
+		}
+	}
+	if len(fields) > 0 {
+		scope.SetContext("job_error", fields)
+	}
 }
 
 func flushSentryHub(hub *sentry.Hub) {

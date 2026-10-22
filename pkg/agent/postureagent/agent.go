@@ -8,6 +8,13 @@
 // plane reads the evidence, recomputes the verdict and keeps the time. A
 // StackKits release without the command is reported as unsupported, which the
 // control plane shows as unknown, never as secure.
+//
+// With a LocalConfig it also holds the owner's signed local repair grant from
+// the latest answer, and when an observation cannot reach the control plane it
+// may repair drifted safe controls on its own under that grant (Guard G07):
+// for at most the offline lifetime after the grant's issue, on a clock it
+// still trusts, within the persisted bounds, and reported as evidence once the
+// control plane is reachable again. Without a current grant it only observes.
 package postureagent
 
 import (
@@ -24,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardexec"
 	"github.com/kombifyio/techstack/pkg/guardposture"
 )
@@ -68,6 +76,8 @@ type Config struct {
 	// path admits only signed releases.
 	Version string
 	Signed  func() bool
+	// Local enables bounded repair under a local policy; nil is observe-only.
+	Local *LocalConfig
 	// Interval and CheckIn override the cadences. Tests only.
 	Interval, CheckIn time.Duration
 	Logger            *slog.Logger
@@ -80,6 +90,13 @@ type Agent struct {
 	log      *slog.Logger
 	epoch    string
 	sequence int64
+
+	// held is the local repair grant of the latest online answer, in memory
+	// only; highestGeneration is the newest credential generation a grant
+	// named. lastSecurity is the latest host security observation.
+	held              *guardbinding.HeldLocalGrant
+	highestGeneration int64
+	lastSecurity      *guardposture.SecurityReport
 }
 
 // New validates the configuration.
@@ -99,6 +116,15 @@ func New(cfg Config) (*Agent, error) {
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if local := cfg.Local; local != nil {
+		if local.Repairer == nil || local.Ledger == nil {
+			return nil, errors.New("kombify Guard local repair needs a repairer and a ledger")
+		}
+		if local.Monotonic == nil {
+			anchor := time.Now()
+			local.Monotonic = func() time.Duration { return time.Since(anchor) }
+		}
 	}
 	random := make([]byte, 12)
 	if _, err := rand.Read(random); err != nil {
@@ -123,9 +149,11 @@ func (a *Agent) Run(ctx context.Context) {
 		now := a.cfg.Now()
 		var directive *guardposture.Directive
 		var err error
+		observed := false
 		if requested || lastObserved.IsZero() || now.Sub(lastObserved) >= interval {
 			withBackup := requested || lastBackup.IsZero() || now.Sub(lastBackup) >= 2*interval
 			directive, err = a.report(ctx, withBackup, requestID)
+			observed = true
 			if err == nil {
 				lastObserved = now
 				if withBackup {
@@ -136,6 +164,17 @@ func (a *Agent) Run(ctx context.Context) {
 			directive, err = a.send(ctx, guardposture.Report{CheckIn: true})
 		}
 		wait := a.cfg.CheckIn
+		var refused *statusError
+		if err != nil && observed && (!errors.As(err, &refused) || refused.status >= 500) {
+			// The control plane could not be reached with this observation:
+			// repair under the held local policy, if it still admits anything.
+			// An answer that refused the Guard is no outage.
+			a.localRepair(ctx, a.lastSecurity)
+		}
+		if err == nil {
+			a.receiveGrant(directive.LocalPolicy)
+			a.deliverLocal(ctx)
+		}
 		if err != nil {
 			failures++
 			wait = backoff(failures, a.cfg.CheckIn)
@@ -188,6 +227,7 @@ func (a *Agent) report(ctx context.Context, withBackup bool, requestID string) (
 	} else {
 		report.Security = SecurityReport(observation)
 	}
+	a.lastSecurity = report.Security
 	if withBackup {
 		if observation, err := a.cfg.Observer.BackupStatus(ctx); err != nil {
 			report.Backup = &guardposture.BackupReport{Status: guardposture.ObservationFailed, ReasonCode: reasonFor(err)}
@@ -210,29 +250,12 @@ func (a *Agent) send(ctx context.Context, report guardposture.Report) (*guardpos
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.URL, bytes.NewReader(body))
+	status, payload, err := a.post(ctx, body)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if token := strings.TrimSpace(a.cfg.AgentToken); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	if tenant := strings.TrimSpace(a.cfg.TenantID); tenant != "" {
-		req.Header.Set("X-Kombify-Tenant-ID", tenant)
-	}
-	response, err := a.cfg.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = response.Body.Close() }()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, responseMax))
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return nil, fmt.Errorf("control plane answered HTTP %d", response.StatusCode)
+	if status < 200 || status > 299 {
+		return nil, &statusError{status: status}
 	}
 	var envelope struct {
 		Data struct {
@@ -250,6 +273,38 @@ func (a *Agent) send(ctx context.Context, report guardposture.Report) (*guardpos
 		return &guardposture.Directive{VerifyIntervalSeconds: int(maxInterval / time.Second)}, nil
 	}
 	return &envelope.Data.Posture.Directive, nil
+}
+
+// statusError is an answer of the control plane outside 2xx.
+type statusError struct{ status int }
+
+func (e *statusError) Error() string { return fmt.Sprintf("control plane answered HTTP %d", e.status) }
+
+// post sends one body over the Guard's authenticated posture channel and
+// returns the bounded answer.
+func (a *Agent) post(ctx context.Context, body []byte) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.URL, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if token := strings.TrimSpace(a.cfg.AgentToken); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if tenant := strings.TrimSpace(a.cfg.TenantID); tenant != "" {
+		req.Header.Set("X-Kombify-Tenant-ID", tenant)
+	}
+	response, err := a.cfg.HTTPClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, responseMax))
+	if err != nil {
+		return 0, nil, err
+	}
+	return response.StatusCode, payload, nil
 }
 
 func reasonFor(err error) string {

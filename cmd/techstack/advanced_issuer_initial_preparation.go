@@ -35,16 +35,6 @@ func initializePreparedAdvancedIssuerIdentity(ctx context.Context, applicationCo
 	}
 	signingConfig := db.DefaultConfig()
 	signingConfig.Backend, signingConfig.DriverName, signingConfig.DSN = db.StoreBackendPostgres, db.PostgresDriverName, signingDSN
-	if os.Getenv(db.EnvManagedTestAssignment) != "" {
-		assignment, err := db.LoadManagedTestAssignment()
-		if err != nil {
-			return "", "", err
-		}
-		signingConfig, err = db.ManagedTestConfig(*assignment, signingDSN, db.ManagedTestIssuer)
-		if err != nil {
-			return "", "", err
-		}
-	}
 	signing, err := db.OpenContext(ctx, signingConfig)
 	if err != nil {
 		return "", "", err

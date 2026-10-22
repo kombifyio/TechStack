@@ -62,6 +62,7 @@ func unifierWorkerFromRecordAt(record controlplane.Worker, now time.Time) kscore
 	if hardware != nil {
 		applyHardwareFacts(&worker.Capabilities, hardware)
 	}
+	worker.Capabilities.Volumes = storageVolumesFromHost(host)
 	if record.LastSeenAt != nil && now.Sub(record.LastSeenAt.UTC()) <= unifierUsageFreshness {
 		worker.Usage, worker.UsageObserved = workerUsageFromHost(host, worker.Capabilities)
 	}
@@ -72,6 +73,50 @@ func unifierWorkerFromRecordAt(record controlplane.Worker, now time.Time) kscore
 		worker.Provider = "local"
 	}
 	return worker
+}
+
+// storageVolumesFromHost reads the Guard's data volumes back out of the stored
+// host map. Sanitize drops anything that is not a customer data filesystem.
+func storageVolumesFromHost(host map[string]any) []kscore.StorageVolume {
+	if host == nil {
+		return nil
+	}
+	raw, ok := host["volumes"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	parsed := make([]httpguard.HostVolume, 0, len(raw))
+	for _, item := range raw {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		external, _ := row["external"].(bool)
+		parsed = append(parsed, httpguard.HostVolume{
+			MountPoint: stringFromAny(row["mount_point"]),
+			SizeGB:     intFromAnyMap(row, "size_gb"),
+			FreeGB:     intFromAnyMap(row, "free_gb"),
+			Filesystem: stringFromAny(row["filesystem"]),
+			Label:      stringFromAny(row["label"]),
+			External:   external,
+		})
+	}
+	clean := httpguard.SanitizeHostVolumes(parsed)
+	if len(clean) == 0 {
+		return nil
+	}
+	out := make([]kscore.StorageVolume, 0, len(clean))
+	for _, volume := range clean {
+		out = append(out, kscore.StorageVolume{
+			MountPoint: volume.MountPoint,
+			SizeGB:     volume.SizeGB,
+			FreeGB:     volume.FreeGB,
+			Filesystem: volume.Filesystem,
+			Label:      volume.Label,
+			External:   volume.External,
+		})
+	}
+	return out
 }
 
 // applyHardwareFacts adds the Guard probe's machine facts to the capabilities.

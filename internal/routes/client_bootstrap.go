@@ -39,7 +39,6 @@ type clientBootstrapResponse struct {
 	PublicOrigin         string                   `json:"public_origin"`
 	ReleaseChannel       string                   `json:"release_channel"`
 	StableOrigin         string                   `json:"stable_origin"`
-	PreviewOrigin        string                   `json:"preview_origin"`
 	ContextDevLogolinkID string                   `json:"context_dev_logolink_id"`
 	Telemetry            clientBootstrapTelemetry `json:"telemetry"`
 }
@@ -66,7 +65,6 @@ func RegisterClientBootstrapRoutes(r *httpx.Router, version string, edition conf
 			PublicOrigin:         config.PublicOriginFromEnv(),
 			ReleaseChannel:       db.ReleaseChannel(),
 			StableOrigin:         stableOriginFromEnv(),
-			PreviewOrigin:        previewOriginFromEnv(normalizedMode),
 			ContextDevLogolinkID: firstNonEmptyEnv("PUBLIC_CONTEXT_DEV_LOGOLINK_ID", "CONTEXT_DEV_LOGOLINK_ID"),
 			Telemetry: clientBootstrapTelemetry{
 				Sentry: clientBootstrapSentry{
@@ -91,18 +89,6 @@ func firstNonEmptyEnv(keys ...string) string {
 		}
 	}
 	return ""
-}
-
-// previewOriginFromEnv is where stable sends a person who chose Preview;
-// empty on the preview deployment and outside SaaS.
-func previewOriginFromEnv(mode config.DeploymentMode) string {
-	if db.ReleaseChannel() == "preview" || !mode.IsSaaS() {
-		return ""
-	}
-	if origin := firstNonEmptyEnv("TECHSTACK_PREVIEW_ORIGIN"); origin != "" {
-		return origin
-	}
-	return "https://preview.techstack.kombify.io"
 }
 
 // stableOriginFromEnv is where the Preview badge links back to; empty unless

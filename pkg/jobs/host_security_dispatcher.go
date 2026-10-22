@@ -2,11 +2,8 @@ package jobs
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
@@ -21,10 +18,7 @@ const (
 	// hostSecurityRepairTimeout bounds the CLI; the Guard gets headroom on top.
 	hostSecurityRepairTimeout = 10 * time.Minute
 	hostSecurityRepairGrace   = time.Minute
-	hostSecurityRepairSchema  = "stackkit.host-security-repair/v1"
 )
-
-var hostSecurityReasonToken = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 
 // HostSecurityRepairDispatcher runs `stackkit host security repair --apply` on a
 // node's Guard through the typed StackKit command channel. The hub refuses a
@@ -115,64 +109,5 @@ func (d *HostSecurityRepairDispatcher) Repair(ctx context.Context, target guardp
 	if result == nil {
 		return guardposture.RepairResult{}, errors.New("host security repair returned no result")
 	}
-	return parseHostSecurityRepair(result)
-}
-
-type hostSecurityRepairDocument struct {
-	SchemaVersion string `json:"schema_version"`
-	Outcome       string `json:"outcome"`
-	Steps         []struct {
-		Control    string `json:"control"`
-		Status     string `json:"status"`
-		ReasonCode string `json:"reason_code"`
-	} `json:"steps"`
-}
-
-// parseHostSecurityRepair reads the stackkit.host-security-repair/v1 document
-// out of the command result. A document is bounded and closed to the known
-// vocabulary before it is stored; free text from the host never is.
-func parseHostSecurityRepair(result *agentpb.StackKitResult) (guardposture.RepairResult, error) {
-	var envelope struct {
-		Status string          `json:"status"`
-		Data   json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(result.CommandResultJson, &envelope); err != nil {
-		return guardposture.RepairResult{}, fmt.Errorf("decode host security repair result: %w", err)
-	}
-	var document hostSecurityRepairDocument
-	if json.Unmarshal(envelope.Data, &document) != nil || document.SchemaVersion != hostSecurityRepairSchema {
-		return guardposture.RepairResult{}, fmt.Errorf("host security repair returned no %s document (exit %d)", hostSecurityRepairSchema, result.ExitCode)
-	}
-	steps := make([]guardposture.RepairStep, 0, len(document.Steps))
-	for _, step := range document.Steps {
-		if len(steps) == len(stackkitcommand.HostSecurityControlIDs) || !stackkitcommand.ValidHostSecurityControl(step.Control) {
-			continue
-		}
-		status := strings.ToLower(strings.TrimSpace(step.Status))
-		switch status {
-		case "planned", "applied", "noop", "manual", "blocked", "failed":
-		default:
-			status = "failed"
-		}
-		reason := strings.ToLower(strings.TrimSpace(step.ReasonCode))
-		if !hostSecurityReasonToken.MatchString(reason) {
-			reason = ""
-		}
-		steps = append(steps, guardposture.RepairStep{Control: step.Control, Status: status, ReasonCode: reason})
-	}
-	switch envelope.Status {
-	case "success", "failed":
-		return guardposture.RepairResult{Outcome: document.Outcome, Steps: steps}, nil
-	case "denied":
-		code := "refused"
-		for _, step := range steps {
-			if step.Status == "blocked" && step.ReasonCode != "" {
-				code = step.ReasonCode
-				break
-			}
-		}
-		return guardposture.RepairResult{}, &guardposture.RepairRefusal{Code: code, Steps: steps}
-	default:
-		return guardposture.RepairResult{}, fmt.Errorf("host security repair status %q is unknown", envelope.Status)
-	}
+	return guardposture.ParseRepairResult(result)
 }
