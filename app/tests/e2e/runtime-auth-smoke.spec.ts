@@ -48,6 +48,18 @@ const INVENTORY_EXPECTATION = runtimeInventoryExpectation(process.env);
 const NIGHTLY =
   process.env.TECHSTACK_E2E_EXPECTED_CHANNEL?.trim() === "preview";
 
+// Data protection profile journey step (DATA-ARCHITECTURE.md §5.6). Set only
+// where the profile chain is switched on: "off" (Techstack verification off),
+// "standard", or the axes of the test user's profile joined by "+" ("eu",
+// "zero", "eu+zero"). The read goes through the Gateway, which signs the
+// profile; the product origin never carries one.
+const EXPECTED_DATA_PROFILE =
+  process.env.TECHSTACK_E2E_EXPECTED_DATA_PROFILE?.trim().toLowerCase() ?? "";
+const GATEWAY_TECHSTACK_BASE = (
+  process.env.TECHSTACK_E2E_GATEWAY_API_URL?.trim() ||
+  "https://api.kombify.io/v1/techstack"
+).replace(/\/+$/g, "");
+
 const allRoles: RuntimeAuthRole[] = ["oneliner", "remote", "cloud"];
 const roles = runtimeAuthRolesFromEnv(
   process.env.TECHSTACK_RUNTIME_E2E_AUTH_ROLES,
@@ -71,6 +83,7 @@ test.describe.serial("Runtime Auth0 smoke", () => {
         if (INVENTORY_EXPECTATION) {
           assertCanonicalDemoPrincipal(whoami.body);
         }
+        await verifyTestTenantBoundary(auth.token, whoami.body);
         if (NIGHTLY) {
           // Nightly admits only the stack list among owner reads until work
           // ownership is qualified and refuses inventory reads by design
@@ -81,6 +94,9 @@ test.describe.serial("Runtime Auth0 smoke", () => {
           await verifyOwnerActionCardDecision(auth.token, stacks.body);
         } else {
           await verifyCloudInventoryCore(page, auth.token);
+        }
+        if (EXPECTED_DATA_PROFILE) {
+          await verifyDataProfile(page, auth.token, EXPECTED_DATA_PROFILE);
         }
       }
     });
@@ -864,6 +880,54 @@ async function assertExpectedServicesInventory(
   }
 }
 
+async function verifyDataProfile(
+  page: import("@playwright/test").Page,
+  token: string,
+  expected: string,
+) {
+  const response = await fetch(`${GATEWAY_TECHSTACK_BASE}/data-profile`, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = (await response.json().catch(() => null)) as {
+    data?: Record<string, string>;
+    reason_code?: string;
+    error?: { code?: string };
+  } | null;
+  if (expected === "off") {
+    expect(response.status, "verification off answers 404").toBe(404);
+    expect(JSON.stringify(body)).toContain("not active on this deployment");
+    return;
+  }
+  expect(
+    response.status,
+    `data profile read: ${body?.reason_code ?? body?.error?.code ?? ""}`,
+  ).toBe(200);
+  const axes = new Set(expected === "standard" ? [] : expected.split("+"));
+  expect(body?.data).toMatchObject({
+    res: axes.has("eu") ? "eu" : "global",
+    ret: axes.has("zero") ? "zero" : "standard",
+    loc: "hosted",
+    source: "edge",
+  });
+  // The account menu shows the same profile.
+  await page.goto("/dashboard");
+  await page
+    .locator('[data-onboarding-anchor="user-menu"] button')
+    .first()
+    .click();
+  const status = page.getByTestId("data-profile-status");
+  await expect(status).toBeVisible();
+  await expect(status).toHaveAttribute(
+    "data-profile-res",
+    body?.data?.res ?? "",
+  );
+  await expect(status).toHaveAttribute(
+    "data-profile-ret",
+    body?.data?.ret ?? "",
+  );
+}
+
 async function authenticatedJSON(
   token: string,
   endpoint: string,
@@ -1014,6 +1078,66 @@ function requireRecord(value: unknown, label: string): Record<string, any> {
 
 function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// The shared cloud test identity is confined to a test tenant
+// (D-2026-10-22-02): its session is bound to one, and naming another tenant
+// never widens what it reads. Read-only, so it is safe on production.
+async function verifyTestTenantBoundary(token: string, body: unknown) {
+  const whoami = requireRecord(body, "cloud whoami");
+  const tenantID = String(whoami.tenantId ?? "").trim();
+  const testSubjects = [
+    process.env.TEST_RIL_PRO_USER_ID,
+    ...String(process.env.TECHSTACK_TEST_SUBJECTS ?? "").split(","),
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  const demoTenant = String(process.env.TECHSTACK_DEMO_TENANT_ID ?? "").trim();
+  const testTenants = new Set([
+    ...testSubjects.flatMap((subject) => [`usr:${subject}`, subject]),
+    ...(demoTenant ? [demoTenant] : []),
+  ]);
+  if (testTenants.size > 0) {
+    expect(
+      tenantID.startsWith("test:") || testTenants.has(tenantID),
+      `cloud test identity is bound to a non-test tenant`,
+    ).toBe(true);
+  } else {
+    test.info().annotations.push({
+      type: "test-tenant-boundary",
+      description:
+        "no test subject or demo tenant configured; tenant binding not asserted",
+    });
+  }
+
+  const own = await authenticatedJSON(token, "/api/v1/stacks");
+  expect(own.status).toBe(200);
+  const foreign = await authenticatedJSON(token, "/api/v1/stacks", {
+    headers: {
+      "X-Org-ID": "org_test_boundary_probe",
+      "X-Kombify-Tenant-ID": "org_test_boundary_probe",
+    },
+  });
+  if (foreign.status !== 403 && foreign.status !== 401) {
+    expect(foreign.status).toBe(200);
+    expect(stackIDs(foreign.body)).toEqual(stackIDs(own.body));
+  }
+}
+
+function stackIDs(body: unknown): string[] {
+  const record = (body ?? {}) as Record<string, unknown>;
+  const data = record.data ?? record.items ?? body;
+  const items = Array.isArray(data)
+    ? data
+    : Array.isArray((data as Record<string, unknown> | null)?.items)
+      ? ((data as Record<string, unknown>).items as unknown[])
+      : [];
+  return items
+    .map((item) =>
+      String((item as Record<string, unknown> | null)?.id ?? "").trim(),
+    )
+    .filter(Boolean)
+    .sort();
 }
 
 function assertCanonicalDemoPrincipal(body: unknown) {

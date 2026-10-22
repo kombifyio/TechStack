@@ -34,12 +34,14 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/auth/sessionpolicy"
+	"github.com/kombifyio/techstack/pkg/auth/testidentity"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/demoguard"
 	"github.com/kombifyio/techstack/pkg/enrollment"
 	"github.com/kombifyio/techstack/pkg/features"
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/guardposture"
 	"github.com/kombifyio/techstack/pkg/guardreach"
@@ -186,6 +188,13 @@ var runHostedProviderControlBootstrap = func(context.Context) error {
 
 func runTechstack(ctx context.Context) error {
 	const defaultHTTPAddr = ":5260"
+	// The data protection profile is read before any mode, client or telemetry
+	// exporter exists: under Full Local nothing may be sent before the egress
+	// guard is in place, and an unreadable profile refuses the start.
+	dataProfile, err := fulllocal.Boot()
+	if err != nil {
+		return err
+	}
 	if isStackKitOperationsProcessMode(os.Args) {
 		return runStackKitOperationsProcess(ctx)
 	}
@@ -256,6 +265,10 @@ func runTechstack(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := fulllocal.CheckEdition(startup.cfg.Edition); err != nil {
+		return err
+	}
+	log.Info("data_profile_ready", "profile", dataProfile.Describe(), "res", string(dataProfile.Res), "ret", string(dataProfile.Ret), "loc", string(dataProfile.Loc))
 	// A malformed Ed25519 service key stops the control plane here; it never
 	// degrades to the shared HS256 secret.
 	if err := serviceauth.Check(); err != nil {
@@ -1153,6 +1166,7 @@ func bindGlobalMiddleware(router *httpx.Router, deps routeDeps) {
 	router.BindFunc(middleware.EdgeIdentityMiddlewareFromConfig(cfg))
 	router.BindFunc(previewTransportAdmission)
 	router.BindFunc(v2SessionIdentityMiddleware(deps.v2))
+	router.BindFunc(testIdentityAdmission)
 	router.BindFunc(previewHTTPAdmission)
 	deps.previewExecution.HTTPInstalled()
 	bindRateLimiter(router, cfg)
@@ -1168,6 +1182,11 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 			return e.Next()
 		}
 		if id := identity.FromContext(e.Request.Context()); id != nil && id.IsAuthenticated() {
+			// Refuse before any projection write: a signed edge tenant on the
+			// other side of the test boundary never gains a row.
+			if err := testidentity.Admit(id.UserID, id.OrgID); err != nil {
+				return testIdentityRefusal(err)
+			}
 			membership, lookupErr := enrichIdentityFromMembership(e.Request.Context(), boot.authStore, id, id.OrgID, boot.defaultTenant, "default")
 			if err := interruptedMembershipLookup(id.OrgID, lookupErr); err != nil {
 				return err
@@ -1317,6 +1336,11 @@ func ensureIdentityTenantProjection(ctx context.Context, store controlplane.Auth
 	tenantID := strings.TrimSpace(id.OrgID)
 	if tenantID == "" {
 		return membership, nil
+	}
+	// No path projects a test identity into a real tenant, or a real person
+	// into a test tenant (D-2026-10-22-02).
+	if err := testidentity.Admit(id.UserID, tenantID); err != nil {
+		return nil, err
 	}
 	if membership == nil {
 		subjectID := strings.TrimSpace(id.UserID)

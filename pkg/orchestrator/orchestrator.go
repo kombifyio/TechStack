@@ -1925,10 +1925,21 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 				authority, authorityErr := jobs.BuildLocalStackKitTeardownAuthority(
 					stack.id, stack.stackKitInstanceID, stack.tenantID, stack.ownerID, applied, snapshot, bindings,
 				)
-				if authorityErr != nil {
+				switch {
+				case authorityErr == nil:
+					destroyResult[jobs.LocalStackKitTeardownAuthorityResultField] = authority
+				case errors.Is(authorityErr, jobs.ErrLocalTeardownNoAppliedWorkloads):
+					// Nothing was applied, so there is no workload to remove on a node;
+					// the job history must prove that no Apply ran before the stack is
+					// removed without node teardown.
+					noApply, proofErr := o.noApplyRemovalEvidence(ctx, stack, snapshot)
+					if proofErr != nil {
+						return "", fmt.Errorf("bind local StackKits teardown authority: %w (removal without node teardown refused: %v)", authorityErr, proofErr)
+					}
+					destroyResult[jobs.NoApplyRemovalEvidenceResultField] = noApply
+				default:
 					return "", fmt.Errorf("bind local StackKits teardown authority: %w", authorityErr)
 				}
-				destroyResult[jobs.LocalStackKitTeardownAuthorityResultField] = authority
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/advancedissuer"
 	"github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/logger"
 )
@@ -18,6 +19,14 @@ import (
 // the rest of the control plane stays available.
 func advancedCapabilityIssuer(ctx context.Context, boot *v2Boot, log *logger.Logger) jobs.AdvancedIssuer {
 	if boot == nil || boot.db == nil {
+		return nil
+	}
+	// A secondary channel runs no tenant work, so it dispatches nothing that
+	// needs a signature, and it holds no signing custody (D-2026-10-22-02).
+	if config.SecondaryChannel() {
+		if log != nil {
+			log.Info("advanced_issuer_not_served", "reason", "secondary_release_channel")
+		}
 		return nil
 	}
 	mode, err := advancedIssuerCustodyMode()

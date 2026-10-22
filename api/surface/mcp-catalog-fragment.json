@@ -4,7 +4,7 @@
   "source": {
     "product": "techstack",
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "2df940ea806dd597aff31fc95180839c919ff56c071a0eac525697a6d26550bb"
+    "sha256": "8beaeb1e7327b899aa97f3ad9debe1e91c810e8ffe1cb5d809b54f51ad000202"
   },
   "tools": [
     {

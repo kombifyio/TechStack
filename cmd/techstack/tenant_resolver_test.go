@@ -38,6 +38,17 @@ func TestV2CloudTenantResolverPrefersDemoTenant(t *testing.T) {
 	}
 }
 
+func TestV2CloudTenantResolverPinsTestIdentityToItsTestTenant(t *testing.T) {
+	t.Setenv("TECHSTACK_TEST_SUBJECTS", "auth0|tester")
+	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil)
+	// A real organization claim never moves a test identity into that tenant.
+	claims := &oidcclient.Claims{Subject: "auth0|tester", Raw: map[string]any{"org_id": "org_real"}}
+	tenantID, err := resolver(context.Background(), claims, "primary", "")
+	if err != nil || tenantID != "usr:auth0|tester" {
+		t.Fatalf("resolver = %q, %v; want usr:auth0|tester", tenantID, err)
+	}
+}
+
 func TestV2CloudTenantResolverUsesIDTokenOrgClaim(t *testing.T) {
 	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil)
 	claims := &oidcclient.Claims{

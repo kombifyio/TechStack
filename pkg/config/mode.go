@@ -85,6 +85,17 @@ func BootDeploymentModeFromEnv() (DeploymentMode, error) {
 	return c.DeploymentMode, nil
 }
 
+// BootEditionFromEnv resolves the edition with the same precedence as
+// BootDeploymentModeFromEnv, for boot decisions that run before the
+// configuration is loaded.
+func BootEditionFromEnv() (Edition, error) {
+	var c Config
+	if err := c.resolveEditionValueFromEnv(); err != nil {
+		return "", err
+	}
+	return c.Edition, nil
+}
+
 // ValidEditionValues returns the accepted KOMBIFY_EDITION values.
 func ValidEditionValues() []string {
 	return []string{

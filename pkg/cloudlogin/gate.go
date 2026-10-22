@@ -15,6 +15,7 @@ import (
 	goCloudlogin "github.com/kombifyio/techstack/internal/gocommon/cloudlogin"
 
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 // FeatureKey identifies the enrollment claim feature this gate consumes.
@@ -34,8 +35,15 @@ type (
 )
 
 // Evaluate is re-exported as a function value so callers that previously
-// took a function reference (e.g. for tests) continue to compile.
-var Evaluate = goCloudlogin.Evaluate
+// took a function reference (e.g. for tests) continue to compile. Under the
+// Full Local data protection profile cloud login is a kombify service the
+// homelab may not reach, so the gate stays closed whatever the token says.
+var Evaluate = func(opts Options) Result {
+	if fulllocal.Active() {
+		return Result{Enabled: false, Reason: fulllocal.ReasonCode}
+	}
+	return goCloudlogin.Evaluate(opts)
+}
 
 // OptionsFromEnv builds gate options from the documented TECHSTACK_* env
 // variables and overlays the deployment mode booleans expected by the

@@ -12,6 +12,8 @@ import (
 
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
+	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/secrets"
 	"github.com/kombifyio/stackkits/pkg/workloadremoval"
 )
 
@@ -180,7 +182,7 @@ func validateLocalTeardownWorkload(workload LocalStackKitTeardownWorkloadAuthori
 func appliedWorkloadServers(value any, snapshot portinventory.TeardownSnapshot, bindings []LocalStackKitTeardownNodeBinding, stackKit string) ([]LocalStackKitTeardownServerAuthority, error) {
 	items, ok := value.([]interface{})
 	if !ok || len(items) == 0 {
-		return nil, errors.New("local StackKits teardown authority has no applied workloads")
+		return nil, ErrLocalTeardownNoAppliedWorkloads
 	}
 	byNode := make(map[string]LocalStackKitTeardownNodeBinding, len(bindings))
 	for _, binding := range bindings {
@@ -374,12 +376,12 @@ func removeLocalStackKitWorkloadsWithRelease(ctx context.Context, cfg *Provision
 			if err != nil {
 				return fmt.Errorf("typed StackKits remove dispatch failed: %w", err)
 			}
+			if result == nil || !result.Success {
+				return recordLocalStackKitRemovalFailure(job, command.CommandId, server, workload, result)
+			}
 			normalized, err := normalizeStackKitLifecycleResult(request, result)
 			if err != nil {
 				return err
-			}
-			if result == nil || !result.Success {
-				return fmt.Errorf("StackKits remove failed for workload %q", workload.WorkloadRef)
 			}
 			persisted := mapFromInterface(normalized["removal_evidence"])
 			data, err := json.Marshal(persisted)
@@ -505,4 +507,54 @@ func boundLocalStackKitTeardownAuthority(job *Job, snapshot portinventory.Teardo
 		}
 	}
 	return authority, nil
+}
+
+// LocalStackKitRemovalFailureResultField holds what the node reported when a
+// StackKits remove of one workload failed, so the cause is on the destroy job
+// and not only in the node's own log.
+const LocalStackKitRemovalFailureResultField = "local_stackkit_removal_failure"
+
+// localRemovalStderrBound caps the node stderr recorded on the destroy job: the
+// head and the tail of it, because a CLI names its refusal first and its last
+// error at the end.
+const localRemovalStderrBound = 1024
+
+// localRemovalStderrBriefBound caps the share of it that rides in the error text.
+const localRemovalStderrBriefBound = 256
+
+// recordLocalStackKitRemovalFailure stores the exit code and the bounded,
+// redacted stderr of a failed node-side remove on the destroy job and returns
+// the error that names them. Redaction runs on the whole text before it is
+// cut, so a secret straddling the cut is never half shown.
+func recordLocalStackKitRemovalFailure(job *Job, commandID string, server LocalStackKitTeardownServerAuthority, workload LocalStackKitTeardownWorkloadAuthority, result *agentpb.StackKitResult) error {
+	exitCode, stderr := int32(-1), ""
+	if result != nil {
+		exitCode, stderr = result.ExitCode, boundedRedactedNodeStderr(result.Stderr, localRemovalStderrBound)
+	}
+	job.mutateResult(func(jobResult map[string]interface{}) {
+		jobResult[LocalStackKitRemovalFailureResultField] = map[string]interface{}{
+			"workload_ref": workload.WorkloadRef,
+			"node_ref":     workload.NodeRef,
+			"server_id":    server.ServerID,
+			"command_id":   commandID,
+			"exit_code":    exitCode,
+			"stderr":       stderr,
+			"result_seen":  result != nil,
+		}
+	})
+	message := fmt.Sprintf("StackKits remove failed for workload %q (exit code %d)", workload.WorkloadRef, exitCode)
+	if brief := boundedRedactedNodeStderr(stderr, localRemovalStderrBriefBound); brief != "" {
+		message += ": " + brief
+	}
+	return errors.New(message)
+}
+
+func boundedRedactedNodeStderr(stderr string, bound int) string {
+	text := strings.ToValidUTF8(strings.TrimSpace(secrets.Redact(stderr)), "")
+	if len(text) <= 2*bound {
+		return text
+	}
+	head := strings.ToValidUTF8(text[:bound], "")
+	tail := strings.ToValidUTF8(text[len(text)-bound:], "")
+	return head + "\n...[truncated]...\n" + tail
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/db"
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
@@ -30,17 +31,28 @@ type clientBootstrapTelemetry struct {
 	PostHog clientBootstrapPostHog `json:"posthog"`
 }
 
+// clientBootstrapDataProfile is the boot data protection profile of a
+// self-hosted edition, which every product shows (DATA-ARCHITECTURE.md §5.4).
+// A hosted account's profile is per user and comes from the authenticated
+// GET /api/v1/data-profile, never from this public, cached payload.
+type clientBootstrapDataProfile struct {
+	Res string `json:"res"`
+	Ret string `json:"ret"`
+	Loc string `json:"loc"`
+}
+
 // clientBootstrapResponse is the public runtime config served to the SPA.
 type clientBootstrapResponse struct {
-	Edition              string                   `json:"edition"`
-	DeploymentMode       string                   `json:"deployment_mode"`
-	KombifyEdition       string                   `json:"kombify_edition"`
-	Version              string                   `json:"version"`
-	PublicOrigin         string                   `json:"public_origin"`
-	ReleaseChannel       string                   `json:"release_channel"`
-	StableOrigin         string                   `json:"stable_origin"`
-	ContextDevLogolinkID string                   `json:"context_dev_logolink_id"`
-	Telemetry            clientBootstrapTelemetry `json:"telemetry"`
+	Edition              string                      `json:"edition"`
+	DeploymentMode       string                      `json:"deployment_mode"`
+	KombifyEdition       string                      `json:"kombify_edition"`
+	Version              string                      `json:"version"`
+	PublicOrigin         string                      `json:"public_origin"`
+	ReleaseChannel       string                      `json:"release_channel"`
+	StableOrigin         string                      `json:"stable_origin"`
+	ContextDevLogolinkID string                      `json:"context_dev_logolink_id"`
+	Telemetry            clientBootstrapTelemetry    `json:"telemetry"`
+	DataProfile          *clientBootstrapDataProfile `json:"data_profile,omitempty"`
 }
 
 // RegisterClientBootstrapRoutes adds GET /api/v1/client/bootstrap, the single
@@ -57,7 +69,8 @@ func RegisterClientBootstrapRoutes(r *httpx.Router, version string, edition conf
 	r.GET("/api/v1/client/bootstrap", func(e *httpx.Event) error {
 		normalizedEdition, normalizedMode := normalizeRuntimeIdentity(edition, mode)
 		e.Response.Header().Set("Cache-Control", "public, max-age=300")
-		return httpx.Success(e, http.StatusOK, clientBootstrapResponse{
+		profile := fulllocal.Profile()
+		response := clientBootstrapResponse{
 			Edition:              string(normalizedEdition),
 			DeploymentMode:       string(normalizedMode),
 			KombifyEdition:       firstNonEmptyEnv("PUBLIC_KOMBIFY_EDITION", "KOMBIFY_EDITION"),
@@ -78,7 +91,17 @@ func RegisterClientBootstrapRoutes(r *httpx.Router, version string, edition conf
 					Environment: firstNonEmptyEnv("PUBLIC_POSTHOG_ENVIRONMENT", "PUBLIC_POSTHOG_ENV"),
 				},
 			},
-		})
+		}
+		if !normalizedMode.IsSaaS() {
+			response.DataProfile = &clientBootstrapDataProfile{Res: string(profile.Res), Ret: string(profile.Ret), Loc: string(profile.Loc)}
+		}
+		// Boot already refuses these settings under Full Local; the browser
+		// must not reach a third party even if one slipped through.
+		if fulllocal.Active() {
+			response.ContextDevLogolinkID = ""
+			response.Telemetry = clientBootstrapTelemetry{}
+		}
+		return httpx.Success(e, http.StatusOK, response)
 	})
 }
 

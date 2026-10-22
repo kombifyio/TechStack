@@ -291,3 +291,77 @@ func signV2EdgeRequestForConfigWiringTestWithNonce(req *http.Request, secret, no
 	req.Header.Set(commonedgeauth.HeaderEdgeKeyID, keyID)
 	req.Header.Set(commonedgeauth.HeaderEdgeSignature, "v2="+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
 }
+
+// D-2026-10-22-02: through the whole global middleware chain, a signed edge
+// request reaches a handler only when its subject and tenant are on the same
+// side of the test boundary.
+func TestSignedEdgeRequestsKeepTestIdentitiesInTestTenants(t *testing.T) {
+	const (
+		edgeSecret = "test-identity-boundary-edge-secret"
+		tester     = "auth0|tester"
+		realUser   = "auth0|real-person"
+		demoTenant = "tenant-demo"
+	)
+	t.Setenv("TECHSTACK_TEST_SUBJECTS", tester)
+	t.Setenv("TEST_RIL_PRO_USER_ID", "")
+	t.Setenv("TECHSTACK_DEMO_USER_IDS", "auth0|demo-visitor")
+	t.Setenv("TECHSTACK_DEMO_TENANT_ID", demoTenant)
+
+	sessionManager, err := authsession.NewManager(authsession.Config{
+		Issuer:   "techstack",
+		Audience: "techstack-test-identity-boundary",
+		Secret:   []byte("0123456789abcdef0123456789abcdef"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.DeploymentMode = config.ModeSaaS
+	cfg.EdgeAuthSecret = edgeSecret
+
+	store := &stubAuthStore{}
+	router := httpx.NewRouter()
+	bindGlobalMiddleware(router, routeDeps{
+		startup: &startupContext{cfg: cfg},
+		v2:      &v2Boot{session: sessionManager, authStore: store, defaultTenant: "default"},
+	})
+	reached := 0
+	router.GET("/api/v1/stacks", func(e *httpx.Event) error {
+		reached++
+		return e.NoContent(http.StatusNoContent)
+	})
+	handler := router.BuildMux()
+
+	for i, tc := range []struct {
+		name, subject, tenant string
+		want                  int
+	}{
+		{"test identity in its own test tenant", tester, "usr:" + tester, http.StatusNoContent},
+		{"test identity in a real organization", tester, "org_real", http.StatusForbidden},
+		{"real person in the test identity's tenant", realUser, "usr:" + tester, http.StatusForbidden},
+		{"real person in the demo tenant", realUser, demoTenant, http.StatusForbidden},
+		{"real person in their own owner tenant", realUser, "usr:" + realUser, http.StatusNoContent},
+	} {
+		before, writes := reached, len(store.calls)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/stacks", nil)
+		req.Header.Set(commonedgeauth.HeaderEdgeAuth, commonedgeauth.EdgeAuthValueJWT)
+		req.Header.Set(commonedgeauth.HeaderUserID, tc.subject)
+		req.Header.Set(commonedgeauth.HeaderOrgID, tc.tenant)
+		req.Header.Set(commonedgeauth.HeaderUserEmail, "person@example.test")
+		req.Header.Set(commonedgeauth.HeaderUserRoles, "user")
+		req.Header.Set(commonedgeauth.HeaderEntitlements, "techstack.inventory.read")
+		req.Header.Set(commonedgeauth.HeaderKnowledgeTier, "standard")
+		signV2EdgeRequestForConfigWiringTestWithNonce(req, edgeSecret, "test-identity-boundary-"+strconv.Itoa(i))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != tc.want {
+			t.Fatalf("%s: status = %d body=%q, want %d", tc.name, recorder.Code, recorder.Body.String(), tc.want)
+		}
+		if refused := tc.want == http.StatusForbidden; refused && (reached != before || len(store.calls) != writes) {
+			t.Fatalf("%s: a refused request reached the handler or wrote %v", tc.name, store.calls[writes:])
+		}
+		if tc.want == http.StatusForbidden && !strings.Contains(recorder.Body.String(), "test_identity_tenant_refused") {
+			t.Fatalf("%s: refusal body = %q, want test_identity_tenant_refused", tc.name, recorder.Body.String())
+		}
+	}
+}

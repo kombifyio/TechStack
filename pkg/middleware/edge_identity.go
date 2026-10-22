@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -220,6 +221,12 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 				writeEdgeDecisionUnverifiable(e)
 				return nil
 			}
+			// The profile signature binds the identity headers, so it is
+			// verified before they are stripped (data_profile.go).
+			if !attachDataProfile(e, cfg) {
+				stripIdentityHeaders(e.Request)
+				return nil
+			}
 			stripIdentityHeaders(e.Request)
 			return e.Next()
 		}
@@ -278,6 +285,8 @@ func stripIdentityHeaders(r *http.Request) {
 	r.Header.Del(HeaderUserAuthTime)
 	r.Header.Del(commonedgeauth.HeaderEntitlements)
 	r.Header.Del(commonedgeauth.HeaderKnowledgeTier)
+	// A profile is only trusted from attachDataProfile on the verified path.
+	stripProfileHeaders(r)
 	r.Header.Del(commonedgeauth.HeaderFlags)
 	r.Header.Del(commonedgeauth.HeaderBudgets)
 	r.Header.Del(commonedgeauth.HeaderFlagsSignature)
@@ -478,9 +487,28 @@ func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) (stepUp common
 		}
 	})).ServeHTTP(recorder, r)
 	if !verified {
-		return commonedgeauth.StepUpClaims{}, false, false, fmt.Errorf("edge signature rejected (status %d)", recorder.Code)
+		return commonedgeauth.StepUpClaims{}, false, false, fmt.Errorf("edge signature rejected (status %d, reason %s)", recorder.Code, edgeRejectionReason(recorder.Body.Bytes()))
 	}
 	return stepUp, bound, emailVerified, nil
+}
+
+// edgeRejectionReason returns the go-common denial code (for example
+// edge_signature_secret_missing or edge_signature_path_mismatch) so an operator
+// can tell a missing key from a key mismatch or a path or clock problem. Only
+// a short lower-case code is returned; anything else reads "unknown".
+func edgeRejectionReason(body []byte) string {
+	var denial struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(body, &denial) != nil || denial.Reason == "" || len(denial.Reason) > 64 {
+		return "unknown"
+	}
+	for _, r := range denial.Reason {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return "unknown"
+		}
+	}
+	return denial.Reason
 }
 
 func isSupportedEdgeAuthValue(value string) bool {

@@ -974,6 +974,63 @@ install_stackkit_operations_process() {
     echo "${GREEN}✓ Installed the digest-identical StackKits operations process.${NC}"
 }
 
+# A server the owner enrolls with the install command has no cloud-init host
+# preparation, so nothing else installs the container runtime the StackKits
+# host preflight requires. This runs after the Guard service is active, so the
+# first heartbeat never waits for a package manager, and it never fails the
+# enrollment: a failure is reported with the exact packages to install.
+ensure_stackkit_container_runtime() {
+    if [ "$OS" != "linux" ] || [ "$WORKER_REGISTERED" != "1" ] || [ "$AS_SERVICE" != "1" ] || [ "$SUBSTRATE_HOST" = 1 ]; then
+        return 0
+    fi
+    # Managed first boot (cloud-init) is bounded to one minute and its host-prep
+    # service and rollout bootstrap own Docker; never install it from here.
+    if [ -e /usr/local/lib/kombify/guard-bootstrap ] || [ -e /etc/systemd/system/kombify-host-prep-v2.service ]; then
+        return 0
+    fi
+    if command -v docker >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+        echo "${GREEN}✓ StackKits container runtime is ready.${NC}"
+        return 0
+    fi
+    BOOTSTRAP_PHASE="stackkits-host"
+    if ! command -v apt-get >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+        echo "${YELLOW}The server is connected, but no container runtime is installed and this installer only prepares apt-based hosts.${NC}" >&2
+        echo "${YELLOW}Install Docker Engine with the Compose plugin (https://docs.docker.com/engine/install/) before the first rollout.${NC}" >&2
+        bootstrap_log warn "Guard is connected, but Docker is not installed on this non-apt server. Install Docker Engine with the Compose plugin before the first rollout."
+        return 0
+    fi
+
+    echo "${CYAN}Preparing the StackKits container runtime (Docker Engine from the distribution repository)...${NC}"
+    bootstrap_log info "Guard is connected; installing the container runtime for StackKits rollouts."
+    # Chained with && because errexit is disabled inside a subshell that is
+    # itself the left side of ||.
+    (
+        timeout 240 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 update || true
+        COMPOSE_PACKAGE=""
+        if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
+            COMPOSE_PACKAGE="docker-compose-v2"
+        elif apt-cache show docker-compose-plugin >/dev/null 2>&1; then
+            COMPOSE_PACKAGE="docker-compose-plugin"
+        fi
+        # shellcheck disable=SC2086
+        timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
+            install -y ca-certificates curl docker.io $COMPOSE_PACKAGE &&
+            sudo systemctl enable --now docker >/dev/null &&
+            sudo docker info >/dev/null
+    ) || {
+        echo "${YELLOW}The server is connected, but Docker could not be installed automatically.${NC}" >&2
+        echo "${YELLOW}Run 'sudo apt-get install -y docker.io docker-compose-v2' (or see https://docs.docker.com/engine/install/), then start the rollout.${NC}" >&2
+        bootstrap_log warn "Guard is connected, but the Docker installation failed. Install docker.io and docker-compose-v2 on the server before the first rollout; the local transcript is in ${BOOTSTRAP_LOG_PATH:-/var/log/kombify-bootstrap.log}."
+        return 0
+    }
+    echo "${GREEN}✓ StackKits container runtime installed and ready.${NC}"
+    bootstrap_log info "The container runtime is installed and ready."
+}
+
 # Install SystemD service (Linux only)
 install_systemd_service() {
     if [ "$OS" != "linux" ]; then
@@ -1261,9 +1318,11 @@ main() {
         install_systemd_service
     fi
 
-    # Enrollment ends here. The existing managed host-prep service and rollout
-    # bootstrap own Docker and StackKits readiness; no package manager belongs
-    # in this bounded identity/service installation phase.
+    # Enrollment ends here. A managed first boot is bounded to one minute and
+    # its host-prep service owns Docker. A server the owner enrolls has no such
+    # service, so the container runtime the StackKits host preflight needs is
+    # prepared now, after the authenticated Guard is already running.
+    ensure_stackkit_container_runtime
 
     echo ""
     echo "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

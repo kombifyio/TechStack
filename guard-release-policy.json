@@ -1,5 +1,5 @@
 {
-  "minimumAdmittedVersion": "0.0.0",
+  "minimumAdmittedVersion": "0.42.19",
   "revokedVersions": [],
   "revokedDigests": []
 }
