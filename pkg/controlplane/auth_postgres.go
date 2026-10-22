@@ -156,6 +156,11 @@ func (s *PostgresStore) UpsertUser(ctx context.Context, user User) (*User, error
 			_ = tx.Rollback()
 		}
 	}()
+	// The user writes only its own row: this scope is what the techstack_users
+	// self policy matches once that table is FORCE-RLS (D-2026-10-22-02).
+	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", userGUC, userID); err != nil {
+		return nil, err
+	}
 
 	out, err := scanUser(tx.QueryRowContext(ctx, `
 		INSERT INTO techstack_users (

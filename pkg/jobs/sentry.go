@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -36,14 +35,31 @@ var (
 	sentryHealthTargetPattern = regexp.MustCompile(`(?i)\bhealth:([A-Za-z0-9._:-]+)`)
 )
 
+// jobPanicError carries a panic recovered from a job handler to the finisher of
+// withJobSentryScope. recover() works only in the deferred function itself, so the
+// caller recovers and passes the panic on as this error value.
+type jobPanicError struct {
+	value any
+	stack []byte
+}
+
+func (p *jobPanicError) Error() string { return fmt.Sprintf("job panic: %v", p.value) }
+
 // withJobSentryScope clones a Sentry hub for the duration of one job execution,
-// sets job-specific tags, captures panics, and returns a finisher that captures
-// any returned error. With an empty SENTRY_DSN this is a cheap no-op.
+// sets job-specific tags, and returns a finisher that captures any returned error
+// and any recovered panic (passed as a *jobPanicError). With an empty SENTRY_DSN
+// this is a cheap no-op.
 //
 // Usage:
 //
 //	ctx, finish := withJobSentryScope(ctx, job)
-//	defer func() { finish(err) }()
+//	defer func() {
+//		if rec := recover(); rec != nil {
+//			finish(&jobPanicError{value: rec, stack: debug.Stack()})
+//			panic(rec)
+//		}
+//		finish(err)
+//	}()
 func withJobSentryScope(ctx context.Context, job *Job) (context.Context, func(error)) {
 	hub := sentry.CurrentHub().Clone()
 	initial := job.Snapshot()
@@ -68,17 +84,19 @@ func withJobSentryScope(ctx context.Context, job *Job) (context.Context, func(er
 		},
 	}, nil)
 	finish := func(err error) {
-		if rec := recover(); rec != nil {
+		if jobPanic, ok := err.(*jobPanicError); ok {
 			hub.WithScope(func(scope *sentry.Scope) {
+				// The scope already carries the job context and tags from the job's start;
+				// reading the job again here would take its lock while it may be mid-panic.
 				scope.SetContext("panic", sentry.Context{
-					sentryValueField: safeSentryText(fmt.Sprintf("%v", rec)),
-					sentryStackField: string(debug.Stack()),
+					sentryValueField: safeSentryText(fmt.Sprintf("%v", jobPanic.value)),
+					sentryStackField: string(jobPanic.stack),
 				})
 				scope.SetLevel(sentry.LevelFatal)
 				hub.CaptureMessage("job_panic")
 			})
 			flushSentryHub(hub)
-			panic(rec)
+			return
 		}
 		if err != nil && !isOwnerHostRefusal(err) {
 			hub.WithScope(func(scope *sentry.Scope) {
