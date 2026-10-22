@@ -418,6 +418,18 @@ export const guardMessages = {
       "Released {command} at revision {revision} as “{disposition}”, recorded for {actor}.",
     "guard.outcomes.fenceReleased": "The block on this server is released.",
 
+    "guard.repair.title": "Re-pair this server",
+    "guard.repair.body":
+      "Mutating commands stay refused until this server is paired again. Observations still run.",
+    "guard.repair.action": "Re-pair this server",
+    "guard.repair.preparing": "Preparing the pairing command…",
+    "guard.repair.command":
+      "Run this pairing command on the server. It pairs the server again and pins the binding key.",
+    "guard.repair.copy": "Copy",
+    "guard.repair.copied": "Copied",
+    "guard.repair.unavailable": "A pairing command could not be prepared.",
+    "guard.repair.failed": "The pairing command could not be prepared.",
+
     "guard.ladder.title": "Pairing readiness",
     "guard.ladder.intro":
       "Each step is checked against what the control plane has recorded, not assumed.",
@@ -862,6 +874,18 @@ export const guardMessages = {
       "{command} in Revision {revision} als „{disposition}“ freigegeben, festgehalten für {actor}.",
     "guard.outcomes.fenceReleased":
       "Die Sperre auf diesem Server ist aufgehoben.",
+
+    "guard.repair.title": "Diesen Server erneut koppeln",
+    "guard.repair.body":
+      "Ändernde Befehle bleiben verweigert, bis dieser Server erneut gekoppelt ist. Beobachtungen laufen weiter.",
+    "guard.repair.action": "Diesen Server erneut koppeln",
+    "guard.repair.preparing": "Kopplungsbefehl wird vorbereitet…",
+    "guard.repair.command":
+      "Führe diesen Kopplungsbefehl auf dem Server aus. Er koppelt den Server erneut und verankert den Bindungsschlüssel.",
+    "guard.repair.copy": "Kopieren",
+    "guard.repair.copied": "Kopiert",
+    "guard.repair.unavailable": "Ein Kopplungsbefehl konnte nicht vorbereitet werden.",
+    "guard.repair.failed": "Der Kopplungsbefehl konnte nicht vorbereitet werden.",
 
     "guard.ladder.title": "Kopplungsbereitschaft",
     "guard.ladder.intro":

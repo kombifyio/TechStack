@@ -604,6 +604,9 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 		WalletWithdraw: serverWalletWithdrawer(deps.wallet),
 		Reach:          serverReachReader(deps),
 		Posture:        serverPosture(deps), Workers: workerStore, RoundTrips: serverRoundTripReader(deps.typedControl), PostureEntitlements: routes.EntitlementGateForDeployment(deps.startup.cfg.DeploymentMode.IsSaaS()),
+		BindingRepair: routes.NewBindingRepairAuthority(trust.RouteStores{
+			Stacks: stackStores.Stacks, Workers: workerStore, Jobs: stackStores.Jobs,
+		}),
 		CurrentMTLSCapabilities: currentMTLSStackKitCapabilities(deps.grpc),
 		CurrentMTLSIdentity:     currentMTLSIdentity(deps.grpc),
 		Network: &routes.ServerNetworkRouteConfig{

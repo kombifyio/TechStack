@@ -9,6 +9,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/agentcontrol"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/guardidentity"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
@@ -116,6 +117,16 @@ type serverGuardPosture struct {
 	UpdateState   string `json:"update_state,omitempty"`
 	UpdateVersion string `json:"update_version,omitempty"`
 	UpdateReason  string `json:"update_reason,omitempty"`
+	// BindingPin is present, absent, or unreadable. Empty means this Guard
+	// has not reported the pin file.
+	BindingPin string `json:"binding_pin,omitempty"`
+}
+
+// serverBindingRepair is the product state of a server whose Guard pinned no
+// binding signing key. Code is the stable identifier the client localizes.
+type serverBindingRepair struct {
+	Required bool   `json:"required"`
+	Code     string `json:"code"`
 }
 
 // serverRuntimeCapabilities are the Guard facts of one server, exactly as the
@@ -126,7 +137,10 @@ type serverRuntimeCapabilities struct {
 	// IdentityUpgrade is present while the server authenticates with its bearer
 	// credential alone: it reports and updates itself but receives no mutating
 	// command until the owner approves its identity key.
-	IdentityUpgrade      *serverIdentityUpgrade `json:"identity_upgrade,omitempty"`
+	IdentityUpgrade *serverIdentityUpgrade `json:"identity_upgrade,omitempty"`
+	// BindingRepair is present while mutating commands stay refused until the
+	// owner pairs this server again. It carries no key material.
+	BindingRepair        *serverBindingRepair   `json:"binding_repair,omitempty"`
 	GuardOperations      *serverGuardOperations `json:"guard_operations,omitempty"`
 	GuardPosture         *serverGuardPosture    `json:"guard_posture,omitempty"`
 	CredentialGeneration int64                  `json:"credential_generation"`
@@ -186,6 +200,13 @@ func serverCapabilitiesFromWorker(worker controlplane.Worker) *serverRuntimeCapa
 		if roundTrip(raw, &in) {
 			out.GuardPosture = &in
 		}
+	}
+	report := ""
+	if out.GuardPosture != nil {
+		report = out.GuardPosture.BindingPin
+	}
+	if strings.TrimSpace(worker.ID) != "" && guardbinding.BindingRepairRequired(report, worker.CreatedAt) {
+		out.BindingRepair = &serverBindingRepair{Required: true, Code: guardbinding.CodeBindingRepairRequired}
 	}
 	return out
 }

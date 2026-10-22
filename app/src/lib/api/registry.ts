@@ -237,6 +237,12 @@ export interface CanonicalServerCapabilities {
     update_state?: string;
     update_version?: string;
     update_reason?: string;
+    binding_pin?: "present" | "absent" | "unreadable";
+  };
+  /** Present while mutating commands stay refused until this server is paired again. */
+  binding_repair?: {
+    required: boolean;
+    code: string;
   };
   /** Persisted Connected evidence; see GuardRoundTripEvidence. */
   command_round_trip?: {

@@ -58,11 +58,27 @@ type Server struct {
 	AllowPeer func(uid uint32) bool
 	// Pins returns the binding keys this host pinned at pairing. Once any key
 	// is pinned, every binding must carry a valid signature from one of them,
-	// so a daemon that was taken over cannot mint its own authority. Nil, or
-	// no keys, admits unsigned bindings as before signing existed.
+	// so a daemon that was taken over cannot mint its own authority. With no
+	// pinned key, observations stay admissible and a mutation is refused
+	// until the host is paired again. Nil skips the check.
 	Pins func() ([]guardbinding.PinnedKey, error)
 	Now  func() time.Time
 	Log  *slog.Logger
+}
+
+// bindingPinState reads the same pin function the mutation check uses.
+func (s *Server) bindingPinState() string {
+	if s.Pins == nil {
+		return ""
+	}
+	pins, err := s.Pins()
+	if err != nil {
+		return guardbinding.BindingPinUnreadable
+	}
+	if len(pins) == 0 {
+		return guardbinding.BindingPinAbsent
+	}
+	return guardbinding.BindingPinPresent
 }
 
 func (s *Server) now() time.Time {
@@ -216,7 +232,9 @@ func (s *Server) dispatch(ctx context.Context, request Request, out *frameWriter
 				return deny(CodeInvalidRequest, "%v", err)
 			}
 		}
-		return out.result(s.Backend.Status(ctx, params.SyncOperations))
+		status := s.Backend.Status(ctx, params.SyncOperations)
+		status.BindingPin = s.bindingPinState()
+		return out.result(status)
 	default:
 		return deny(CodeUnknownOperation, "operation %q is not on the allowlist", request.Op)
 	}

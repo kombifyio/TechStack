@@ -260,6 +260,10 @@ type Status struct {
 	// AdmitsUnsigned is true when the host was explicitly configured to admit
 	// unsigned local builds; such a Guard is never reported as signed-only.
 	AdmitsUnsigned bool `json:"admits_unsigned,omitempty"`
+	// BindingPin reports whether this host's root pin file holds a binding
+	// signing key: present, absent, or unreadable. Empty means this executor
+	// was not asked to read a pin file. It carries no key material.
+	BindingPin string `json:"binding_pin,omitempty"`
 }
 
 func decodeStrict(raw json.RawMessage, into any) error {

@@ -66,6 +66,9 @@ type ServerRuntimeRouteConfig struct {
 	// (GET /servers/{id}/network and POST /servers/{id}/network/rebind). Nil
 	// leaves them unregistered.
 	Network *ServerNetworkRouteConfig
+	// BindingRepair registers POST /api/v1/servers/{serverId}/binding-repair
+	// and advertises re_pair. Nil leaves both absent.
+	BindingRepair BindingRepairMinter
 }
 
 // ServerWalletWithdrawer withdraws a detached server's node from the owner's
@@ -125,6 +128,9 @@ type serverRuntimeHandlers struct {
 	// routes unregistered.
 	availabilityReader    serverTransitionWindowReader
 	availabilityConfirmer controlplane.ServerAvailabilityConfirmer
+	// bindingRepair mints the one-time install command that pairs this server
+	// again. Nil leaves the route unregistered and re_pair unadvertised.
+	bindingRepair BindingRepairMinter
 }
 
 type serverRuntimeResponse struct {
@@ -250,6 +256,7 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 		network:                 cfg.Network,
 		currentMTLSCapabilities: cfg.CurrentMTLSCapabilities,
 		walletWithdraw:          cfg.WalletWithdraw,
+		bindingRepair:           cfg.BindingRepair,
 	}
 	r.GET("/api/v1/servers", h.list)
 	r.GET("/api/v1/servers/{serverId}", h.get)
@@ -265,6 +272,9 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 	}
 	if cfg.Detacher != nil {
 		r.POST("/api/v1/servers/{serverId}/detach", h.detach)
+	}
+	if h.bindingRepair != nil {
+		r.POST("/api/v1/servers/{serverId}/binding-repair", h.bindingRepairPair)
 	}
 	if _, ok := h.reach.(ServerReachControl); ok {
 		r.PUT("/api/v1/servers/{serverId}/reach", h.reachSetPublic)
@@ -407,6 +417,7 @@ func (h serverRuntimeHandlers) list(e *httpx.Event) error {
 		h.applyPosture(&item, row.WorkerID, postureViews)
 		item.Capabilities = capabilities[strings.TrimSpace(row.WorkerID)]
 		h.applyStackKitActions(&item, row)
+		h.applyBindingRepair(&item)
 		items = append(items, item)
 	}
 	qualifyServerRuntimeDisplayNames(items)
@@ -497,6 +508,7 @@ func (h serverRuntimeHandlers) get(e *httpx.Event) error {
 	h.applyPosture(&item, server.WorkerID, h.postureViews(e.Request.Context(), server.TenantID))
 	item.Capabilities = h.capabilitiesForWorker(e.Request.Context(), server.TenantID, server.WorkerID)
 	h.applyStackKitActions(&item, *server)
+	h.applyBindingRepair(&item)
 	return httpx.ConditionalSuccess(e, item, item.withoutElapsedCounters())
 }
 

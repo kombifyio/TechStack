@@ -74,6 +74,9 @@ type Posture struct {
 	UpdateReason  string `json:"update_reason,omitempty"`
 	// DenyMutations is true when a failed update left no admissible fallback.
 	DenyMutations bool `json:"deny_mutations,omitempty"`
+	// BindingPin reports whether the root pin file holds a binding signing key.
+	// It is present, absent, or unreadable, and it carries no key material.
+	BindingPin string `json:"binding_pin,omitempty"`
 }
 
 // Normalize bounds an untrusted posture before the control plane stores it.
@@ -90,5 +93,10 @@ func (p Posture) Normalize() Posture {
 		return value
 	}
 	p.UpdateState, p.UpdateVersion, p.UpdateReason = clip(p.UpdateState, 64), clip(p.UpdateVersion, 64), clip(p.UpdateReason, MaxReasonBytes)
+	switch p.BindingPin {
+	case BindingPinPresent, BindingPinAbsent, BindingPinUnreadable:
+	default:
+		p.BindingPin = ""
+	}
 	return p
 }

@@ -164,6 +164,7 @@ func (e guardExecution) posture() *guardbinding.Posture {
 			defer cancel()
 			if live, err := e.remote.RemoteStatus(ctx); err == nil {
 				posture.DenyMutations = live.DenyMutations
+				posture.BindingPin = live.BindingPin
 			}
 		}
 	case guardModeUnavailable:

@@ -2034,6 +2034,40 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/servers/{serverId}/binding-repair:
+    post:
+      operationId: repairServerBinding
+      tags: [Servers]
+      summary: Prepare the pairing command that re-pairs this server
+      description: >-
+        Issues a one-time install command for a server whose Guard pinned no binding signing key. The token is returned once. Mutating commands stay refused until the server is paired again.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "201":
+          description: One-time pairing command material
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [token, expires_at]
+                    properties:
+                      token: {type: string}
+                      expires_at: {type: string, format: date-time}
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /api/v1/servers/{serverId}/security/verify:
     post:
       operationId: requestServerSecurityVerification
@@ -6375,7 +6409,7 @@ components:
             Node-scoped operations this server's own state admits. Each id maps to exactly one endpoint that exists; an unknown lifecycle advertises nothing rather than guessing that a mutation is safe. The lease-scoped ids target `provider.lease_id`. There is deliberately no node `logs` id - no such endpoint exists.
           items:
             type: string
-            enum: [connect, terminal, reconnect, rotate_credentials, ssh_enable, ssh_disable, detach, decommission, resolve_custody, reboot, os_update_plan, os_update]
+            enum: [connect, terminal, reconnect, rotate_credentials, ssh_enable, ssh_disable, detach, decommission, resolve_custody, reboot, os_update_plan, os_update, re_pair]
         stack_actions:
           type: array
           uniqueItems: true
@@ -6533,6 +6567,14 @@ components:
           properties:
             required: {type: boolean}
             code: {type: string, enum: [guard_identity_upgrade_required]}
+        binding_repair:
+          type: object
+          description: >-
+            Present while mutating commands stay refused until the owner pairs this server again. A Guard paired before 2026-10-17 is treated as missing its binding pin until it reports one.
+          required: [required, code]
+          properties:
+            required: {type: boolean}
+            code: {type: string, enum: [guard_binding_repair_required]}
         guard_operations:
           type: object
           description: The Guard's durable operation journal health. `durable` is true only while the journal is writable and nothing is unresolved.
@@ -6558,6 +6600,10 @@ components:
             update_state: {type: string}
             update_version: {type: string}
             update_reason: {type: string}
+            binding_pin:
+              type: string
+              enum: [present, absent, unreadable]
+              description: Whether the Guard's root pin file holds a binding signing key. No key material.
     ServerSecurityFindingLedger:
       type: object
       required: [server_id, open, history]

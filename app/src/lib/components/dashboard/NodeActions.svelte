@@ -3,6 +3,7 @@
   import { Play, RefreshCw } from "@lucide/svelte";
 
   import Button from "#lib/components/ui/Button.svelte";
+  import GuardBindingRepair from "#lib/components/guard/GuardBindingRepair.svelte";
   import ServerAccessActions from "#lib/components/server-access/ServerAccessActions.svelte";
   import { isManagedRuntimeServer } from "#lib/managed-runtime-server.js";
   import {
@@ -63,6 +64,9 @@
         server.assignable !== false,
     ),
   );
+  const bindingRepair = $derived(
+    canonical?.capabilities?.binding_repair?.required === true,
+  );
   const accessUnavailable = $derived(
     canonical?.connection.state === "offline" ||
       canonical?.connection.state === "revoked",
@@ -82,7 +86,11 @@
   </Button>
 {/if}
 
-{#if managedRuntime && server}
+{#if bindingRepair && canonical}
+  <GuardBindingRepair serverId={canonical.id} compact />
+{/if}
+
+{#if managedRuntime && server && !bindingRepair}
   <div class="flex flex-col gap-2" data-testid="managed-runtime-action-row">
     {#if retryLabel && onRetry}
       <Button
@@ -155,7 +163,7 @@
   />
 {/if}
 
-{#if !(managedRuntime && server)}
+{#if !(managedRuntime && server) || bindingRepair}
   <Button
     variant="secondary"
     size="sm"

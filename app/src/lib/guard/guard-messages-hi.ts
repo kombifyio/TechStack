@@ -404,6 +404,18 @@ export const guardMessagesHi: Record<keyof typeof guardMessages.en, string> = {
     "{command} को संशोधन {revision} पर “{disposition}” के रूप में मुक्त किया गया, {actor} के नाम दर्ज।",
   "guard.outcomes.fenceReleased": "इस सर्वर पर लगी रोक हट गई है।",
 
+  "guard.repair.title": "इस सर्वर को फिर से पेयर करें",
+  "guard.repair.body":
+    "जब तक इस सर्वर को फिर से पेयर नहीं किया जाता, बदलने वाले कमांड अस्वीकृत रहते हैं। अवलोकन चलते रहते हैं।",
+  "guard.repair.action": "इस सर्वर को फिर से पेयर करें",
+  "guard.repair.preparing": "पेयरिंग कमांड तैयार हो रहा है…",
+  "guard.repair.command":
+    "यह पेयरिंग कमांड सर्वर पर चलाएँ। यह सर्वर को फिर से पेयर करता है और बाइंडिंग कुंजी को पिन करता है।",
+  "guard.repair.copy": "कॉपी करें",
+  "guard.repair.copied": "कॉपी हो गया",
+  "guard.repair.unavailable": "पेयरिंग कमांड तैयार नहीं हो सका।",
+  "guard.repair.failed": "पेयरिंग कमांड तैयार नहीं हो सका।",
+
   "guard.ladder.title": "पेयरिंग की तैयारी",
   "guard.ladder.intro":
     "हर चरण को कंट्रोल प्लेन के दर्ज किए हुए से जाँचा जाता है, मान नहीं लिया जाता।",

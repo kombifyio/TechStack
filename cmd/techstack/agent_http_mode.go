@@ -336,7 +336,15 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 			ready:   runtimeReady.Load,
 		},
 		RuntimeConvergence: runtimeConvergence.Snapshot,
-		Posture:            execution.posture,
+		Posture: func() *guardbinding.Posture {
+			posture := execution.posture()
+			// An enrollment that carried no signing key cannot have written a
+			// pin. Do not claim a pin from the enrollment alone.
+			if posture != nil && posture.BindingPin == "" && len(enrollment.BindingSigningKeys) == 0 {
+				posture.BindingPin = guardbinding.BindingPinAbsent
+			}
+			return posture
+		},
 		OnFirstHeartbeat: func() {
 			confirmGuardUpdateTrial(execution, log)
 			relay.Start()

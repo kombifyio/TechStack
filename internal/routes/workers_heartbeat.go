@@ -198,6 +198,9 @@ func guardPostureProjection(posture *guardbinding.Posture) map[string]any {
 	}
 	normalized := posture.Normalize()
 	out := map[string]any{"mode": normalized.Mode, "reported": true, "deny_mutations": normalized.DenyMutations}
+	if normalized.BindingPin != "" {
+		out["binding_pin"] = normalized.BindingPin
+	}
 	if normalized.UpdateState != "" {
 		out["update_state"] = normalized.UpdateState
 		out["update_version"] = normalized.UpdateVersion

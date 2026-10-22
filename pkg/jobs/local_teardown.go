@@ -356,7 +356,7 @@ func removeLocalStackKitWorkloadsWithRelease(ctx context.Context, cfg *Provision
 	evidenceSet := make([]interface{}, 0)
 	commandIndex := 0
 	for _, server := range authority.Servers {
-		for _, workload := range server.Workloads {
+		for _, workload := range localTeardownRemovalOrder(authority.StackKit, server.Workloads) {
 			commandIndex++
 			request, err := NormalizeStackKitLifecycleRequest(StackKitLifecycleRequest{
 				StackID: authority.TechstackID, StackKitInstanceID: authority.StackKitInstanceID,
@@ -557,4 +557,21 @@ func boundedRedactedNodeStderr(stderr string, bound int) string {
 	head := strings.ToValidUTF8(text[:bound], "")
 	tail := strings.ToValidUTF8(text[len(text)-bound:], "")
 	return head + "\n...[truncated]...\n" + tail
+}
+
+// localTeardownRemovalOrder keeps the canonical authority order but removes the
+// kit's core workload (basement-kit -> basement-core) last: StackKits refuses to
+// remove the core while another stackkit-* workload still runs on the node.
+func localTeardownRemovalOrder(stackKit string, workloads []LocalStackKitTeardownWorkloadAuthority) []LocalStackKitTeardownWorkloadAuthority {
+	core := strings.TrimSuffix(NormalizeStackKitRef(stackKit), "-kit") + "-core"
+	ordered := make([]LocalStackKitTeardownWorkloadAuthority, 0, len(workloads))
+	var last []LocalStackKitTeardownWorkloadAuthority
+	for _, workload := range workloads {
+		if workload.WorkloadRef == core {
+			last = append(last, workload)
+			continue
+		}
+		ordered = append(ordered, workload)
+	}
+	return append(ordered, last...)
 }

@@ -26,6 +26,7 @@
     getCanonicalServer,
     type CanonicalServer,
   } from "#lib/api/registry.js";
+  import GuardBindingRepair from "#lib/components/guard/GuardBindingRepair.svelte";
 
   import {
     decommissionMonthlyRuntime,
@@ -89,6 +90,9 @@
 
   let details = $state<StackServerDetailsPayload | null>(null);
   let canonicalServer = $state<CanonicalServer | null>(null);
+  const bindingRepair = $derived(
+    canonicalServer?.capabilities?.binding_repair?.required === true,
+  );
   let portInventory = $state<ServerPortInventory | null>(null);
   let portInventoryError = $state<string | null>(null);
   let loading = $state(true);
@@ -601,10 +605,10 @@
             <div class="mb-2 flex flex-wrap items-center gap-2">
               <span
                 data-kx="status"
-                data-status={statusKind(details.server.health.state)}
+                data-status={bindingRepair ? "warn" : statusKind(details.server.health.state)}
                 class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
               >
-                {formatStatus(details.server.health.state)}
+                {bindingRepair ? tr("guard.repair.title") : formatStatus(details.server.health.state)}
               </span>
               <span
                 data-kx="tag"
@@ -678,6 +682,12 @@
           </div>
         </div>
       </header>
+
+      {#if bindingRepair && canonicalServer}
+        <div class="mb-6">
+          <GuardBindingRepair serverId={canonicalServer.id} />
+        </div>
+      {/if}
 
       <div class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div data-kx="plate" class="p-4">
