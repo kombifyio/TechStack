@@ -19,7 +19,7 @@ func runDatabaseDelivery(ctx context.Context, args []string) error {
 		return errDatabaseDeliveryAdmission
 	}
 	apply := args[0] == "apply"
-	if os.Getenv(db.EnvAllowDBGenesis) != "false" || db.ReleaseChannel() == "preview" {
+	if os.Getenv(db.EnvAllowDBGenesis) != "false" || db.ReleaseChannel() != "stable" {
 		return errDatabaseDeliveryAdmission
 	}
 	if apply {

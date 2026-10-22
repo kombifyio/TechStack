@@ -16,9 +16,10 @@ const (
 	// login owns its own schema (internal/localdb). It may own objects, but it
 	// never bypasses RLS: FORCE RLS still applies to it.
 	RuntimeRoleLocalOwner RuntimeRolePosture = iota
-	// RuntimeRoleHosted is every hosted runtime on the one live database
-	// (stable and the Preview channel). D-2026-10-22-02: tenant isolation holds
-	// by construction, so the serving login is a bounded application role.
+	// RuntimeRoleHosted is every hosted runtime (stable, the Preview channel
+	// and non-production deployments). D-2026-10-22-02: tenant isolation holds
+	// by construction in both instances, so the serving login is a bounded
+	// application role.
 	RuntimeRoleHosted
 )
 

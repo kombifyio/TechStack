@@ -11,25 +11,34 @@ import (
 const EnvReleaseChannel = "TECHSTACK_RELEASE_CHANNEL"
 
 // ReleaseChannel is shared by database startup, HTTP admission and runtime
-// lifecycle. The default deployment always serves stable.
+// lifecycle: "preview", "early-access" or, by default, "stable".
 func ReleaseChannel() string {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv(EnvReleaseChannel)), "preview") {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvReleaseChannel))) {
+	case "preview":
 		return "preview"
+	case "early-access":
+		return "early-access"
 	}
 	return "stable"
 }
 
+// SecondaryChannel reports a deployment beside stable on the stable database:
+// Preview, or Early Access, which the edge serves under the same links to the
+// people who opted in (CI-CD-PLATFORM-STANDARD §4.6 "Channel model"). Both
+// serve signed-in people over HTTP only; shared, homelab, machine and
+// migration work stays on stable.
+func SecondaryChannel() bool { return ReleaseChannel() != "stable" }
+
 // RunsSharedWork reports whether this deployment runs the work that is
 // nobody's homelab: agent connections, monitoring, posture, outboxes, global
-// boot writes. Stable runs it for every tenant; Preview runs only the homelab
-// work of people who chose Preview (pkg/releasechannel).
-func RunsSharedWork() bool { return ReleaseChannel() != "preview" }
+// boot writes. Only stable runs it (pkg/releasechannel).
+func RunsSharedWork() bool { return !SecondaryChannel() }
 
 // AgentOriginOverride is the origin Guards and runtime agents call when it is
-// not this deployment's own: Preview runs no agent routes, so agents of every
-// tenant talk to stable. Empty on stable.
+// not this deployment's own: Preview and Early Access run no agent routes, so
+// agents of every tenant talk to stable. Empty on stable.
 func AgentOriginOverride() string {
-	if ReleaseChannel() != "preview" {
+	if !SecondaryChannel() {
 		return ""
 	}
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("TECHSTACK_STABLE_ORIGIN")), "/")
@@ -44,7 +53,7 @@ type PreviewExecution struct {
 }
 
 func NewPreviewExecution() *PreviewExecution {
-	if ReleaseChannel() != "preview" {
+	if !SecondaryChannel() {
 		return nil
 	}
 	return &PreviewExecution{fixture: strings.TrimSpace(os.Getenv("TEST_RIL_PRO_USER_ID"))}

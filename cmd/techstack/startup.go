@@ -666,8 +666,9 @@ func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.D
 	if dbCfg.Backend != db.StoreBackendPostgres {
 		return nil
 	}
-	// Hosted runtimes share the one live database (D-2026-10-22-01), so they
-	// never run DDL and serve only through a bounded application login.
+	// Hosted runtimes never run DDL and serve only through a bounded
+	// application login (D-2026-10-22-02), in production and in the
+	// non-production instance alike (D-2026-10-22-04).
 	posture := db.RuntimeRoleLocalOwner
 	if hostedRuntime(cfg) {
 		posture = db.RuntimeRoleHosted
@@ -695,10 +696,11 @@ func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.D
 	return opened
 }
 
-// hostedRuntime is every Techstack serving the shared live database: the SaaS
-// deployment and its Preview release channel.
+// hostedRuntime is every hosted Techstack: the SaaS deployment, its Preview
+// and Early Access release channels and any non-production deployment on
+// kombify-stg-pg.
 func hostedRuntime(cfg *config.Config) bool {
-	return config.ReleaseChannel() == "preview" || (cfg != nil && cfg.DeploymentMode.IsSaaS())
+	return config.SecondaryChannel() || (cfg != nil && cfg.DeploymentMode.IsSaaS())
 }
 
 func ensureDefaultControlPlaneTenant(ctx context.Context, cfg *config.Config, boot *v2Boot) error {
@@ -1159,7 +1161,7 @@ func bindGlobalMiddleware(router *httpx.Router, deps routeDeps) {
 
 func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 	return func(e *httpx.Event) error {
-		if config.ReleaseChannel() == "preview" && previewPublicPath(e.Request.URL.Path) {
+		if config.SecondaryChannel() && previewPublicPath(e.Request.URL.Path) {
 			return e.Next()
 		}
 		if boot == nil || boot.session == nil || e == nil || e.Request == nil {

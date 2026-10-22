@@ -113,7 +113,7 @@ func previewStream(r *http.Request) bool {
 }
 
 func admitPreviewTransport(e *httpx.Event) error {
-	if config.ReleaseChannel() != "preview" {
+	if !config.SecondaryChannel() {
 		return nil
 	}
 	p := e.Request.URL.Path
@@ -152,7 +152,7 @@ func previewTransportAdmission(e *httpx.Event) error {
 }
 
 func previewHTTPAdmission(e *httpx.Event) error {
-	if config.ReleaseChannel() != "preview" {
+	if !config.SecondaryChannel() {
 		return e.Next()
 	}
 	if err := admitPreviewTransport(e); err != nil {
