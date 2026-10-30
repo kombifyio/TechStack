@@ -196,7 +196,7 @@ func (h householdHandlers) projection(e *httpx.Event) error {
 			"request_id", e.Request.Header.Get("X-Request-ID"), "action", string(body.Action),
 			"status", string(result.Status), "failed", err != nil,
 			"caller_gone", e.Request.Context().Err() != nil, "duration_ms", time.Since(started).Milliseconds())
-		if errors.Is(err, household.ErrNodeUnreachable) {
+		if errors.Is(err, household.ErrNodeUnreachable) || errors.Is(err, household.ErrAmbiguousAccount) {
 			// The node cannot take the command now. Techstack keeps no queue;
 			// Cloud holds the pending projection and re-sends it. The cause is
 			// logged (bounded, no member data) so a stopped identity stack or a
@@ -208,8 +208,12 @@ func (h householdHandlers) projection(e *httpx.Event) error {
 			logger.Default().Warn("household_projection_pending",
 				"request_id", e.Request.Header.Get("X-Request-ID"),
 				"action", string(body.Action), "cause", cause)
+			reason := "identity_unavailable"
+			if errors.Is(err, household.ErrAmbiguousAccount) && !errors.Is(err, household.ErrNodeUnreachable) {
+				reason = "identity_account_ambiguous"
+			}
 			_ = e.JSON(http.StatusAccepted, map[string]any{
-				"status": household.StatusPending, "reason_code": "identity_unavailable", "retryable": true,
+				"status": household.StatusPending, "reason_code": reason, "retryable": true,
 			})
 			return
 		}

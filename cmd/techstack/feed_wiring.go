@@ -179,6 +179,33 @@ func (r feedIdentityRuntime) Remove(ctx context.Context, target household.Target
 	return err
 }
 
+// ListHouseholdUsers reads the node's household identities (household.IdentityLister).
+func (r feedIdentityRuntime) ListHouseholdUsers(ctx context.Context, target household.Target) ([]household.HouseholdUser, error) {
+	result, err := r.orch.RunStackKitIdentityCommand(ctx, orchestrator.StackKitIdentityCommandRequest{
+		TenantID: target.TenantID, OwnerID: target.OwnerID, DeploymentID: target.StackID,
+		Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		Data struct {
+			Users []struct {
+				Username string `json:"username"`
+				Email    string `json:"email"`
+			} `json:"users"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(result.CommandResultJson, &envelope) != nil {
+		return nil, errors.New("decode StackKits household members")
+	}
+	users := make([]household.HouseholdUser, 0, len(envelope.Data.Users))
+	for _, user := range envelope.Data.Users {
+		users = append(users, household.HouseholdUser{Username: user.Username, Email: user.Email})
+	}
+	return users, nil
+}
+
 func (r feedIdentityRuntime) UpdateApps(ctx context.Context, target household.Target, username string, apps household.AppGrant) error {
 	_, err := r.orch.RunStackKitIdentityCommand(ctx, orchestrator.StackKitIdentityCommandRequest{
 		TenantID: target.TenantID, OwnerID: target.OwnerID, DeploymentID: target.StackID,

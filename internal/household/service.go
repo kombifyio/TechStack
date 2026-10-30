@@ -95,6 +95,9 @@ var (
 	ErrMemberInvalid = errors.New("household: member needs a subject, an e-mail address and a name")
 	// ErrOwnerMember means the owner was named as a household member.
 	ErrOwnerMember = errors.New("household: the owner is not a projected member")
+	// ErrAmbiguousAccount means a node holds several household accounts for the
+	// removed person's e-mail address, so none is removed without a reference.
+	ErrAmbiguousAccount = errors.New("household: ambiguous household account")
 	// ErrNoReference means no invited reference exists for the member.
 	ErrNoReference = errors.New("household: no invited reference for this member")
 	// ErrAmbiguousStack means the member is invited on several stacks and the
@@ -133,6 +136,18 @@ type IdentityRuntime interface {
 	Invite(ctx context.Context, target Target, username, email, displayName string, apps AppGrant) (Invitation, error)
 	Remove(ctx context.Context, target Target, username string) error
 	UpdateApps(ctx context.Context, target Target, username string, apps AppGrant) error
+}
+
+// HouseholdUser is one household identity a node holds.
+type HouseholdUser struct {
+	Username string
+	Email    string
+}
+
+// IdentityLister lists the household identities a node holds. A removal uses
+// it to find an account that no saved reference names.
+type IdentityLister interface {
+	ListHouseholdUsers(ctx context.Context, target Target) ([]HouseholdUser, error)
 }
 
 // RevisionedIdentityRuntime fences the actual node effect, including removals
@@ -259,7 +274,7 @@ func (s *Service) Project(ctx context.Context, req ProjectionRequest) (Projectio
 	case ActionUpdateApps:
 		return s.updateApps(ctx, tenantID, owner, subject, req.Apps)
 	case ActionRemove:
-		return s.remove(ctx, tenantID, owner, subject)
+		return s.remove(ctx, tenantID, owner, req.Member)
 	default:
 		return ProjectionResult{}, fmt.Errorf("household: unsupported projection action %q", req.Action)
 	}
@@ -428,26 +443,117 @@ func (s *Service) updateApps(ctx context.Context, tenantID, owner, subject strin
 	return result, nil
 }
 
-func (s *Service) remove(ctx context.Context, tenantID, owner, subject string) (ProjectionResult, error) {
+func (s *Service) remove(ctx context.Context, tenantID, owner string, member Member) (ProjectionResult, error) {
+	subject := strings.TrimSpace(member.Subject)
 	refs, err := s.Links.ListHouseholdRefsByOwner(ctx, tenantID, owner)
 	if err != nil {
 		return ProjectionResult{}, err
 	}
 	result := ProjectionResult{Status: StatusProjected, RemovedStacks: []string{}}
+	// Every stack is attempted on its own; one unreachable node never keeps
+	// another node's account. Any failure leaves the removal pending, and the
+	// caller's retry is idempotent.
+	var pending error
+	referenced := map[string]bool{}
 	for _, ref := range refs {
 		if ref.CloudSubject != subject {
 			continue
 		}
+		referenced[ref.StackID] = true
 		target := Target{TenantID: tenantID, OwnerID: owner, StackID: ref.StackID}
 		if err := s.Identity.Remove(ctx, target, ref.Username); err != nil {
-			return ProjectionResult{}, fmt.Errorf("%w: %v", ErrNodeUnreachable, err)
+			pending = errors.Join(pending, fmt.Errorf("%w: %v", ErrNodeUnreachable, err))
+			continue
 		}
 		if _, err := s.Links.DeleteHouseholdRef(ctx, tenantID, ref.StackID, subject); err != nil && !errors.Is(err, controlplane.ErrNotFound) {
 			return ProjectionResult{}, err
 		}
 		result.RemovedStacks = append(result.RemovedStacks, ref.StackID)
 	}
+	unreferenced, err := s.removeUnreferenced(ctx, tenantID, owner, member, refs, referenced)
+	result.RemovedStacks = append(result.RemovedStacks, unreferenced...)
+	if pending = errors.Join(pending, err); pending != nil {
+		return ProjectionResult{}, pending
+	}
 	return result, nil
+}
+
+// removeUnreferenced removes the household account of a person that no saved
+// reference names on one of the owner's identity stacks. An invite can create
+// the account on the node and still fail to answer (a cut connection, a
+// failed setup link); no reference is saved then, and a removal that only
+// followed references left the account with every member app (2026-10-20,
+// platform-y0502). The node's own list names the account by e-mail address:
+// exactly one household account with that address is removed, an account that
+// a reference gives to another person is never touched, several matches are
+// refused, and StackKits refuses the owner and administrators. It is not used
+// by the revisioned projection, whose binding is committed before any node
+// effect and whose removal is fenced by its revision.
+func (s *Service) removeUnreferenced(
+	ctx context.Context,
+	tenantID, owner string,
+	member Member,
+	refs []controlplane.HomelabIdentityRef,
+	skipStacks map[string]bool,
+) ([]string, error) {
+	email := strings.TrimSpace(member.Email)
+	lister, ok := s.Identity.(IdentityLister)
+	if !ok || email == "" || s.Homelabs == nil || s.Stacks == nil {
+		return nil, nil
+	}
+	homelab, err := s.Homelabs.GetHomelabByOwner(ctx, tenantID, owner)
+	if errors.Is(err, controlplane.ErrNotFound) || (err == nil && homelab == nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	stacks, err := s.identityStacks(ctx, tenantID, owner, homelab.ID)
+	if err != nil {
+		return nil, err
+	}
+	removed := []string{}
+	var pending error
+	for _, stack := range stacks {
+		if skipStacks[stack.ID] {
+			continue
+		}
+		heldByOthers := map[string]bool{}
+		for _, ref := range refs {
+			if ref.StackID == stack.ID && ref.CloudSubject != member.Subject {
+				heldByOthers[strings.ToLower(ref.Username)] = true
+			}
+		}
+		target := Target{TenantID: tenantID, OwnerID: owner, StackID: stack.ID}
+		users, listErr := lister.ListHouseholdUsers(ctx, target)
+		if listErr != nil {
+			pending = errors.Join(pending, fmt.Errorf("%w: %v", ErrNodeUnreachable, listErr))
+			continue
+		}
+		matches := []string{}
+		for _, user := range users {
+			username := strings.TrimSpace(user.Username)
+			if username != "" && strings.EqualFold(strings.TrimSpace(user.Email), email) {
+				matches = append(matches, username)
+			}
+		}
+		switch {
+		case len(matches) == 0:
+			continue
+		case len(matches) > 1:
+			pending = errors.Join(pending, fmt.Errorf("%w: stack %s holds %d household accounts with the member's e-mail address",
+				ErrAmbiguousAccount, stack.ID, len(matches)))
+			continue
+		case heldByOthers[strings.ToLower(matches[0])]:
+			continue
+		}
+		if err := s.Identity.Remove(ctx, target, matches[0]); err != nil {
+			pending = errors.Join(pending, fmt.Errorf("%w: %v", ErrNodeUnreachable, err))
+			continue
+		}
+		removed = append(removed, stack.ID)
+	}
+	return removed, pending
 }
 
 // LinkRequest names the member and the owner whose household they joined.

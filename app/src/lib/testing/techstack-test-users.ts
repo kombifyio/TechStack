@@ -136,13 +136,16 @@ const ROLE_SECRET_CANDIDATES: Record<
   ],
 };
 
-// The explicit Centron lifecycle uses the canonical ephemeral managed owner.
-// Other cloud duties retain their existing Pro fixture and fallback contract.
+// The explicit Centron lifecycle, and a lane that names it with
+// TECHSTACK_RUNTIME_E2E_CLOUD_OWNER=all-you-need (the paid journeys: the RIL Pro
+// slot holds its persistent IONOS Cloud Kit), use the canonical ephemeral managed
+// owner. Other cloud duties retain their existing Pro fixture and fallback contract.
 export function getTechStackTestUserSecretCandidates(
   role: TechStackTestUserRole,
   env: EnvSource = process.env,
 ): { email: string; password: string }[] {
-  if (role === "cloud" && env.TECHSTACK_RUNTIME_E2E_PROVIDER_ID?.trim().toLowerCase() === "centron") {
+  if (role === "cloud" && (env.TECHSTACK_RUNTIME_E2E_PROVIDER_ID?.trim().toLowerCase() === "centron" ||
+      env.TECHSTACK_RUNTIME_E2E_CLOUD_OWNER?.trim() === "all-you-need")) {
     return [{
       email: "TEST_ALL_YOU_NEED_USER_EMAIL",
       password: "TEST_ALL_YOU_NEED_USER_PASSWORD",

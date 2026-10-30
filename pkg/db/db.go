@@ -496,6 +496,14 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 		return fmt.Errorf("failed to read migrations: %w", readDirErr)
 	}
 
+	// One read of the ledger under the advisory lock instead of one query per
+	// migration: every round trip of the release credential preparation crosses
+	// the fixed database egress (about 180 ms), so 176 lookups cost about 30 s.
+	applied, appliedErr := appliedMigrationVersions(ctx, lockConn)
+	if appliedErr != nil {
+		return fmt.Errorf("failed to check migration status: %w", appliedErr)
+	}
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -503,12 +511,7 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 
 		version := entry.Name()
 
-		var count int
-		statusErr := lockConn.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = $1", version).Scan(&count)
-		if statusErr != nil {
-			return fmt.Errorf("failed to check migration status: %w", statusErr)
-		}
-		if count > 0 {
+		if _, ok := applied[version]; ok {
 			continue // Already applied
 		}
 
@@ -560,6 +563,23 @@ func discardSQLConnection(conn *sql.Conn) {
 
 type migrationTableQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func appliedMigrationVersions(ctx context.Context, conn *sql.Conn) (map[string]struct{}, error) {
+	rows, err := conn.QueryContext(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	applied := map[string]struct{}{}
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		applied[version] = struct{}{}
+	}
+	return applied, rows.Err()
 }
 
 func verifyRequiredControlPlaneTables(ctx context.Context, querier migrationTableQuerier) error {

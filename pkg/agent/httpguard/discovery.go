@@ -48,6 +48,7 @@ import (
 	"unicode"
 
 	"github.com/kombifyio/techstack/pkg/appcatalog"
+	"github.com/kombifyio/techstack/pkg/guardlayout"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
 
@@ -417,6 +418,9 @@ func (d *hostDiscovery) discoverSystemdUnitsCoverage(ctx context.Context) ([]Ser
 			continue
 		}
 		if key == systemdTemplateName(key) && strings.Contains(key, "@") {
+			continue
+		}
+		if guardlayout.IsExecutorInstance(key) {
 			continue
 		}
 		services = append(services, systemdUnitService(unit, name))

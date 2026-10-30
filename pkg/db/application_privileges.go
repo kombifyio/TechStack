@@ -116,13 +116,23 @@ func loadApplicationPolicy(ctx context.Context, q PrivilegeQuerier, requireFunct
 		return p, err
 	}
 	rows.Close()
+	// The owned sequences of every insertable table in one round trip: release
+	// preparation loads this policy several times across the fixed database
+	// egress (about 180 ms per round trip), once per table cost minutes.
+	var insertOIDs []int64
+	var insertNames []string
 	for oid, privileges := range p.Tables {
-		if !privileges["INSERT"] {
-			continue
+		if privileges["INSERT"] {
+			insertOIDs = append(insertOIDs, oid)
+			insertNames = append(insertNames, p.TableNames[oid])
 		}
-		sequences, err := q.QueryContext(ctx, `SELECT DISTINCT s.oid::bigint,s.relname FROM pg_attribute a
-		 CROSS JOIN LATERAL (SELECT to_regclass(pg_get_serial_sequence(format('public.%I',$1::text),a.attname)) AS oid) owned
-		 JOIN pg_class s ON s.oid=owned.oid WHERE a.attrelid=$2 AND a.attnum>0 AND NOT a.attisdropped`, p.TableNames[oid], oid)
+	}
+	if len(insertOIDs) > 0 {
+		sequences, err := q.QueryContext(ctx, `SELECT DISTINCT s.oid::bigint,s.relname
+		 FROM unnest($1::bigint[],$2::text[]) AS t(oid,name)
+		 JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped
+		 CROSS JOIN LATERAL (SELECT to_regclass(pg_get_serial_sequence(format('public.%I',t.name),a.attname)) AS oid) owned
+		 JOIN pg_class s ON s.oid=owned.oid`, insertOIDs, insertNames)
 		if err != nil {
 			return p, err
 		}
