@@ -715,7 +715,8 @@ func (h stackOperationsRouteHandlers) assignWorkerFromStore(e *httpx.Event) erro
 		})
 	}
 
-	if _, bindErr := h.bindCanonicalWorkerRuntime(ctx, tenantID, ownerID, stack.ID, *worker); bindErr != nil {
+	updated, bindErr := h.assignCanonicalWorker(ctx, tenantID, ownerID, stack.ID, *worker)
+	if bindErr != nil {
 		switch {
 		case errors.Is(bindErr, controlplane.ErrNotFound):
 			return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The worker has no canonical runtime registration to assign", map[string]any{
@@ -732,15 +733,6 @@ func (h stackOperationsRouteHandlers) assignWorkerFromStore(e *httpx.Event) erro
 		}
 	}
 
-	// ServerRuntime is the authority binding. workers.stack_id is its legacy
-	// worker projection and is written only after the CAS command succeeds. If
-	// this projection write fails, deploy admission still fails closed because
-	// it requires both records to carry the exact same tenant/owner/stack.
-	worker.StackID = stack.ID
-	updated, err := h.workerStore.UpsertWorkerHeartbeat(ctx, *worker)
-	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to assign worker", nil)
-	}
 	h.operationsReads.Forget(tenantID + "\x00" + ownerID + "\x00" + stack.ID)
 	server := h.operationServerFromControlPlaneWorker(ctx, ownerID, stack.ID, updated)
 	return httpx.Success(e, http.StatusOK, map[string]any{
@@ -748,6 +740,24 @@ func (h stackOperationsRouteHandlers) assignWorkerFromStore(e *httpx.Event) erro
 		"worker_id":         updated.ID,
 		"server":            server,
 	})
+}
+
+// assignCanonicalWorker shares the canonical CAS authority between explicit
+// assignment and a wizard first install on an already enrolled host.
+func (h stackOperationsRouteHandlers) assignCanonicalWorker(ctx context.Context, tenantID, ownerID, stackID string, worker controlplane.Worker) (*controlplane.Worker, error) {
+	if worker.TenantID != tenantID || worker.OwnerSubjectID != ownerID || !worker.Approved || !workerAssignmentStatusAllowed(worker.Status) {
+		return nil, fmt.Errorf("%w: worker is not approved for this owner", controlplane.ErrConflict)
+	}
+	if current := strings.TrimSpace(worker.StackID); current != "" && current != stackID {
+		return nil, fmt.Errorf("%w: worker is already assigned", controlplane.ErrConflict)
+	}
+	if _, err := h.bindCanonicalWorkerRuntime(ctx, tenantID, ownerID, stackID, worker); err != nil {
+		return nil, err
+	}
+	// workers.stack_id is a projection written after canonical CAS succeeds.
+	// Deploy fails closed if a partial write leaves the two bindings unequal.
+	worker.StackID = stackID
+	return h.workerStore.UpsertWorkerHeartbeat(ctx, worker)
 }
 
 func workerAssignmentStatusAllowed(status string) bool {

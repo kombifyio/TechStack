@@ -148,6 +148,18 @@ func (c *Channel) runCommand(ctx context.Context, target *jobs.ManagedRuntimeTar
 	return Run(ctx, target, fingerprint, command, stdin)
 }
 
+// Keep typed resolver causes available to internal callers without copying
+// arbitrary database or custody error text into a public error string.
+type targetResolutionError struct{ cause error }
+
+func (e *targetResolutionError) Error() string {
+	return "managed runtime node channel is unavailable: target resolution failed"
+}
+
+func (e *targetResolutionError) Unwrap() []error {
+	return []error{monthlyruntime.ErrNodeChannelUnavailable, e.cause}
+}
+
 // ResolveTarget returns the channel target and its pinned host fingerprint
 // for one server. It fails closed without host-key custody or a credential.
 func (c *Channel) ResolveTarget(ctx context.Context, server controlplane.ServerRuntime, ownerID string) (*jobs.ManagedRuntimeTarget, string, error) {
@@ -158,7 +170,10 @@ func (c *Channel) ResolveTarget(ctx context.Context, server controlplane.ServerR
 		StackID: server.StackID, StackName: server.Name, TenantID: server.TenantID,
 		OwnerID: ownerID, LeaseID: server.LeaseID, Provider: server.ProviderRef,
 	})
-	if err != nil || target == nil {
+	if err != nil {
+		return nil, "", &targetResolutionError{cause: err}
+	}
+	if target == nil {
 		return nil, "", fmt.Errorf("%w: target resolution failed", monthlyruntime.ErrNodeChannelUnavailable)
 	}
 	resolved := *target

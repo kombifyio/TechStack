@@ -48,9 +48,9 @@
     /** Human label supplied by the authoritative read model when available. */
     targetLabel?: string;
     targetKind?: "server" | "managed_workload" | "unknown" | string;
-    /** Vendor domain for context.dev Logo Link; empty keeps the generic glyph. */
+    /** Vendor domain whose mirrored icon backs the logo; empty keeps the generic glyph. */
     logoDomain?: string;
-    /** Bundled logo image; the glyph icon stays the fallback if it fails. */
+    /** The logo image (override, recognition or vendor icon); the glyph icon stays the fallback if it fails. */
     logoSrc?: string;
     /** Measured installed version, rendered as a chip by the title. */
     version?: string;

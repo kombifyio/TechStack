@@ -183,6 +183,13 @@ type Service struct {
 	OperationalImpact      string            `json:"operational_impact,omitempty"`
 	InternalAddress        string            `json:"internal_address,omitempty"`
 	RuntimeIdentity        map[string]string `json:"runtime_identity,omitempty"`
+	// Labels are the container's allow-listed recognition labels
+	// (appcatalog.RecognitionLabels): gethomepage, Glance, OCI and Traefik
+	// metadata only. The rest of a container's label set never leaves the host.
+	Labels map[string]string `json:"labels,omitempty"`
+	// Fingerprint is the application id the Guard proved over HTTP on this
+	// unit's own published port; empty when the probe proved nothing.
+	Fingerprint string `json:"fingerprint,omitempty"`
 
 	// publishedPorts carries the discovered host port mappings from discovery
 	// to the collector, which turns them into InternalAddress. Never serialized.
@@ -371,10 +378,7 @@ func (c *SystemCollector) CollectInventory(ctx context.Context, snapshot Snapsho
 // becomes its catalog application, any other docker container is its own
 // application, and everything else stays in the honest System bucket.
 func discoveredApplicationBucket(service Service) (key string, display string) {
-	subject := appcatalog.Subject{
-		Name: service.Name, Image: service.Image, Platform: service.PlatformType,
-		ComposeService: service.RuntimeIdentity["service"],
-	}
+	subject := serviceSubject(service)
 	if service.RuntimeIdentity["kind"] == "docker_compose_service" {
 		subject.ComposeProject = service.RuntimeIdentity["project"]
 	}
@@ -382,10 +386,25 @@ func discoveredApplicationBucket(service Service) (key string, display string) {
 	return grouping.Key, grouping.DisplayName
 }
 
+// serviceSubject is what one discovered unit reports about itself, in the form
+// the shared recognition layers read: its name and image, its allow-listed
+// labels (layer 1) and the application the HTTP probe proved (layer 3).
+func serviceSubject(service Service) appcatalog.Subject {
+	return appcatalog.Subject{
+		Name: service.Name, Image: service.Image, Platform: service.PlatformType,
+		ComposeService: service.RuntimeIdentity["service"],
+		Labels:         service.Labels, Fingerprint: service.Fingerprint,
+	}
+}
+
 // finalizeDiscoveredService groups a discovered unit and gives it the one
-// reachable address its published ports prove.
+// reachable address its published ports prove. An application key a caller
+// already set is kept; an address the HTTP probe proved is kept too, and only
+// a unit the probe proved nothing for falls back to publishedAddress.
 func finalizeDiscoveredService(service Service, host Host) Service {
-	service.ApplicationKey, service.ApplicationDisplayName = discoveredApplicationBucket(service)
+	if service.ApplicationKey == "" {
+		service.ApplicationKey, service.ApplicationDisplayName = discoveredApplicationBucket(service)
+	}
 	if service.InternalAddress == "" {
 		service.InternalAddress = publishedAddress(service, host)
 	}
@@ -394,6 +413,9 @@ func finalizeDiscoveredService(service Service, host Host) Service {
 
 func (c *SystemCollector) appendDiscoveredServices(ctx context.Context, snapshot Snapshot) Snapshot {
 	outcome := c.discovery.discover(ctx)
+	// Ask the discovered applications' own published ports what they are before
+	// grouping and the address are decided: the proof feeds both.
+	c.discovery.recognize(ctx, outcome.Services, snapshot.Host)
 	snapshot.DiscoveryObserved = outcome.Probed
 	snapshot.DiscoveryComplete = outcome.Complete
 	snapshot.Host.DockerVersion = outcome.DockerVersion
@@ -408,10 +430,7 @@ func (c *SystemCollector) appendDiscoveredServices(ctx context.Context, snapshot
 		if _, alreadyDeclared := declared[strings.ToLower(strings.TrimSpace(service.Key))]; alreadyDeclared {
 			continue
 		}
-		if service.ApplicationKey == "" {
-			service.ApplicationKey, service.ApplicationDisplayName = discoveredApplicationBucket(service)
-		}
-		snapshot.Services = append(snapshot.Services, service)
+		snapshot.Services = append(snapshot.Services, finalizeDiscoveredService(service, snapshot.Host))
 		snapshot.DiscoveredServiceCount++
 	}
 	return snapshot
@@ -455,7 +474,7 @@ func reconcileManifestRuntimeServices(snapshot Snapshot, discovered []Service) S
 		if usedDiscovery[index] {
 			continue
 		}
-		service.ApplicationKey, service.ApplicationDisplayName = discoveredApplicationBucket(service)
+		service = finalizeDiscoveredService(service, snapshot.Host)
 		service.Role = firstNonEmpty(service.Role, "component")
 		service.Lifecycle = firstNonEmpty(service.Lifecycle, "daemon")
 		service.OperationalImpact = "unknown"
@@ -505,6 +524,10 @@ func mergeRuntimeMeasurement(declared, measured Service) Service {
 	declared.PlatformID, declared.PlatformType, declared.Image = measured.PlatformID, measured.PlatformType, measured.Image
 	declared.ImageVersion = measured.ImageVersion
 	declared.Health = measured.Health
+	// What the unit says about itself travels with the component, so the
+	// control plane recognizes a StackKit container the same way it recognizes
+	// an unmanaged one.
+	declared.Labels, declared.Fingerprint = measured.Labels, measured.Fingerprint
 	return declared
 }
 

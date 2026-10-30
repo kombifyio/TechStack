@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
@@ -70,6 +71,12 @@ type Hub struct {
 	pending map[string][]*pendingCommand
 	notify  map[string]chan struct{}
 	db      *sql.DB
+	// transientIdentity holds capabilities only for their original synchronous
+	// sender. Durable outcomes never contain these bytes.
+	transientIdentity  map[transientIdentityKey]*transientIdentityWaiter
+	householdRelay     *HouseholdRelayClient
+	householdReplica   string
+	householdRelaySeen map[transientIdentityKey]time.Time
 	// needsOperatorAfter is the policy time after which an unresolved outcome is
 	// shown as needing an operator; zero selects DefaultNeedsOperatorAfter.
 	needsOperatorAfter time.Duration
@@ -281,12 +288,49 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 	if err := stackkitcommand.ValidateCommand(command); err != nil {
 		return nil, err
 	}
+	var transient *transientIdentityWaiter
+	if needsTransientIdentityResult(command) {
+		// Bound the capability's lifetime even when a caller omitted a deadline.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, transientIdentityLifetime)
+		defer cancel()
+		var err error
+		transient, err = h.registerTransientIdentity(ctx, tenantID, agentID, command)
+		if err != nil {
+			return nil, err
+		}
+		defer h.removeTransientIdentity(tenantID, agentID, command.CommandId, transient)
+		h.mu.Lock()
+		relay := h.householdRelay
+		h.mu.Unlock()
+		if relay != nil && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT {
+			stream, err := relay.register(ctx, tenantID, agentID, command)
+			if err != nil {
+				return nil, err
+			}
+			defer stream.body.Close()
+			go func() {
+				result, err := stream.receive()
+				if err != nil {
+					return
+				}
+				defer clear(result.SensitiveResultJson)
+				if stackkitcommand.ValidateResult(result, command) == nil {
+					h.deliverTransientIdentity(tenantID, agentID, command, result)
+				}
+			}()
+		}
+	}
 	payload, err := protojson.Marshal(command)
 	if err != nil {
 		return nil, fmt.Errorf("encode typed StackKits command: %w", err)
 	}
 	tx, err := h.tenantTx(ctx, tenantID)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkHouseholdEnqueueIntent(ctx, tx, tenantID, agentID, command, payload); err != nil {
+		_ = tx.Rollback()
 		return nil, err
 	}
 	result, err := tx.ExecContext(ctx, `
@@ -313,22 +357,27 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 		return nil, err
 	}
 
-	outcome, err := h.awaitDurable(ctx, tenantID, command.GetCommandId())
+	outcome, err := h.awaitDurable(ctx, tenantID, command.GetCommandId(), transient)
 	if err != nil && ctx.Err() != nil {
 		// Only a command no agent has received yet is withdrawn. A dispatched
 		// command keeps running on the host; its durable outcome stays readable
-		// through AwaitStackKitCommandForTenant, so a restarted caller
-		// re-attaches instead of reporting a false failure.
+		// through AwaitStackKitCommandForTenant. A restarted caller can
+		// re-attach, but a one-time identity capability cannot be recovered.
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = h.withdrawQueued(cleanupCtx, tenantID, command.GetCommandId(), ctx.Err().Error())
 		cancel()
 		return nil, ctx.Err()
+	}
+	if err == nil && outcome != nil && outcome.Success && transient != nil {
+		return transient.attach(ctx, outcome)
 	}
 	return outcome, err
 }
 
 // AwaitStackKitCommandForTenant waits for the durable outcome of a command
 // sent earlier, by this or another process, without sending anything.
+// Successful capability-bearing identity results require their original
+// synchronous waiter and return ErrTransientIdentityResultUnavailable here.
 func (h *Hub) AwaitStackKitCommandForTenant(ctx context.Context, tenantID, commandID string) (*agentpb.StackKitResult, error) {
 	if h == nil || h.db == nil {
 		return nil, fmt.Errorf("typed HTTPS StackKits re-attach requires the durable command store")
@@ -337,7 +386,7 @@ func (h *Hub) AwaitStackKitCommandForTenant(ctx context.Context, tenantID, comma
 	if tenantID == "" || commandID == "" {
 		return nil, fmt.Errorf("typed HTTPS StackKits re-attach requires tenant and command ids")
 	}
-	return h.awaitDurable(ctx, tenantID, commandID)
+	return h.awaitDurable(ctx, tenantID, commandID, nil)
 }
 
 // awaitDurable polls the command's outcome. Each read is a short tenant
@@ -345,11 +394,11 @@ func (h *Hub) AwaitStackKitCommandForTenant(ctx context.Context, tenantID, comma
 // to one second within about two seconds, and to two seconds once the command
 // has run for five minutes. A Guard needs at least a poll cycle to pick a
 // command up, so a faster loop only spends pooled connections.
-func (h *Hub) awaitDurable(ctx context.Context, tenantID, commandID string) (*agentpb.StackKitResult, error) {
+func (h *Hub) awaitDurable(ctx context.Context, tenantID, commandID string, transient *transientIdentityWaiter) (*agentpb.StackKitResult, error) {
 	started := time.Now()
 	interval := 200 * time.Millisecond
 	for {
-		result, done, err := h.readDurableOutcome(ctx, tenantID, commandID)
+		result, done, err := h.readDurableOutcome(ctx, tenantID, commandID, transient)
 		if err != nil || done {
 			return result, err
 		}
@@ -440,7 +489,7 @@ func (h *Hub) submitResultDurable(ctx context.Context, tenantID, agentID string,
 		}
 		return fmt.Errorf("%w: %v", ErrResultRejected, err)
 	}
-	resultPayload, err := protojson.Marshal(result)
+	resultPayload, err := protojson.Marshal(durableStackKitResult(result))
 	if err != nil {
 		_ = tx.Rollback()
 		return err
@@ -453,22 +502,26 @@ func (h *Hub) submitResultDurable(ctx context.Context, tenantID, agentID string,
 		_ = tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	h.deliverTransientIdentity(tenantID, agentID, command, result)
+	return nil
 }
 
-func (h *Hub) readDurableOutcome(ctx context.Context, tenantID, commandID string) (*agentpb.StackKitResult, bool, error) {
+func (h *Hub) readDurableOutcome(ctx context.Context, tenantID, commandID string, transient *transientIdentityWaiter) (*agentpb.StackKitResult, bool, error) {
 	tx, err := h.tenantTx(ctx, tenantID)
 	if err != nil {
 		return nil, false, err
 	}
 	defer tx.Rollback()
 	var state string
-	var payload []byte
+	var payload, commandPayload []byte
 	var commandError sql.NullString
 	err = tx.QueryRowContext(ctx, `
-		SELECT state, COALESCE(result_json, '{}'::jsonb), error
+		SELECT state, COALESCE(result_json, '{}'::jsonb), error, command_json
 		FROM typed_agent_commands WHERE tenant_id = $1 AND command_id = $2
-	`, tenantID, commandID).Scan(&state, &payload, &commandError)
+	`, tenantID, commandID).Scan(&state, &payload, &commandError, &commandPayload)
 	if err != nil {
 		return nil, false, err
 	}
@@ -477,6 +530,19 @@ func (h *Hub) readDurableOutcome(ctx context.Context, tenantID, commandID string
 		result := &agentpb.StackKitResult{}
 		if err := protojson.Unmarshal(payload, result); err != nil {
 			return nil, true, err
+		}
+		// History is public-only even if it predates the transient handoff.
+		// Never reconstruct an enrollment capability from a persisted result.
+		clear(result.SensitiveResultJson)
+		result.SensitiveResultJson = nil
+		if result.Success {
+			command := &agentpb.StackKitCommand{}
+			if err := protojson.Unmarshal(commandPayload, command); err != nil {
+				return nil, true, err
+			}
+			if needsTransientIdentityResult(command) && (transient == nil || !proto.Equal(transient.command, command)) {
+				return nil, true, ErrTransientIdentityResultUnavailable
+			}
 		}
 		return result, true, nil
 	case "failed":
@@ -587,7 +653,7 @@ func (h *Hub) tenantTx(ctx context.Context, tenantID string) (*sql.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		_ = tx.Rollback()
 		return nil, err
 	}

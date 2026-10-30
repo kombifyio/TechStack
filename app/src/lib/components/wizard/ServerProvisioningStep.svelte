@@ -34,6 +34,7 @@
   import { managedProviders } from "#lib/wizard/managed-providers.js";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
   import { NODE_GUIDES } from "#lib/docs-links.js";
+  import { NEW_SERVER_CREATION_HREF } from "#lib/server-links.js";
 
   let {
     config = $bindable(),
@@ -518,7 +519,7 @@
         {/if}
         {#if config.serverProvisioning.mode === "hypervisor"}
           <p class="path-intro">{tr("wizard.server.system.proxmoxSequence")}</p>
-          {#if reviewMode}<a class="text-action" href="/stacks/new"
+          {#if reviewMode}<a class="text-action" href={NEW_SERVER_CREATION_HREF}
               >{tr("wizard.preview.back")}</a
             >{:else}<HypervisorSelection
               bind:config

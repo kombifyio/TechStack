@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 // ApplyServerEvent serializes one aggregate event under a row lock and commits
@@ -61,7 +63,7 @@ func (s *PostgresStore) ApplyServerEventTx(
 	if tenantID == "" || strings.TrimSpace(event.ServerID) == "" {
 		return nil, fmt.Errorf("controlplane: server event tenant and server id required")
 	}
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", tenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return nil, fmt.Errorf("controlplane: set server event tenant context: %w", err)
 	}
 	var databaseNow time.Time

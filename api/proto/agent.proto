@@ -263,6 +263,16 @@ enum StackKitOperation {
   // carries public material only: a CA public key with its principal map, or
   // a host certificate.
   STACKKIT_OPERATION_HOST_SSH_APPLY = 63;
+  // Read the locally Owner-signed move receipt and observe current runtime.
+  STACKKIT_OPERATION_RELOCATE_STATUS = 64;
+  // Permanently abort a checked move only before any destination restore effects.
+  STACKKIT_OPERATION_RELOCATE_ABORT = 65;
+  // Author a bounded use-case configuration candidate without applying runtime changes.
+  STACKKIT_OPERATION_USE_CASE_CONFIGURE = 66;
+  // Author a retained-data candidate for one workload or an exact catalog use case.
+  STACKKIT_OPERATION_USE_CASE_REMOVE = 68;
+  // Apply one Cloud owner/person generation under the node lifecycle lock.
+  STACKKIT_OPERATION_HOUSEHOLD_PROJECT = 69;
 }
 
 enum StackKitDriftMode {
@@ -675,6 +685,20 @@ message StackKitCommand {
   string relocation_source_address = 69;
   // RELOCATE_RECEIVE only: OLD=NEW domain switches of the restored resources.
   repeated string relocation_set_domains = 70;
+  // RELOCATE_PLAN and RELOCATE_SEND only: exact individual application UUIDs.
+  // Projects and UUID selectors are mutually exclusive; dependencies remain included.
+  repeated string relocation_resource_uuids = 71;
+  // Shared semantic move identity on send and receive, scoped to one durable job.
+  string relocation_transfer_id = 72;
+  // USE_CASE_CONFIGURE only: strict public catalog intent. Guard chooses every argv and candidate path.
+  bytes use_case_configuration_json = 73;
+  // USE_CASE_REMOVE only: strict retained-data selector and catalog membership.
+  bytes use_case_removal_json = 75;
+  // HOUSEHOLD_PROJECT only: opaque owner/person digest, positive generation,
+  // and add/remove intent. Older pinned binaries reject this operation.
+  string household_projection_key = 76;
+  uint64 household_projection_revision = 77;
+  string household_projection_action = 78;
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON

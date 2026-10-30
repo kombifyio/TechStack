@@ -16,6 +16,43 @@ const (
 	placementClassUnknown = "unknown"
 )
 
+// Recognition evidence the Guard reports beside a discovered unit (see
+// pkg/appcatalog): its allow-listed container labels and the application it
+// proved over HTTP on the unit's own port.
+const (
+	serviceRecognitionLabelsKey = "labels"
+	serviceFingerprintKey       = "fingerprint"
+	maxFingerprintLength        = 64
+)
+
+// boundedFingerprint keeps a reported fingerprint only when it is a plausible
+// catalog id; recognition still resolves it against the catalog on read.
+func boundedFingerprint(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || len(value) > maxFingerprintLength || appcatalog.ContainerKey(value) != value {
+		return ""
+	}
+	return value
+}
+
+// recognitionLabelsFromMetadata reads stored labels back, whether the store
+// kept them as map[string]string (memory) or map[string]any (decoded JSON).
+func recognitionLabelsFromMetadata(value any) map[string]string {
+	switch labels := value.(type) {
+	case map[string]string:
+		return appcatalog.RecognitionLabels(labels)
+	case map[string]any:
+		text := make(map[string]string, len(labels))
+		for key, item := range labels {
+			if value, ok := item.(string); ok {
+				text[key] = value
+			}
+		}
+		return appcatalog.RecognitionLabels(text)
+	}
+	return nil
+}
+
 func serviceCatalogEntry(service controlplane.ServiceRuntime) *appcatalog.Entry {
 	if entry := appcatalog.Match(serviceSubject(service)); entry != nil {
 		return entry
@@ -32,6 +69,8 @@ func serviceSubject(service controlplane.ServiceRuntime) appcatalog.Subject {
 		Image:          stringFromAnyMap(service.Metadata, "image"),
 		Platform:       stringFromAnyMap(service.Metadata, "platform_type"),
 		ComposeService: identity["service"],
+		Labels:         recognitionLabelsFromMetadata(service.Metadata[serviceRecognitionLabelsKey]),
+		Fingerprint:    boundedFingerprint(stringFromAnyMap(service.Metadata, serviceFingerprintKey)),
 	}
 	switch identity["kind"] {
 	case "docker_compose_service":

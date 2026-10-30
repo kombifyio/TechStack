@@ -40,8 +40,9 @@ const (
 
 // selfDisclosureWriteRequest is the closed wire contract of one write.
 type selfDisclosureWriteRequest struct {
-	Source     string                        `json:"source"`
-	Disclosure kscore.OperatorSelfDisclosure `json:"disclosure"`
+	Source      string                                    `json:"source"`
+	Disclosure  kscore.OperatorSelfDisclosure             `json:"disclosure"`
+	IfUnchanged *controlplane.OperatorSelfDisclosureValue `json:"if_unchanged,omitempty"`
 }
 
 func (api *UnifierAPI) handleGetSelfDisclosure(e *httpx.Event) error {
@@ -103,7 +104,13 @@ func (api *UnifierAPI) handlePutSelfDisclosure(e *httpx.Event) error {
 		OwnerSubjectID: ownerID,
 		Source:         source,
 		Disclosure:     request.Disclosure,
-	})
+	}, request.IfUnchanged)
+	if errors.Is(err, controlplane.ErrConflict) {
+		return httpx.Error(e, http.StatusPreconditionFailed, ksapi.ErrCodeConflict,
+			"Self-disclosure changed before this replacement", map[string]any{
+				"reason_code": "self_disclosure_changed", "retryable": false,
+			})
+	}
 	if err != nil {
 		return httpx.InternalError(e, "failed to store self-disclosure")
 	}

@@ -1,18 +1,15 @@
 <script module lang="ts">
-  // Keep failed Logo Link URLs in memory for this tab so remounting cards does
-  // not spend another request on a logo that already failed.
+  // Keep failed logo URLs in memory for this tab so remounting cards does not
+  // spend another request on a logo that already failed.
   const failedLogoUrls = new Set<string>();
 </script>
 
 <script lang="ts">
   import { getContext } from "svelte";
   import { Box } from "@lucide/svelte";
-  import { clientBootstrap } from "#lib/client/bootstrap.js";
-  import { theme } from "#lib/stores/theme.js";
   import {
     BRAND_LOGO_CONTEXT,
     localBrandLogoUrl,
-    logoLinkUrl,
     type BrandLogoContext,
   } from "#lib/brand-logo.js";
 
@@ -33,35 +30,10 @@
   } = $props();
 
   const brandLogo = getContext<BrandLogoContext>(BRAND_LOGO_CONTEXT);
-  let logoTheme = $state<"light" | "dark">("dark");
-
-  $effect(() => {
-    // The store can contain `system`; the root attribute is the resolved theme
-    // and also follows host-pushed theme changes in embedded Techstack.
-    void $theme;
-    if (typeof document === "undefined") return;
-
-    const syncTheme = () => {
-      logoTheme =
-        document.documentElement.dataset.theme === "light" ? "light" : "dark";
-    };
-    syncTheme();
-
-    const observer = new MutationObserver(syncTheme);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  });
-
-  const local = $derived(localBrandLogoUrl(brandLogo?.domain));
+  // The logo the caller resolved (recognition or viewer override), else the
+  // mirrored icon of the vendor domain; none draws the monogram or glyph.
   const src = $derived(
-    local ||
-      logoLinkUrl(brandLogo?.domain, $clientBootstrap.contextDevLogolinkId, {
-        theme: logoTheme,
-        type: "icon",
-      }),
+    brandLogo?.logoUrl || localBrandLogoUrl(brandLogo?.domain),
   );
   let failed = $state(false);
   const imageFailed = $derived(failed || failedLogoUrls.has(src));

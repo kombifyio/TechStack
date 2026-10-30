@@ -74,7 +74,13 @@ func (a *Agent) receiveGrant(grant *guardbinding.LocalRepairGrant) {
 // durable record of the operation.
 func (a *Agent) localRepair(ctx context.Context, security *guardposture.SecurityReport) {
 	local := a.cfg.Local
-	if local == nil || a.held == nil || security == nil || security.Status != guardposture.ObservationObserved || local.Ledger == nil {
+	if local == nil || security == nil || security.Status != guardposture.ObservationObserved || local.Ledger == nil {
+		return
+	}
+	if a.held == nil {
+		// No grant arrived since the Guard started (or it lapsed): it observed
+		// the host and stays observe-only, which the log makes visible.
+		a.log.Info("guard_local_repair_observe_only", "code", "no_grant", "reason", "no local repair grant is held")
 		return
 	}
 	now := a.cfg.Now()

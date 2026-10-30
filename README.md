@@ -84,7 +84,7 @@ contributions land.
 ## Support, security, and license
 
 - Support: `SUPPORT.md`
-- Security reports: `SECURITY.md` (private advisories only)
+- Security reports: `SECURITY.md` (private vulnerability reporting or e-mail, never a public issue)
 - License: `LICENSE` (dual Apache 2.0 / GPLv3, at your choice); the bundled
   Go source and npm release tarballs are listed with their licenses in
   `BUNDLED-PACKAGES.md`.

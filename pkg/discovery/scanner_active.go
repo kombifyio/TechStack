@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 // ScanActive performs an active port scan on discovered or specified hosts.
@@ -112,7 +114,7 @@ func (s *Scanner) scanPortsResult(ctx context.Context, ip string, ports []int, t
 			defer wg.Done()
 
 			addr := net.JoinHostPort(ip, strconv.Itoa(p))
-			conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
+			conn, err := fulllocal.Dial((&net.Dialer{Timeout: timeout}).DialContext)(ctx, "tcp", addr)
 			if err != nil {
 				return
 			}

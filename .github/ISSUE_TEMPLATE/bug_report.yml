@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in a released kombify Techstack Open Core version does not behave as documented.
+type: Bug
+labels: ["triage/needs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. This issue is public: remove secrets, tokens, personal data, private hostnames and access URLs before you paste anything.
+        Security vulnerabilities go to the private advisory form, never into an issue.
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product
+      options:
+        - "kombify Techstack Open Core"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "The release version, from the Windows installer or the container image tag."
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Release channel
+      options:
+        - Stable
+        - Early Access
+        - I don't know
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system and version, architecture, browser or host type.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps or commands, in order.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and output
+      description: "Paste the relevant log lines. Remove hostnames, addresses and secrets first."
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the open and closed issues for this problem.
+          required: true
+        - label: The report contains no secrets or personal data.
+          required: true

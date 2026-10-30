@@ -15,6 +15,7 @@ import (
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
 
@@ -85,6 +86,9 @@ func (p *NativePowerController) RequestPower(
 	req.TenantID, req.OwnerID, req.LeaseID = strings.TrimSpace(req.TenantID), strings.TrimSpace(req.OwnerID), strings.TrimSpace(req.LeaseID)
 	if req.TenantID == "" || req.OwnerID == "" || req.LeaseID == "" || !state.Valid() {
 		return monthlyruntime.PowerOperation{}, fmt.Errorf("%w: tenant, owner, lease and target state are required", monthlyruntime.ErrPowerNotAdmitted)
+	}
+	if !releasechannel.AdmitsJobExecution(req.TenantID) {
+		return monthlyruntime.PowerOperation{}, releasechannel.ErrTenantNotOwned
 	}
 	candidate, err := p.preparePower(ctx, req, state)
 	if err != nil {

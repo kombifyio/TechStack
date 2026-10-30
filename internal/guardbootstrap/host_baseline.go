@@ -82,8 +82,8 @@ func RenderNeutralUbuntuHostBaseline(version, operation string) (string, error) 
 // These two fragments are the single host-security/package baseline shared by
 // neutral image baking and provider first boot. Enrollment/channel state is
 // supplied only by the provider wrapper.
-func ubuntuHostReadyTest() string {
-	checks := []struct{ name, command string }{
+func ubuntuHostReadyChecks() []struct{ name, command string } {
+	return []struct{ name, command string }{
 		{"docker", "docker info >/dev/null 2>&1"},
 		{"nft", "command -v nft >/dev/null 2>&1"},
 		{"fail2ban_enabled", "systemctl is-enabled --quiet fail2ban"},
@@ -97,11 +97,45 @@ func ubuntuHostReadyTest() string {
 		{"sshd_keyboard", "sshd -T | grep -x 'kbdinteractiveauthentication no' >/dev/null"},
 		{"firewall_owner", "! command -v ufw >/dev/null 2>&1 || ! ufw status 2>/dev/null | grep -q '^Status: active' || { ! systemctl is-active --quiet nftables && ! systemctl is-enabled --quiet nftables; }"},
 	}
+}
+
+func ubuntuHostReadyTest() string {
 	var script strings.Builder
-	for _, check := range checks {
+	for _, check := range ubuntuHostReadyChecks() {
 		script.WriteString("  { " + check.command + "; } || { printf 'KOMBIFY_HOST_BASELINE_FAILURE_CHECK:" + check.name + "\\n' >&2; return 1; }\n")
 	}
 	return script.String() + "  true"
+}
+
+// RuntimeHostReadinessScript observes the same baseline first boot prepares.
+// It installs nothing and accepts no caller-supplied commands or configuration.
+func RuntimeHostReadinessScript() string {
+	return "set -euo pipefail\n" +
+		"status_file=/var/lib/kombify/host-prep/v2.status\n" +
+		"if test -r \"$status_file\" && grep -qx 'status=failed' \"$status_file\"; then exit 78; fi\n" +
+		"if ! test -r \"$status_file\" || ! grep -qx 'status=ready' \"$status_file\"; then exit 75; fi\n" +
+		"stackkit_ready() {\n" + ubuntuHostReadyTest() + " &&\n{ " +
+		RenderExecutionChannelUserReadyTest("") + "; } || { printf 'KOMBIFY_HOST_BASELINE_FAILURE_CHECK:execution_channel\\n' >&2; return 1; }\n}\nstackkit_ready\n"
+}
+
+// RuntimeHostReadinessFailureCheck returns only a canonical check name. Raw
+// command output and other host-controlled names must stay inside custody.
+func RuntimeHostReadinessFailureCheck(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		name := strings.TrimPrefix(line, "KOMBIFY_HOST_BASELINE_FAILURE_CHECK:")
+		if name == line {
+			continue
+		}
+		if name == "execution_channel" {
+			return name
+		}
+		for _, check := range ubuntuHostReadyChecks() {
+			if name == check.name {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func ubuntuHostPreparation(channelProvisioning, firewallSetup string) string {

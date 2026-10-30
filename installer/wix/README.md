@@ -34,5 +34,5 @@ wix extension add WixToolset.Bal.wixext/4.0.6
 wix extension add WixToolset.Firewall.wixext/4.0.6
 pwsh -File .\installer\wix\build-windows-installer.ps1 `
   -StageDir .\dist\windows-client\stage `
-  -Version 0.0.0-local
+  -Version 0.0.0
 ```

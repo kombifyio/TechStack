@@ -107,7 +107,7 @@ func (r *deployRollout) runTypedStackKitRestoreDrill(ctx context.Context) (map[s
 	if r == nil || r.cfg == nil || r.cfg.StackKitCommander == nil || r.actionReq.TechStackEnrollment == nil || r.job == nil || r.unifiedSpec == nil {
 		return nil, fmt.Errorf("typed StackKits restore dispatcher is not configured")
 	}
-	release, err := configuredTargetStackKitRelease()
+	release, err := TargetStackKitReleaseForStack(ctx, r.actionReq.TenantID, r.actionReq.StackID)
 	if err != nil {
 		return nil, err
 	}

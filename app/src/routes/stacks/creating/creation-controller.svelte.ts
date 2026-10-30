@@ -59,6 +59,7 @@ import {
   serverHasFreshGuardHeartbeat,
 } from "#lib/wizard/guard-connection.js";
 import { appVersion } from "#lib/config.js";
+import { NEW_SERVER_CREATION_HREF } from "#lib/server-links.js";
 import { authStore } from "#lib/stores/auth.svelte.js";
 import {
   buildTechstackCreationEventProperties,
@@ -2194,7 +2195,7 @@ function retryFromStart() {
   goto(
     creationOperation === "add-server" && stackId
       ? `/stacks/${encodeURIComponent(stackId)}/servers/new`
-      : "/stacks/new",
+      : NEW_SERVER_CREATION_HREF,
   );
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/guardbootstrap"
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/secrets"
 	"golang.org/x/crypto/ssh"
 )
@@ -56,10 +57,12 @@ type SSHRuntimeTargetBootstrapperConfig struct {
 	RetryInterval     time.Duration
 	MaxAttempts       int
 	Now               func() time.Time
-	Dial              sshBootstrapDialFunc
+	// Dial preserves the explicit injection seam. Nil selects the context-aware,
+	// conditionally guarded production connection.
+	Dial sshBootstrapDialFunc
 	// HostKeys pins the first observed host key per target address and
-	// verifies later connections against it. A nil store keeps the legacy
-	// permissive dial for tests and disabled wiring only.
+	// verifies later connections against it. Without a store the connection
+	// is refused rather than trusting an unverifiable host.
 	HostKeys *RuntimeHostKeyStore
 }
 
@@ -135,10 +138,6 @@ func NewSSHRuntimeTargetBootstrapper(cfg SSHRuntimeTargetBootstrapperConfig) *SS
 	if now == nil {
 		now = time.Now
 	}
-	dialSSH := cfg.Dial
-	if dialSSH == nil {
-		dialSSH = ssh.Dial
-	}
 	return &SSHRuntimeTargetBootstrapper{
 		timeout:           timeout,
 		timeoutDefaulted:  timeoutDefaulted,
@@ -147,7 +146,7 @@ func NewSSHRuntimeTargetBootstrapper(cfg SSHRuntimeTargetBootstrapperConfig) *SS
 		retryInterval:     retryInterval,
 		maxAttempts:       maxAttempts,
 		now:               now,
-		dialSSH:           dialSSH,
+		dialSSH:           cfg.Dial,
 		hostKeys:          cfg.HostKeys,
 	}
 }
@@ -418,23 +417,34 @@ func (b *SSHRuntimeTargetBootstrapper) dialAs(ctx context.Context, target *Runti
 }
 
 func (b *SSHRuntimeTargetBootstrapper) dialOnce(ctx context.Context, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	if b.dialSSH == nil {
+		return fulllocal.DialSSH(ctx, addr, config)
+	}
 	type dialResult struct {
 		client *ssh.Client
 		err    error
 	}
-	done := make(chan dialResult, 1)
+	done := make(chan dialResult)
 	go func() {
-		dialSSH := b.dialSSH
-		if dialSSH == nil {
-			dialSSH = ssh.Dial
+		client, err := b.dialSSH("tcp", addr, config)
+		select {
+		case done <- dialResult{client: client, err: err}:
+		case <-ctx.Done():
+			if client != nil {
+				_ = client.Close()
+			}
 		}
-		client, err := dialSSH("tcp", addr, config)
-		done <- dialResult{client: client, err: err}
 	}()
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case result := <-done:
+		if err := ctx.Err(); err != nil {
+			if result.client != nil {
+				_ = result.client.Close()
+			}
+			return nil, err
+		}
 		return result.client, result.err
 	}
 }

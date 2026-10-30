@@ -172,6 +172,9 @@ func runAgentMode(ctx context.Context, args []string) error {
 	if isAgentEnroll(args) {
 		return runAgentEnroll(ctx, args[1:], os.Stdout)
 	}
+	if isAgentHandoff(args) {
+		return runAgentHandoff(args[1:], os.Stdout)
+	}
 	cfg, err := parseAgentModeConfig(args)
 	if err != nil {
 		return err

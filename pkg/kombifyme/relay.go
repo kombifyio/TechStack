@@ -19,6 +19,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/kombifyio/techstack/internal/gocommon/dataprofile"
+
 	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
@@ -121,7 +123,7 @@ func NewRelay(cfg RelayConfig) (*Relay, error) {
 	// connects to it.
 	if fulllocal.Active() {
 		return nil, &RelaySessionError{
-			Err:    &fulllocal.DeniedError{Host: "kombify.me"},
+			Err:    &dataprofile.DeniedError{Host: "kombify.me"},
 			Denial: &RelayDenial{ReasonCode: fulllocal.ReasonCode, Retryable: false},
 		}
 	}

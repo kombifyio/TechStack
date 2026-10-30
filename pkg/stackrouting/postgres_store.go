@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-)
 
-const routingTenantGUC = "app.tenant_id"
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
+)
 
 type PostgresStore struct {
 	db *sql.DB
@@ -392,7 +392,7 @@ func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, `SELECT set_config($1, $2, true)`, routingTenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set routing tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {

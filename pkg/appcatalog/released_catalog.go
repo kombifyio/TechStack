@@ -39,8 +39,9 @@ func releasedCatalogEntry(id string) *Entry {
 		for _, useCase := range catalog.UseCases {
 			for _, component := range useCase.Components {
 				if component.Kind == "application" && component.ID == id {
-					entry := &Entry{ID: id, DisplayName: component.Name, Category: useCase.ID, IconURL: IconURL(id)}
+					entry := &Entry{ID: id, DisplayName: component.Name, Category: useCase.ID}
 					attachReleasedApplicationPresentation(entry)
+					attachPresentation(entry)
 					return entry
 				}
 			}
@@ -52,6 +53,7 @@ func releasedCatalogEntry(id string) *Entry {
 		return nil
 	}
 	attachReleasedApplicationPresentation(&entry)
+	attachPresentation(&entry)
 	return &entry
 }
 
@@ -99,7 +101,7 @@ func applicationsFromRelease(catalog stackkitrelease.UseCaseCatalog) map[string]
 			}
 			applications[component.ID] = Entry{
 				ID: component.ID, DisplayName: component.Name,
-				Category: useCase.ID, IconURL: IconURL(component.ID),
+				Category: useCase.ID,
 			}
 		}
 	}

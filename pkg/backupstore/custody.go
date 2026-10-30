@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 const custodyTenantGUC = "app.tenant_id"
@@ -265,7 +266,7 @@ func (s *PostgresCustodyStore) withTenant(ctx context.Context, tenantID string, 
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", custodyTenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {

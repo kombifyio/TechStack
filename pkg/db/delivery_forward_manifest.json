@@ -12,9 +12,58 @@
     {
       "version": "163_servers_trigger_tenant_serialization.sql",
       "sha256": "1b6643cac86aade4ff7b7ceacb4e69e0bd9ce54ce542e7a6f1b87468537323b6"
+    },
+    {
+      "version": "164_explicit_runtime_routine_execute.sql",
+      "sha256": "c7613e0d5300a6cfccb91afb87fd06f08600a960e0c72e25b9f9d40b2db10201"
+    },
+    {
+      "version": "165_verified_tenant_context.sql",
+      "sha256": "012a6ea38a6495b3f2ac537b9632f9f0c04f8b9d8cf49a5ad16c4d0cb9ea4736"
+    },
+    {
+      "version": "166_onboarding_verified_context.sql",
+      "sha256": "5bba61d26838b6dc40cb92b0a8033d4d3b6c76fa838a7136f829aa91399d7f96"
+    },
+    {
+      "version": "167_personal_settings_verified_context.sql",
+      "sha256": "4fdf62b2ef0a6c471784c7c4b8372ae735b378bc6d198854468973881aea7a13"
+    },
+    {
+      "version": "168_household_projection_bindings.sql",
+      "sha256": "5a5b05d69c313258a46d103862ea005441388527d5136d935d5e37ef38d5a179"
+    },
+    {
+      "version": "169_guard_tenant_handoffs.sql",
+      "sha256": "4d81529b16c1a80fbb492f06c39caf0437d3776e441f24947d3e01ca488e3a42"
+    },
+    {
+      "version": "170_guard_key_custody.sql",
+      "sha256": "062891ae1d19968ef4f0f5b8a6632431c03f5b40f3787c0ef8b77b0e51c0fc73"
+    },
+    {
+      "version": "171_failure_occurrences.sql",
+      "sha256": "9149bb5cb7ddfed81f89e08ed6858ccb2e141aa331cdfef6dee58f8fb729eefa"
+    },
+    {
+      "version": "172_failure_resolution_outcomes.sql",
+      "sha256": "50c43b2b528222f6c49e20a68ec2efdade7d3c533fd44fdc459a068d86e8e0cc"
+    },
+    {
+      "version": "173_platform_projection_system.sql",
+      "sha256": "b5cc06f6d95d2ff067509cb8ed9656edd96cda80c10a36c138bcb321f78a5e7f"
     }
   ],
-  "provider_resource": "clickhouse-postgres:b6140b1d-3833-455a-b515-729055d3140d:f9301db0-e99d-8ad0-bec2-efb56642a37e:migrations",
-  "hostname": "kombify-prd-pg-runtime-52af3c33.pgz4r1vc79kp5qv1ezdb68ahqx.c0.eu-central-1.aws.pg.clickhouse.cloud",
+  "database_target": "runtime",
+  "database_targets": {
+    "runtime": {
+      "provider_resource": "clickhouse-postgres:b6140b1d-3833-455a-b515-729055d3140d:f9301db0-e99d-8ad0-bec2-efb56642a37e:migrations",
+      "hostname": "kombify-prd-pg-runtime-52af3c33.pgz4r1vc79kp5qv1ezdb68ahqx.c0.eu-central-1.aws.pg.clickhouse.cloud"
+    },
+    "core": {
+      "provider_resource": "clickhouse-postgres:b6140b1d-3833-455a-b515-729055d3140d:6e7fa3aa-a673-8ad0-8878-630351eb5115:migrations",
+      "hostname": "kombify-prd-pg-core-c42ec78c.pgdszt7an6ee5h1w660thxd8hb.c0.eu-central-1.aws.pg.clickhouse.cloud"
+    }
+  },
   "provider_ca_sha256": "4041ffb7103e68baab38035bec72ff4119fc4f0cc4be4ff972e6451c0d317074"
 }

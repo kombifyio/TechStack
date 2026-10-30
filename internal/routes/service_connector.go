@@ -27,7 +27,10 @@ type serviceConnectorRequest struct {
 	OwnerApproved             bool   `json:"owner_approved"`
 }
 
-func (h *serviceRuntimeHandlers) connectorRelease() (*agentpb.StackKitReleasePin, error) {
+func (h *serviceRuntimeHandlers) connectorRelease(ctx context.Context, tenant, stack string) (*agentpb.StackKitReleasePin, error) {
+	if jobs.StageCandidateReleaseConfigured() {
+		return jobs.ApplicationConnectorReleaseForStack(ctx, tenant, stack, false)
+	}
 	if h.connectorAdmission != nil {
 		return h.connectorAdmission()
 	}
@@ -43,7 +46,7 @@ func (h *serviceRuntimeHandlers) readConnector(e *httpx.Event) error {
 		return err
 	}
 
-	_, admissionErr := h.connectorRelease()
+	_, admissionErr := h.connectorRelease(e.Request.Context(), t.tenant, t.stack.ID)
 	var projection map[string]any
 	data, _ := json.Marshal(t.service.Metadata["application_connector"])
 	var retained map[string]any
@@ -108,7 +111,7 @@ func (h *serviceRuntimeHandlers) setupConnector(e *httpx.Event) error {
 	if len(image) != 71 || !strings.HasPrefix(image, "sha256:") {
 		return httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Current immutable application image evidence is required", nil)
 	}
-	pin, err := h.connectorRelease()
+	pin, err := h.connectorRelease(e.Request.Context(), t.tenant, t.stack.ID)
 	if err != nil {
 		return connectorUnavailable(e)
 	}
@@ -154,7 +157,7 @@ func (h *serviceRuntimeHandlers) verifyConnector(e *httpx.Event) error {
 	if decoder.Decode(&body) != nil || body == nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return httpx.BadRequest(e, "Connector verification accepts only an empty metadata object", nil)
 	}
-	if _, err = h.connectorRelease(); err != nil {
+	if _, err = h.connectorRelease(e.Request.Context(), t.tenant, t.stack.ID); err != nil {
 		return connectorUnavailable(e)
 	}
 	consumer, ok := h.orch.(interface {

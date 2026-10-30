@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/jobs"
 )
 
@@ -114,21 +115,11 @@ func Dial(ctx context.Context, target *jobs.ManagedRuntimeTarget, fingerprint st
 		return nil, errors.New("ssh credential unavailable")
 	}
 	address := net.JoinHostPort(target.Host, strconv.Itoa(target.SSHPort))
-	dialer := net.Dialer{Timeout: dialTimeout}
-	network, err := dialer.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return nil, err
-	}
 	config := &ssh.ClientConfig{User: target.SSHUser, Auth: auth, HostKeyCallback: callback, Timeout: dialTimeout}
 	if algorithm != "" {
 		config.HostKeyAlgorithms = []string{algorithm}
 	}
-	connection, channels, requests, err := ssh.NewClientConn(network, address, config)
-	if err != nil {
-		network.Close()
-		return nil, err
-	}
-	return ssh.NewClient(connection, channels, requests), nil
+	return fulllocal.DialSSH(ctx, address, config)
 }
 
 // ChannelKeyBlobs returns the base64 key blobs of every credential the

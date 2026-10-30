@@ -17,14 +17,19 @@ package httpguard
 // guess, and a runtime state the probe does not express becomes `unknown`.
 // Health is only reported when the runtime itself reports health evidence: a
 // container without a HEALTHCHECK carries no health key at all rather than an
-// optimistic green value.
+// optimistic green value. The same holds for recognition: only the allow-listed
+// recognition labels of a container are reported, and a fingerprint only when
+// the unit's own published port answered with it (fingerprint.go); a port that
+// proved no web UI leaves the address to the published-port summary instead of
+// a guess.
 //
 // # Bounds
 //
 // Discovery must never delay the next heartbeat. Every probe shares one
 // bounded budget, reads a bounded amount of output, and the merged result is
 // capped so a host with thousands of containers cannot produce an unbounded
-// inventory payload.
+// inventory payload. The HTTP fingerprint step has its own budget and cache, so
+// a steady-state heartbeat sends no request at all.
 
 import (
 	"bytes"
@@ -36,11 +41,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
 
@@ -82,14 +89,23 @@ type DiscoveryConfig struct {
 	// privileged executor. The docker socket is root-equivalent, so the daemon
 	// never gets access to it; nil runs the probe locally.
 	Probe func(ctx context.Context, name string, args ...string) ([]byte, error)
-	// run and readUnitDir are unexported test seams. Production always uses the
-	// real host probes.
+	// FingerprintBudget bounds the whole HTTP fingerprint step of one inventory
+	// cycle (see fingerprint.go); zero uses the 4 s default.
+	FingerprintBudget time.Duration
+	// DisableFingerprint turns the HTTP fingerprint probe off. Recognition then
+	// rests on labels, image and name alone, and no request is sent.
+	DisableFingerprint bool
+	// run, readUnitDir and probePort are unexported test seams. Production
+	// always uses the real host probes.
 	run         commandRunner
 	readUnitDir func(string) ([]os.DirEntry, error)
+	probePort   portProber
 }
 
 type hostDiscovery struct {
 	cfg DiscoveryConfig
+	// fingerprints is nil when discovery or the fingerprint probe is disabled.
+	fingerprints *fingerprintProber
 }
 
 // discoveryOutcome separates "discovery ran and found nothing" from "discovery
@@ -126,7 +142,19 @@ func newHostDiscovery(cfg DiscoveryConfig) *hostDiscovery {
 	if cfg.readUnitDir == nil {
 		cfg.readUnitDir = os.ReadDir
 	}
-	return &hostDiscovery{cfg: cfg}
+	return &hostDiscovery{cfg: cfg, fingerprints: newFingerprintProber(cfg)}
+}
+
+// recognize asks the running containers' own published ports what they are and
+// records the proof (Fingerprint, a proven InternalAddress) on the services in
+// place. It never fails and never exceeds the fingerprint budget: a port that
+// does not answer in time is missing evidence, not a reason to hold back the
+// inventory.
+func (d *hostDiscovery) recognize(ctx context.Context, services []Service, host Host) {
+	if d == nil {
+		return
+	}
+	d.fingerprints.recognize(ctx, services, host)
 }
 
 // discover enumerates the services running on this host. It never returns an
@@ -252,7 +280,10 @@ func dockerContainerService(container dockerContainer) (Service, bool) {
 		ImageVersion:    boundedImageVersionLabel(labels[ociImageVersionLabel]),
 		Health:          health,
 		RuntimeIdentity: runtimeIdentity,
-		publishedPorts:  parsePublishedPorts(container.Ports),
+		// Only the allow-listed recognition labels are reported; the rest of the
+		// label set stays on the host.
+		Labels:         appcatalog.RecognitionLabels(labels),
+		publishedPorts: parsePublishedPorts(container.Ports),
 	}, true
 }
 
@@ -266,16 +297,32 @@ func boundedImageVersionLabel(value string) string {
 	return value
 }
 
+// dockerLabelKey is the shape of a container label key: reverse-DNS style
+// words, dots, dashes, underscores and slashes.
+var dockerLabelKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+
+// dockerLabelMap parses the `{{.Labels}}` summary of `docker ps`, `k=v,k2=v2`.
+// The format escapes nothing, so a value can hold commas itself
+// (`traefik.http.routers.x.entrypoints=web,websecure`, a `Host(a,b)` rule): a
+// segment that does not start like a label key (no `=`, or a key that is not a
+// label key) continues the previous value instead of being dropped.
 func dockerLabelMap(raw string) map[string]string {
-	result := map[string]string{}
-	for _, entry := range strings.Split(raw, ",") {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
+	type pair struct{ key, value string }
+	var pairs []pair
+	for _, segment := range strings.Split(raw, ",") {
+		if key, value, ok := strings.Cut(segment, "="); ok && dockerLabelKey.MatchString(strings.TrimSpace(key)) {
+			pairs = append(pairs, pair{key: strings.TrimSpace(key), value: value})
 			continue
 		}
-		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
-		if key != "" && len(key) <= 128 && len(value) <= 1024 {
-			result[key] = value
+		if last := len(pairs) - 1; last >= 0 {
+			pairs[last].value += "," + segment
+		}
+	}
+	result := make(map[string]string, len(pairs))
+	for _, entry := range pairs {
+		value := strings.TrimSpace(entry.value)
+		if len(entry.key) <= 128 && len(value) <= 1024 {
+			result[entry.key] = value
 		}
 	}
 	return result

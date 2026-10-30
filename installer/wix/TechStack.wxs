@@ -48,6 +48,7 @@
               Description="Allow the explicitly enabled Techstack enrollment listener from the local subnet."
               Port="5264"
               Protocol="tcp"
+              Profile="private"
               Scope="localSubnet" />
           </Component>
 <?endif?>

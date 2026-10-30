@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -14,6 +15,7 @@ const tenantGUC = "app.tenant_id"
 
 type PostgresStore struct {
 	db                   *sql.DB
+	backupWorker         bool
 	serverEventProjector ServerEventProjector
 	serverEventCommitted ServerEventCommitObserver
 }
@@ -35,6 +37,12 @@ type ServerEventCommitObserver interface {
 }
 
 type PostgresStoreOption func(*PostgresStore)
+
+// WithBackupWorkerConflictProjection selects the metadata-only execution fence.
+// Database grants still enforce its exact separate login; this option confers no authority.
+func WithBackupWorkerConflictProjection() PostgresStoreOption {
+	return func(store *PostgresStore) { store.backupWorker = true }
+}
 
 func WithServerEventProjector(projector ServerEventProjector) PostgresStoreOption {
 	return func(store *PostgresStore) {
@@ -144,8 +152,8 @@ func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func
 		}
 	}()
 
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", tenantGUC, tenantID); err != nil {
-		return fmt.Errorf("set tenant guc: %w", err)
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
+		return err
 	}
 	if err := fn(tx); err != nil {
 		return err

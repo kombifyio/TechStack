@@ -36,7 +36,8 @@ func DeployHandler(cfg *ProvisionConfig) JobHandler {
 			}
 		}()
 		defer func() {
-			if handlerErr != nil && !isJobWaitError(handlerErr) {
+			clearFailedNativeHostPreparation(ctx, job, handlerErr)
+			if handlerErr != nil && !isJobWaitError(handlerErr) && ctx.Err() != context.Canceled {
 				failCurrentRuntimeLifecyclePhase(job)
 			}
 		}()

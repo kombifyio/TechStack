@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 // FingerprintProxmox inspects the public login API on an already discovered IP.
@@ -28,13 +30,13 @@ func FingerprintProxmox(ctx context.Context, ip string, port int, timeout time.D
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	transport := &http.Transport{
+	transport := fulllocal.Transport(&http.Transport{
 		// Deliberately unauthenticated discovery: self-signed Proxmox certificates
 		// are observed, not trusted. Enrollment must independently verify this pin.
 		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}, // #nosec G402 -- credential-free fingerprint only
 		DialContext:       (&net.Dialer{Timeout: timeout}).DialContext,
 		DisableKeepAlives: true,
-	}
+	})
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+net.JoinHostPort(ip, strconv.Itoa(port))+"/api2/json/access/domains", nil)

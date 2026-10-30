@@ -54,6 +54,9 @@ func (h crudRouteHandlers) repairStackComponent(e *httpx.Event) error {
 		return maintenanceErr
 	}
 	jobID, err := h.orch.EnqueuePublicTLSRepair(e.Request.Context(), tenantID, ownerID, stackID)
+	if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+		return refusal
+	}
 	switch {
 	case err == nil:
 	case errors.Is(err, controlplane.ErrNotFound):

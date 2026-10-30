@@ -155,7 +155,13 @@ func (d *HostMaintenanceDispatcher) run(ctx context.Context, target servermainte
 	if d == nil || d.sender == nil {
 		return hostMaintenanceData{}, 0, servermaintenance.ErrDispatchUnavailable
 	}
-	release, err := d.releaseResolver()
+	resolve := d.releaseResolver
+	if StageCandidateReleaseConfigured() {
+		resolve = func() (*stackkitrelease.Release, error) {
+			return TargetStackKitReleaseForWorker(ctx, target.TenantID, target.AgentID)
+		}
+	}
+	release, err := resolve()
 	if err != nil {
 		return hostMaintenanceData{}, 0, fmt.Errorf("resolve pinned StackKits release: %w", err)
 	}

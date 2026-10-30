@@ -1,0 +1,50 @@
+{
+  "schema": "kombify.appcatalog.overrides.v1",
+  "apps": {
+    "harbor": {
+      "exclude_images": ["goharbor/nginx-photon"]
+    },
+    "java": {
+      "exclude": true
+    },
+    "pre0-22-5-supabase": {
+      "exclude": true
+    },
+    "supabase": {
+      "images": ["supabase/studio"],
+      "exclude_images": ["kong", "kong/kong"]
+    },
+    "windmill": {
+      "images": ["windmill-labs/windmill"],
+      "exclude_images": ["windmill-labs/caddy-l4"]
+    }
+  },
+  "icons": {
+    "calagopus": {
+      "source": "kombify",
+      "formats": ["svg"]
+    },
+    "centron": {
+      "source": "kombify",
+      "formats": ["svg"]
+    },
+    "euro-office": {
+      "source": "kombify",
+      "formats": ["svg"]
+    },
+    "ionos": {
+      "source": "kombify",
+      "formats": ["svg"]
+    },
+    "kombify": {
+      "source": "kombify",
+      "formats": ["png"]
+    },
+    "paperwork": {
+      "source": "kombify",
+      "formats": ["png"]
+    }
+  },
+  "fingerprint_aliases": {},
+  "generic_images": []
+}

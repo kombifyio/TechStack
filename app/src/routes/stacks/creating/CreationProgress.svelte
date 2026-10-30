@@ -1,6 +1,7 @@
 <script lang="ts">
   import { creation } from "./creation-controller.svelte.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import { NEW_SERVER_CREATION_HREF } from "#lib/server-links.js";
   import GroupedTaskList from "#lib/components/ui/GroupedTaskList.svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
 
@@ -64,7 +65,7 @@
         testId="init-error"
       />
       <a
-        href="/stacks/new"
+        href={NEW_SERVER_CREATION_HREF}
         class="mt-3 inline-block text-sm text-primary hover:text-primary/80 underline"
       >
         {tr("ui.stacksCreatingCreationProgress.backToSetupWizard")}

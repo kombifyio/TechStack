@@ -20,6 +20,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/breakglass"
 	"github.com/kombifyio/techstack/internal/executionchannel"
+	"github.com/kombifyio/techstack/internal/executioncustody"
 	"github.com/kombifyio/techstack/internal/layoutadvice"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
@@ -152,6 +153,7 @@ func coreHealthDependencies(cfg *config.Config, grpcSrv *grpcserver.Server, data
 		Edition:        cfg.Edition,
 		DeploymentMode: cfg.DeploymentMode,
 		DB:             database,
+		BackupOwner:    scheduledBackupOwner(cfg),
 	}
 	// Production may deliberately disable the separate gRPC listener when the
 	// supported HTTPS Guard transport is in use. Only a listener that was
@@ -205,13 +207,17 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 		Drift:  stores.Drift,
 	})
 	routes.RegisterJobsSSERoutes(router, jobStores)
+	if store := controlPlanePostgresStore(deps.v2); store != nil {
+		routes.RegisterFailureSignatureRoutes(router, store)
+		routes.RegisterFailureOutcomeRoutes(router, store)
+	}
 	routes.RegisterDiscoveryRoutes(router, routes.NewDiscoveryHandlerForLAN(!cfg.DeploymentMode.IsSaaS()))
 	if deps.v2 != nil && deps.v2.db != nil {
 		routes.RegisterSubstrateRoutes(router, deps.v2.db.DB)
 		registerSubstrateAppliances(router, deps, managedLeases)
 	}
 	metrics := routes.RegisterMetricsRoutes(router)
-	routes.RegisterAgentRoutes(router, grpcSrv)
+	routes.RegisterAgentRoutesWithRuntimeLogs(router, grpcSrv, deps.grpc.runtimeLogs)
 	routes.RegisterActivityRoutes(router, activityControlPlaneStore(deps.v2))
 	routes.RegisterMonitoringRoutes(router, deps.monitor.queryBackend, deps.monitor.status, grpcSrv)
 	routes.RegisterDomainMonitoringRoutes(router, deps.monitor.domainMonitor)
@@ -666,9 +672,11 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 		ServiceAuthSecret:     os.Getenv("SERVICE_AUTH_SECRET"),
 		ServiceAuthNext:       os.Getenv("SERVICE_AUTH_SECRET_NEXT"),
 		RuntimeSummaryContext: runtimeSummaryAuthorizationContext(deps.v2.authStore),
-		ManagedServersHeld:    managedServersHeldCounter(deps.providerControlDB),
+		ManagedServersHeld:    managedServersHeldCounter(deps.providerControlDB, deps.providerResolution),
 		CreateProtection: func(ctx context.Context, tenant, provider, region string) (providercontrol.CreateProtection, error) {
-			runtime, ok := deps.providerResolution.(*providercontrol.Runtime)
+			runtime, ok := deps.providerResolution.(interface {
+				ReadCreateProtection(context.Context, string, string, string) (providercontrol.CreateProtection, error)
+			})
 			if !ok || runtime == nil {
 				return providercontrol.CreateProtection{}, providercontrol.ErrProfileUnavailable
 			}
@@ -698,7 +706,14 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 	}
 	stackKitOperations = localHomeAssistantOperations(deps.startup.cfg, deps, stackKitOperations)
 	routes.SetAgentBinaryVersion(version)
+	var bindingSigner routes.WorkerBindingSignerFactory
+	if remote, ok := deps.providerActions.LeaseManager.(*executioncustody.Remote); ok {
+		bindingSigner = func(ctx context.Context, tenant, worker string) (routes.WorkerBindingSigner, error) {
+			return remote.WorkerBindingSigner(ctx, tenant, worker)
+		}
+	}
 	routes.RegisterWorkerRoutesWithStore(router, routes.WorkerRouteConfig{
+		BindingSigner:        bindingSigner,
 		MetricWriter:         metricWriter,
 		ManagedRuntimeLeases: state.leaseSvc,
 		Store:                workerStore,
@@ -708,7 +723,7 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 		AgentIdentityIssuer:  workerAgentIdentityIssuer(deps),
 		TypedControl:         deps.typedControl,
 		StackKitOperations:   stackKitOperations,
-		RuntimeLogs:          deps.grpc.server,
+		RuntimeLogs:          workerRuntimeLogs(deps),
 		PortObservations:     deps.portInventory,
 		Reach:                workerReach(deps),
 		Posture:              workerPosture(deps),
@@ -728,6 +743,14 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 		Activity: stackStores.Activity,
 	}, state.leaseSvc)
 	return managedExpansion
+}
+
+// workerRuntimeLogs returns untyped nil when no runtime log store is available.
+func workerRuntimeLogs(deps routeDeps) routes.WorkerRuntimeLogWriter {
+	if deps.grpc.runtimeLogs == nil {
+		return nil
+	}
+	return deps.grpc.runtimeLogs
 }
 
 // workerReach and serverReachReader return untyped nil unless reach is
@@ -932,17 +955,20 @@ func registerWizardRoutes(router *httpx.Router, deps routeDeps, featureSvc *feat
 		notificationOutbox = deps.monitor.notifyOutbox
 	}
 	wizardRunConfig := stackroutes.WizardRunRouteConfig{
-		AuthRuntime:        runtimeAuthStore(deps),
-		Orch:               deps.orch,
-		DeploymentMode:     deps.startup.cfg.DeploymentMode,
-		Features:           featureSvc,
-		Seeds:              cfg.Seeds,
-		Projector:          cfg.Projector,
-		Validator:          cfg.Validator,
-		Migrator:           migrator,
-		ReleaseVersion:     cfg.ReleaseVersion,
-		ManagedLeases:      managedLeases,
-		ManagedExpansion:   adaptWizardManagedRuntimeExpansion(managedExpansion),
+		AuthRuntime:      runtimeAuthStore(deps),
+		Orch:             deps.orch,
+		DeploymentMode:   deps.startup.cfg.DeploymentMode,
+		Features:         featureSvc,
+		Seeds:            cfg.Seeds,
+		Projector:        cfg.Projector,
+		Validator:        cfg.Validator,
+		Migrator:         migrator,
+		ReleaseVersion:   cfg.ReleaseVersion,
+		ManagedLeases:    managedLeases,
+		ManagedExpansion: adaptWizardManagedRuntimeExpansion(managedExpansion),
+		ExistingServers: routes.NewWizardExistingServers(routes.StackOperationsRouteStores{
+			Stacks: stores.Stacks, Servers: stores.Servers, Workers: workerControlPlaneStore(deps.v2),
+		}),
 		GuestProvisioner:   wizardCustomerGuestProvisioner(deps, managedLeases),
 		NotificationOutbox: notificationOutbox,
 		Trust: trust.RouteStores{
@@ -1070,10 +1096,17 @@ func registerFeatureRoutes(router *httpx.Router, deps routeDeps, state runtimeRo
 		serverRuntimeControlPlaneStore(deps.v2),
 		deps.log,
 	)
+	if remote, ok := deps.providerResolution.(*executioncustody.Remote); ok {
+		state.runtimeActions.RuntimeTargetResolver = remote
+	}
 	serverStore := serverRuntimeControlPlaneStore(deps.v2)
 	bindManagedDay2(monthlyRuntimeSvc, &executionchannel.Channel{
 		Servers: serverStore, Targets: state.runtimeActions.RuntimeTargetResolver,
 	})
+	if remote, ok := deps.providerResolution.(*executioncustody.Remote); ok {
+		monthlyRuntimeSvc.SSHAccess = remote
+		monthlyRuntimeSvc.Reconnector = remote
+	}
 	activityStore, _ := any(serverStore).(controlplane.ActivityStore)
 	routes.RegisterServerTerminalRoutes(router, routes.ServerTerminalRouteConfig{
 		Servers: serverStore, Targets: state.runtimeActions.RuntimeTargetResolver,
@@ -1442,7 +1475,12 @@ func localDeviceSessionLoopback(r *http.Request) bool {
 // managedServersHeldCounter backs the Cloud budget-usage read with the same
 // reservation count managed-runtime admission enforces. Without provider
 // control there is no count, and the route answers 503 instead of zero.
-func managedServersHeldCounter(database *sql.DB) routes.ManagedServersHeldFunc {
+func managedServersHeldCounter(database *sql.DB, authorities ...any) routes.ManagedServersHeldFunc {
+	for _, authority := range authorities {
+		if remote, ok := authority.(*executioncustody.Remote); ok {
+			return remote.HeldManagedServers
+		}
+	}
 	if database == nil {
 		return nil
 	}

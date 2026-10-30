@@ -25,6 +25,22 @@ export const VIEW_CONTEXT_FACT_KEYS = [
   "homelabId",
   "serviceId",
   "outcome",
+  "wizardStep",
+  "catalogState",
+  "availableUseCases",
+  "selectedUseCases",
+  "photosOptions",
+  "filesOptions",
+  "vaultOptions",
+  "mediaOptions",
+  "smartHomeOptions",
+  "devOptions",
+  "mailOptions",
+  "gameOptions",
+  "networkOptions",
+  "automationOptions",
+  "aiOptions",
+  "marketplaceOptions",
 ] as const;
 
 export type ViewContextFactKey = (typeof VIEW_CONTEXT_FACT_KEYS)[number];

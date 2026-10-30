@@ -102,6 +102,9 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 	if *substrate {
 		bootstrap.Extra = map[string]any{"type": "substrate", "provider": "proxmox"}
 	}
+	if err := declarePriorCustody(manager, &bootstrap); err != nil {
+		return err
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	result, err := hostidentity.Enroll(ctx, hostidentity.EnrollOptions{
 		Manager: manager, Bootstrap: bootstrap, EnrollmentPath: *enrollmentFile, Logger: log,
@@ -117,6 +120,7 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 	}
 	// The capability is consumed: the file it came from must not outlive it.
 	_ = os.Remove(*tokenFile)
+	clearHandoffReceipts(manager)
 	binding := "legacy_bearer"
 	if result.Mode == hostidentity.ModeHostKey {
 		binding = "host_key"
@@ -163,11 +167,17 @@ func resumeBootstrapEnrollment(ctx context.Context, manager *hostidentity.Manage
 		}
 	}
 	log.Info("guard_enrollment_resuming", "state", string(record.State))
+	if err := declarePriorCustody(manager, bootstrap); err != nil {
+		log.Error("guard_enrollment_resume_failed", "error", err.Error())
+		return
+	}
 	if _, err := hostidentity.Enroll(ctx, hostidentity.EnrollOptions{
 		Manager: manager, Bootstrap: *bootstrap, EnrollmentPath: enrollmentFile, Logger: log,
 	}); err != nil {
 		log.Error("guard_enrollment_resume_failed", "error", err.Error())
+		return
 	}
+	clearHandoffReceipts(manager)
 }
 
 // guardIdentityRuntime is the identity the running Guard authenticates with.

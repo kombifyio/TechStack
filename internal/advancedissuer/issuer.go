@@ -40,13 +40,14 @@ const (
 // Advanced operation identifiers accepted by the StackKits verifier. A new
 // capability-gated StackKitCommand operation binds to one of these.
 const (
-	OperationDriftReconcileAdvanced   = wire.OperationDriftReconcileAdvanced
-	OperationOriginCertificateInstall = wire.OperationOriginCertificateInstall
-	OperationOriginCertificateRequest = wire.OperationOriginCertificateRequest
-	OperationRestoreDrill             = wire.OperationRestoreDrill
-	OperationRollbackCoordinated      = wire.OperationRollbackCoordinated
-	OperationTerramateChangeSetApply  = wire.OperationTerramateChangeSetApply
-	OperationTerramateChangeSetCreate = wire.OperationTerramateChangeSetCreate
+	OperationApplicationTransferRetire = wire.OperationApplicationTransferRetire
+	OperationDriftReconcileAdvanced    = wire.OperationDriftReconcileAdvanced
+	OperationOriginCertificateInstall  = wire.OperationOriginCertificateInstall
+	OperationOriginCertificateRequest  = wire.OperationOriginCertificateRequest
+	OperationRestoreDrill              = wire.OperationRestoreDrill
+	OperationRollbackCoordinated       = wire.OperationRollbackCoordinated
+	OperationTerramateChangeSetApply   = wire.OperationTerramateChangeSetApply
+	OperationTerramateChangeSetCreate  = wire.OperationTerramateChangeSetCreate
 )
 
 var (
@@ -160,8 +161,11 @@ func (issuer *Issuer) TrustBundleSHA256() string { return issuer.bundleSHA }
 
 // Request scopes one capability to one managed deployment.
 type Request struct {
-	BackupRenewal *wire.BackupRenewal
-	TenantID      string
+	// TransferRetirement comes from the admitted existing transfer job and its
+	// signed node result; the canonical wire binds the exact retirement scope.
+	TransferRetirement *wire.TransferRetirement
+	BackupRenewal      *wire.BackupRenewal
+	TenantID           string
 	// DeploymentID is the Techstack stack (managed deployment) id.
 	DeploymentID string
 	// StackID is the StackKits StackSpec/ResolvedPlan stackId on the host.
@@ -190,6 +194,25 @@ type Capability struct {
 // Issue signs one capability and records it before returning it. A capability
 // whose issuance cannot be recorded is never released.
 func (issuer *Issuer) Issue(ctx context.Context, request Request) (Capability, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return Capability{}, fmt.Errorf("allocate advanced capability id: %w", err)
+	}
+	return issuer.issue(ctx, request, id)
+}
+
+// IssueBoundRequest binds durable issuance to an already authenticated caller
+// request. Execution's receiver verifies principal, body and deployment first.
+func (issuer *Issuer) IssueBoundRequest(ctx context.Context, request Request, requestID uuid.UUID) (Capability, error) {
+	if requestID == uuid.Nil {
+		return Capability{}, errors.New("advanced issuer requires an authenticated request id")
+	}
+	return issuer.issue(ctx, request, requestID)
+}
+
+// issue uses the authenticated request id at the process seam. The existing
+// tenant/capability primary key is the durable replay fence, including restart.
+func (issuer *Issuer) issue(ctx context.Context, request Request, id uuid.UUID) (Capability, error) {
 	if issuer == nil {
 		return Capability{}, ErrUnavailable
 	}
@@ -217,10 +240,6 @@ func (issuer *Issuer) Issue(ctx context.Context, request Request) (Capability, e
 	if ttl < time.Second || ttl > MaxTTL {
 		return Capability{}, fmt.Errorf("advanced capability ttl must be between 1s and %s", MaxTTL)
 	}
-	id, err := uuid.NewV7()
-	if err != nil {
-		return Capability{}, fmt.Errorf("allocate advanced capability id: %w", err)
-	}
 	issuedAt := issuer.now().UTC().Truncate(time.Second)
 	expiresAt := issuedAt.Add(ttl).Truncate(time.Second)
 	if request.BackupRenewal != nil {
@@ -247,6 +266,10 @@ func (issuer *Issuer) Issue(ctx context.Context, request Request) (Capability, e
 		SchemaVersion: CapabilitySchemaVersion,
 		StackID:       request.StackID,
 		UIManagerRef:  "urn:kombify:techstack:deployment:" + request.DeploymentID,
+	}
+	if request.TransferRetirement != nil {
+		scope := *request.TransferRetirement
+		document.TransferRetirement = &scope
 	}
 	if err := document.ValidateClaims(); err != nil {
 		return Capability{}, err

@@ -137,6 +137,9 @@ func writeRoutingHeaders(e *httpx.Event, revision int64) {
 }
 
 func writeRoutingError(e *httpx.Event, err error) error {
+	if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+		return refusal
+	}
 	switch {
 	case errors.Is(err, stackrouting.ErrNotFound):
 		return httpx.Error(e, http.StatusNotFound, ksapi.ErrCodeNotFound, "Stack routing was not found", map[string]any{detailsKeyReasonCode: "routing_not_found"})

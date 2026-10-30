@@ -33,6 +33,8 @@ param(
     # Authenticated full-B2 context and real host facts, supplied only by the serial wrapper.
     [string]$B2ContextPath = "",
     [string]$B2HostPath = "",
+    # Install/inspect/uninstall only; never launches the shell or local database.
+    [switch]$PackageOnly,
     [switch]$SkipPackage,
     [switch]$KeepState,
     [switch]$KeepInstall
@@ -141,12 +143,14 @@ if ($Installer -eq "setup") {
     Assert-NoReparsePointInBoundary $requestedInstall $allowedInstallRoot
     $InstallDir = $requestedInstall
 }
-$previousStateOverride = [Environment]::GetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR")
-$previousWebViewArguments = [Environment]::GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
-$previousSmokeBaseUrl = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_BASE_URL")
-$previousSmokeCdpUrl = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_CDP_URL")
-$previousMarkerName = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_MARKER_NAME")
-$previousMarkerCreate = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_MARKER_CREATE")
+$previousEnvironment = [ordered]@{
+    TECHSTACK_CLIENT_STATE_DIR = [Environment]::GetEnvironmentVariable('TECHSTACK_CLIENT_STATE_DIR')
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = [Environment]::GetEnvironmentVariable('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS')
+    TECHSTACK_SMOKE_BASE_URL = [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_BASE_URL')
+    TECHSTACK_SMOKE_CDP_URL = [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_CDP_URL')
+    TECHSTACK_SMOKE_MARKER_NAME = [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_MARKER_NAME')
+    TECHSTACK_SMOKE_MARKER_CREATE = [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_MARKER_CREATE')
+}
 
 $localOrigin = "http://127.0.0.1:$LocalPort"
 $localGrpcPort = $LocalPort + 3
@@ -164,6 +168,11 @@ $clientExe = Join-Path $InstallDir "kombify-techstack-client.exe"
 $runtimeExe = Join-Path $InstallDir "techstack.exe"
 $firewallGroup = "kombify-techstack-smoke-$smokeId"
 $updateRequested = $UpdateProof -ne "none"
+if ($PackageOnly -and ($Installer -ne 'setup' -or !$SkipPackage -or $KeepInstall -or $KeepState -or
+    $BlockOutbound -or $updateRequested -or $B2ContextPath -or $B2HostPath)) {
+    throw 'PackageOnly requires a prebuilt setup installer and complete cleanup; runtime, update and B2 options are excluded.'
+}
+if ($PackageOnly -and !$stateInitiallyAbsent) { throw 'PackageOnly requires a fresh isolated state directory.' }
 if ($UpdateManifestPath) { throw "Loopback update manifests are retired; use -UpdateProof public-feed or rollback with published releases." }
 if (!$updateRequested -and ($UpdateSetupPath -or $UpdateVersion -or $UpdateRevision)) {
     throw "Update arguments require -UpdateProof public-feed or rollback."
@@ -526,7 +535,7 @@ const { chromium, expect } = require("@playwright/test");
   await expect(page.getByTestId("stacks-dashboard")).toBeVisible({ timeout: 30000 });
   await page.goto(`${baseURL}/wallet`, { waitUntil: "load" });
   await expect(page.locator("[data-wallet-tab-nav]")).toBeVisible({ timeout: 30000 });
-  await page.goto(`${baseURL}/stacks/new`, { waitUntil: "load" });
+  await page.goto(`${baseURL}/stacks/new?target=new`, { waitUntil: "load" });
   await expect(page.locator('[data-testid="easy-wizard"]')).toBeVisible({ timeout: 30000 });
   await browser.close();
 
@@ -573,6 +582,32 @@ function Invoke-ShippedSetup {
     if ($setup.ExitCode -notin @(0, 3010)) {
         throw "kombify-Techstack-Setup.exe $Action failed with exit code $($setup.ExitCode)."
     }
+}
+
+function Assert-PrivateLANEnrollmentFirewall {
+    param([string]$ExpectedShellVersion = "$Version+$ExpectedRevision")
+    if ((Get-InstalledShellVersion) -ne $ExpectedShellVersion) {
+        throw 'Enrollment firewall assertion requires the exact installed candidate shell.'
+    }
+    $rules = @(Get-NetFirewallRule -DisplayName 'kombify Techstack private LAN enrollment' -ErrorAction Stop)
+    if ($rules.Count -ne 1) { throw 'Expected exactly one installed LAN enrollment firewall rule.' }
+    $rule = $rules[0]
+    $port = $rule | Get-NetFirewallPortFilter
+    $address = $rule | Get-NetFirewallAddressFilter
+    $remoteAddresses = @($address.RemoteAddress)
+    if ([string]$rule.Profile -ne 'Private' -or [string]$rule.Enabled -ne 'True' -or
+        [string]$rule.Direction -ne 'Inbound' -or [string]$rule.Action -ne 'Allow' -or
+        [string]$port.Protocol -ne 'TCP' -or [string]$port.LocalPort -ne '5264' -or
+        $remoteAddresses.Count -ne 1 -or [string]$remoteAddresses[0] -ne 'LocalSubnet') {
+        throw 'Installed LAN enrollment firewall must allow only Private inbound TCP/5264 from LocalSubnet.'
+    }
+    if ((Get-InstalledShellVersion) -ne $ExpectedShellVersion) {
+        throw 'Installed candidate changed while observing its enrollment firewall rule.'
+    }
+    [ordered]@{ shellProductVersion = $ExpectedShellVersion; profile = [string]$rule.Profile; protocol = [string]$port.Protocol;
+        port = [string]$port.LocalPort; remoteAddress = $remoteAddresses } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $DiagnosticsDir 'installed-firewall.json') -Encoding utf8
+    Write-Host '[windows-client-installed-smoke] installed LAN enrollment firewall is Private TCP/5264 LocalSubnet'
 }
 
 function Enable-OutboundBlock {
@@ -692,6 +727,7 @@ function Wait-InstalledRollback {
             if ($shellVersion.Split('+')[0] -ne $UpdateVersion) {
                 throw 'The updated installed shell was not observed when it committed rollback.'
             }
+            Assert-PrivateLANEnrollmentFirewall -ExpectedShellVersion "$UpdateVersion+$UpdateRevision"
             Assert-PublicUpdateFeed
             $rollingBack = $true
             $script:updateObservations.phases += 'rolling-back'
@@ -745,7 +781,7 @@ function Save-SmokeDiagnostics {
         }
 }
 
-Assert-AppDependencies
+if (!$PackageOnly) { Assert-AppDependencies }
 
 foreach ($requiredPort in @($LocalPort, $localGrpcPort, $webViewDebugPort)) {
     $occupiedLocalRuntime = Get-NetTCPConnection -LocalPort $requiredPort -State Listen -ErrorAction SilentlyContinue
@@ -777,12 +813,14 @@ if ($B2ContextPath -or $B2HostPath) {
     if ($b2Host.fingerprint -ne $actualHost -or $b2Host.run -ne "$env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT" -or
         $b2Host.harness -ne $env:GITHUB_SHA) { throw 'The actual installed smoke host differs from native B2.' }
 }
-Initialize-SmokeCredentialReader
+if (!$PackageOnly) { Initialize-SmokeCredentialReader }
 $installed = $false
 $flowPassed = $false
 try {
     Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
-    & $resetScript -StateDir $StateDir -InstallDir $InstallDir -IncludeClientConfig -Discard
+    if (!$PackageOnly) {
+        & $resetScript -StateDir $StateDir -InstallDir $InstallDir -IncludeClientConfig -Discard
+    }
 
     if ($Installer -eq "setup") {
         Invoke-ShippedSetup -Action install
@@ -815,6 +853,18 @@ try {
         throw "The $Installer installer did not install the client and runtime into $InstallDir"
     }
     Write-Host "[windows-client-installed-smoke] installed through the $Installer installer at $InstallDir"
+    # Update proofs start from an authenticated historical package. Check the
+    # actual candidate after its installation, not the intentionally old baseline.
+    if ($Installer -eq 'setup' -and !$updateRequested) { Assert-PrivateLANEnrollmentFirewall }
+    if ($PackageOnly) {
+        if (@(Get-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir).Count -or
+            (Test-Path -LiteralPath (Join-Path $StateDir 'runtime'))) {
+            throw 'Package-only installation unexpectedly started the product or created runtime state.'
+        }
+        Write-Host '[windows-client-installed-smoke] package-only checks passed; runtime and B2 not run'
+        $flowPassed = $true
+        return
+    }
     if ($BlockOutbound) {
         Enable-OutboundBlock
     }
@@ -938,6 +988,9 @@ try {
     }
     Wait-Endpoint "$localOrigin/api/v1/auth/mode" | Out-Null
     Assert-InstalledRuntime -ExpectVersion $restartVersion -ExpectRevision $restartRevision
+    if ($UpdateProof -eq 'public-feed') {
+        Assert-PrivateLANEnrollmentFirewall -ExpectedShellVersion "$UpdateVersion+$UpdateRevision"
+    }
     Wait-LogLine -Path $runtimeLog -Pattern "local device session restored"
     if ($UpdateProof -eq 'public-feed') {
         Wait-LogLine -Path $runtimeLog -Pattern "client update applied: $Version -> $UpdateVersion"
@@ -997,6 +1050,10 @@ try {
     $flowPassed = $true
     Write-Host "[windows-client-installed-smoke] flow complete; reconciling cleanup"
 } catch {
+    if ($PackageOnly) {
+        [ordered]@{ message = $_.Exception.Message; category = [string]$_.CategoryInfo.Category } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $DiagnosticsDir 'package-failure.json') -Encoding utf8
+    }
     if ($updateObservations) {
         $updateObservations.result = 'FAIL'
         $updateObservations.failure = ($_.Exception.Message -split "`r?`n")[0]
@@ -1007,9 +1064,17 @@ try {
     # Every action gets its own guard: a diagnostics/uninstall/reset failure must
     # never prevent the remaining custody, firewall and process cleanup.
     $cleanupErrors = [Collections.Generic.List[string]]::new()
-    $cleanup = [ordered]@{ result = 'PENDING'; errors = @() }
+    $cleanup = [ordered]@{ result = 'PENDING'; errors = @(); errorDetails = @() }
     function Invoke-SmokeCleanup([string]$Name, [scriptblock]$Action) {
-        try { & $Action | Out-Null } catch { $cleanupErrors.Add($Name) }
+        try { & $Action | Out-Null } catch {
+            $cleanupErrors.Add($Name)
+            $cause = $_.Exception
+            while ($cause.InnerException) { $cause = $cause.InnerException }
+            # Keep errors actionable without logging credential values or messages.
+            $cleanup.errorDetails += [ordered]@{ action = $Name; line = $_.InvocationInfo.ScriptLineNumber
+                exceptionType = $cause.GetType().FullName; hresult = $cause.HResult
+                win32 = if ($cause -is [ComponentModel.Win32Exception]) { $cause.NativeErrorCode } else { $null } }
+        }
     }
     Invoke-SmokeCleanup 'stop-processes' { Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir }
     Invoke-SmokeCleanup 'diagnostics' { Save-SmokeDiagnostics }
@@ -1023,15 +1088,18 @@ try {
             }
         }
     }
-    foreach ($entry in @(
-        @('TECHSTACK_CLIENT_STATE_DIR', $previousStateOverride),
-        @('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', $previousWebViewArguments),
-        @('TECHSTACK_SMOKE_BASE_URL', $previousSmokeBaseUrl),
-        @('TECHSTACK_SMOKE_CDP_URL', $previousSmokeCdpUrl),
-        @('TECHSTACK_SMOKE_MARKER_NAME', $previousMarkerName),
-        @('TECHSTACK_SMOKE_MARKER_CREATE', $previousMarkerCreate)
-    )) {
-        Invoke-SmokeCleanup ('environment-' + $entry[0]) { [Environment]::SetEnvironmentVariable($entry[0], $entry[1]) }
+    # PackageOnly returns before changing any product environment variable.
+    if (!$PackageOnly) {
+        foreach ($entry in $previousEnvironment.GetEnumerator()) {
+            Invoke-SmokeCleanup ('environment-' + $entry.Key) {
+                # PowerShell binds $null to an empty string; NullString restores absence.
+                if ($null -eq $entry.Value) {
+                    [Environment]::SetEnvironmentVariable($entry.Key, [NullString]::Value)
+                } else {
+                    [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
+                }
+            }
+        }
     }
     if (!$KeepInstall) {
         Invoke-SmokeCleanup 'uninstall' {
@@ -1057,8 +1125,10 @@ try {
     # Stop again if an installer coordinator restarted the shell during uninstall.
     Invoke-SmokeCleanup 'stop-after-uninstall' { Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir }
     if (!$KeepState) {
-        Invoke-SmokeCleanup 'reset-state-and-credentials' {
-            & $resetScript -StateDir $StateDir -InstallDir $InstallDir -IncludeClientConfig -Discard
+        if (!$PackageOnly) {
+            Invoke-SmokeCleanup 'reset-state-and-credentials' {
+                & $resetScript -StateDir $StateDir -InstallDir $InstallDir -IncludeClientConfig -Discard
+            }
         }
         Invoke-SmokeCleanup 'remove-fresh-state' {
             if ($stateInitiallyAbsent -and (Test-Path -LiteralPath $StateDir)) {
@@ -1074,13 +1144,20 @@ try {
         $cleanup.processesAbsent = @(Get-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir).Count -eq 0
         $cleanup.portsFree = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object LocalPort -In @($LocalPort, $localGrpcPort, $webViewDebugPort)).Count -eq 0
         $cleanup.binariesAbsent = !(Test-Path -LiteralPath $clientExe) -and !(Test-Path -LiteralPath $runtimeExe)
+        $cleanup.enrollmentFirewallAbsent = $Installer -ne 'setup' -or $KeepInstall -or
+            @(Get-NetFirewallRule -DisplayName 'kombify Techstack private LAN enrollment' -ErrorAction SilentlyContinue).Count -eq 0
         $cleanup.firewallRulesAbsent = @(Get-NetFirewallRule -ErrorAction Stop | Where-Object Group -EQ $firewallGroup).Count -eq 0
         $cleanup.firewallProfilesRestored = @($script:reenableFirewallProfiles | ForEach-Object {
             Get-NetFirewallProfile -Name $_ | Where-Object Enabled
         }).Count -eq 0
         $cleanup.stateAbsent = !(Test-Path -LiteralPath $StateDir)
         $cleanup.credentialsAbsent = $false
-        if ('KombifyCredentialReader' -as [type]) {
+        if ($PackageOnly) {
+            # A package install never opens user custody. SSH logon sessions may
+            # have no Credential Manager; do not claim an absence readback there.
+            $cleanup.credentialsAbsent = $null
+            $cleanup.credentialsNotUsed = $true
+        } elseif ('KombifyCredentialReader' -as [type]) {
             $remaining = @(@('cloud/stack/access-token', 'cloud/stack/refresh-token', 'local/runtime-session-secret',
                 'local/device-session-token', 'local/runtime-encryption-key') | ForEach-Object {
                 $target = Get-StateScopedCredentialTarget -BaseTarget "kombify/techstack/$_" -StateDir $StateDir
@@ -1088,21 +1165,29 @@ try {
             })
             $cleanup.credentialsAbsent = $remaining.Count -eq 0
         } else { throw 'Credential readback is unavailable.' }
-        $cleanup.environmentRestored = [Environment]::GetEnvironmentVariable('TECHSTACK_CLIENT_STATE_DIR') -eq $previousStateOverride -and
-            [Environment]::GetEnvironmentVariable('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS') -eq $previousWebViewArguments -and
-            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_BASE_URL') -eq $previousSmokeBaseUrl -and
-            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_CDP_URL') -eq $previousSmokeCdpUrl -and
-            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_MARKER_NAME') -eq $previousMarkerName -and
-            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_MARKER_CREATE') -eq $previousMarkerCreate
-        if (!$cleanup.processesAbsent -or !$cleanup.portsFree -or !$cleanup.firewallRulesAbsent -or
+        $cleanup.environmentMismatchNames = @($previousEnvironment.GetEnumerator() | Where-Object {
+            ![object]::Equals([Environment]::GetEnvironmentVariable($_.Key), $_.Value)
+        } | ForEach-Object { $_.Key })
+        $cleanup.environmentRestored = $cleanup.environmentMismatchNames.Count -eq 0
+        if (!$cleanup.processesAbsent -or !$cleanup.portsFree -or !$cleanup.firewallRulesAbsent -or !$cleanup.enrollmentFirewallAbsent -or
             !$cleanup.firewallProfilesRestored -or !$cleanup.environmentRestored -or
             (!$KeepInstall -and !$cleanup.binariesAbsent) -or (!$KeepState -and
-            (!$cleanup.credentialsAbsent -or ($stateInitiallyAbsent -and !$cleanup.stateAbsent)))) {
+            ((!$PackageOnly -and !$cleanup.credentialsAbsent) -or ($stateInitiallyAbsent -and !$cleanup.stateAbsent)))) {
             throw 'Smoke cleanup readback found residue.'
         }
     }
+    Invoke-SmokeCleanup 'cleanup-receipt' {
+        $cleanup.errors = $cleanupErrors.ToArray()
+        $cleanup.result = if ($cleanupErrors.Count -eq 0) { 'PASS' } else { 'FAIL' }
+        $cleanup | ConvertTo-Json -Depth 8 |
+            Set-Content -LiteralPath (Join-Path $DiagnosticsDir 'cleanup-readback.json') -Encoding utf8
+    }
     $cleanup.errors = $cleanupErrors.ToArray()
     $cleanup.result = if ($cleanupErrors.Count -eq 0) { 'PASS' } else { 'FAIL' }
+    if ($PackageOnly) {
+        $cleanup | ConvertTo-Json -Depth 8 |
+            Set-Content -LiteralPath (Join-Path $DiagnosticsDir 'package-cleanup.json') -Encoding utf8
+    }
     if ($updateObservations) {
         $updateObservations.cleanup = $cleanup
         $updateObservations.result = if ($flowPassed -and $cleanup.result -eq 'PASS') { 'PASS' } else { 'FAIL' }
@@ -1111,4 +1196,9 @@ try {
             Set-Content -LiteralPath (Join-Path $DiagnosticsDir 'update-observations.json') -Encoding UTF8
     }
     if ($cleanupErrors.Count -gt 0) { throw ('Smoke cleanup failed: ' + ($cleanupErrors -join ',')) }
+}
+
+# The native device lane admits success only after the full flow and cleanup.
+if ($flowPassed -and !$PackageOnly) {
+    Write-Host '[windows-client-installed-smoke] ok'
 }

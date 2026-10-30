@@ -23,6 +23,7 @@ import (
 	agentpkg "github.com/kombifyio/techstack/pkg/agent"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardrelease"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
@@ -42,7 +43,8 @@ const (
 // command path, the journal and the control channel stay as they were while
 // every host effect crosses the typed boundary.
 type Remote struct {
-	Client *Client
+	runtimeConvergence runtimeConvergence
+	Client             *Client
 	// HandoffDir is the daemon-writable directory the executor reads from.
 	HandoffDir string
 	Now        func() time.Time
@@ -292,56 +294,25 @@ func (r *Remote) EnsureRuntime(ctx context.Context, cfg agentpkg.StackKitRuntime
 // EnsureRuntimeEvidence downloads the published bundle with the Guard's
 // credential and lets the executor install it.
 func (r *Remote) EnsureRuntimeEvidence(ctx context.Context, cfg agentpkg.StackKitRuntimeBootstrapConfig) (agentpkg.StackKitRuntimeConvergenceResult, error) {
-	var description RuntimeDescription
-	if err := r.Client.CallInto(ctx, OpRuntimeDescribe, nil, &description); err != nil {
-		return agentpkg.StackKitRuntimeConvergenceResult{}, err
-	}
-	if !description.Available {
-		return agentpkg.StackKitRuntimeConvergenceResult{}, errors.New("StackKits runtime paths are not configured")
-	}
 	cfg.StageDir = r.HandoffDir
-	bundle, err := agentpkg.FetchStackKitRuntimeBundle(ctx, cfg, description.InstalledDigest)
-	if err != nil {
-		return agentpkg.StackKitRuntimeConvergenceResult{}, err
+	boundary := runtimeBoundary{
+		describe: func(ctx context.Context) (RuntimeDescription, error) {
+			var result RuntimeDescription
+			err := r.Client.CallInto(ctx, OpRuntimeDescribe, nil, &result)
+			return result, err
+		},
+		preflight: func(ctx context.Context, p RuntimeInstallParams) (RuntimeAdmission, error) {
+			var result RuntimeAdmission
+			err := r.Client.CallInto(ctx, OpRuntimePreflight, p, &result)
+			return result, err
+		},
+		install: func(ctx context.Context, p RuntimeInstallParams) (RuntimeEvidence, error) {
+			var result RuntimeEvidence
+			err := r.Client.CallInto(ctx, OpRuntimeInstall, p, &result)
+			return result, err
+		},
 	}
-	if bundle.NotModified {
-		if !description.Valid {
-			return agentpkg.StackKitRuntimeConvergenceResult{}, errors.New("control plane reports current StackKits bundle but local runtime is invalid")
-		}
-		return agentpkg.StackKitRuntimeConvergenceResult{Version: description.Version, SHA256: description.ArchiveSHA256}, nil
-	}
-	defer func() { _ = os.Remove(bundle.Path) }()
-	install := RuntimeInstallParams{BundleFile: filepath.Base(bundle.Path), SHA256: bundle.SHA256}
-	// The executables in this bundle will run as root: hand the executor the
-	// signed release evidence it needs to authenticate them. Without it, the
-	// executor installs nothing on a host that admits only signed releases.
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Minute}
-	}
-	signed, evidenceErr := fetchReleaseEvidence(ctx, client, agentpkg.TechstackRuntimeConvergenceConfig{
-		URL: cfg.URL, AgentToken: cfg.AgentToken, RuntimeAgentID: cfg.RuntimeAgentID, TenantID: cfg.TenantID,
-	})
-	if evidenceErr != nil {
-		return agentpkg.StackKitRuntimeConvergenceResult{}, evidenceErr
-	}
-	if signed != nil {
-		manifest, decodeErr := base64.StdEncoding.DecodeString(signed.Manifest)
-		if decodeErr != nil {
-			return agentpkg.StackKitRuntimeConvergenceResult{}, fmt.Errorf("the release manifest is not base64: %w", decodeErr)
-		}
-		for name, content := range map[string][]byte{"runtime-manifest.json": manifest, "runtime-manifest.sigstore.json": signed.ManifestBundle} {
-			if err := writeHandoffFile(r.HandoffDir, name, content); err != nil {
-				return agentpkg.StackKitRuntimeConvergenceResult{}, err
-			}
-		}
-		install.ManifestFile, install.ManifestBundleFile = "runtime-manifest.json", "runtime-manifest.sigstore.json"
-	}
-	var evidence RuntimeEvidence
-	if err := r.Client.CallInto(ctx, OpRuntimeInstall, install, &evidence); err != nil {
-		return agentpkg.StackKitRuntimeConvergenceResult{}, err
-	}
-	return agentpkg.StackKitRuntimeConvergenceResult{Version: evidence.Version, SHA256: evidence.SHA256}, nil
+	return r.runtimeConvergence.converge(ctx, cfg, boundary, r.Now)
 }
 
 // UpdateDeniedError reports that the executor refused a candidate release on
@@ -356,11 +327,13 @@ func (e *UpdateDeniedError) Error() string { return "update denied: " + e.Code +
 
 // releaseEvidence is the signed release document of the control plane.
 type releaseEvidence struct {
-	Manifest       string          `json:"manifest"`
-	ManifestBundle json.RawMessage `json:"manifest_bundle"`
-	ArtifactBundle json.RawMessage `json:"artifact_bundle"`
-	SHA256         string          `json:"sha256"`
-	Version        string          `json:"version"`
+	CandidateIntent    *guardrelease.CandidateRuntimeIntent `json:"candidate_intent,omitempty"`
+	CandidateAdmission *guardbinding.Binding                `json:"candidate_admission,omitempty"`
+	Manifest           string                               `json:"manifest"`
+	ManifestBundle     json.RawMessage                      `json:"manifest_bundle"`
+	ArtifactBundle     json.RawMessage                      `json:"artifact_bundle"`
+	SHA256             string                               `json:"sha256"`
+	Version            string                               `json:"version"`
 }
 
 // EnsureTechstackRuntime converges the Guard executables to the signed release
@@ -471,7 +444,7 @@ func fetchReleaseEvidence(ctx context.Context, client *http.Client, cfg agentpkg
 		return nil, nil
 	case http.StatusOK:
 	default:
-		return nil, fmt.Errorf("release evidence request returned HTTP %d", response.StatusCode)
+		return nil, &agentpkg.ArtifactHTTPError{Operation: "release evidence request", StatusCode: response.StatusCode, RetryAfter: agentpkg.ArtifactRetryAfter(response.Header.Get("Retry-After"), time.Now())}
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxEvidenceResponse+1))
 	if err != nil || len(body) > maxEvidenceResponse {

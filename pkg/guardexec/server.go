@@ -157,10 +157,36 @@ func (s *Server) dispatch(ctx context.Context, request Request, out *frameWriter
 			return deny(CodeFailed, "%v", err)
 		}
 		return out.result(description)
+	case OpRuntimePreflight:
+		var params RuntimeInstallParams
+		if denial := s.mutationParams(request.Params, &params); denial != nil {
+			return denial
+		}
+		if params.BundleFile != "" {
+			return deny(CodeInvalidRequest, "runtime preflight accepts evidence only")
+		}
+		if params.CandidateIntent != nil || params.CandidateAdmission != nil {
+			if denial := s.verifyCandidateInstall(params); denial != nil {
+				return denial
+			}
+		}
+		backend, ok := s.Backend.(interface {
+			RuntimePreflight(context.Context, RuntimeInstallParams) (RuntimeAdmission, error)
+		})
+		if !ok {
+			return deny(CodeUnavailable, "runtime preflight is unavailable")
+		}
+		decision, err := backend.RuntimePreflight(ctx, params)
+		return resultOrFailure(out, decision, err)
 	case OpRuntimeInstall:
 		var params RuntimeInstallParams
 		if denial := s.mutationParams(request.Params, &params); denial != nil {
 			return denial
+		}
+		if params.CandidateIntent != nil || params.CandidateAdmission != nil {
+			if denial := s.admitCandidateInstall(params); denial != nil {
+				return denial
+			}
 		}
 		evidence, err := s.Backend.RuntimeInstall(ctx, params)
 		return resultOrFailure(out, evidence, err)

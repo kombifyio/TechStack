@@ -52,6 +52,16 @@ type Entry struct {
 	GuideURL    string                              `json:"guide_url,omitempty"`
 	Clients     []stackkitrelease.ApplicationClient `json:"clients,omitempty"`
 	Vendor      *stackkitrelease.ApplicationVendor  `json:"vendor,omitempty"`
+	// HomepageURL is the project's own website, from the generated table.
+	HomepageURL string `json:"homepage_url,omitempty"`
+	// Logo is the mirrored brand mark; nil means the client draws a monogram.
+	Logo *Logo `json:"logo,omitempty"`
+	// LogoRemoved marks an application whose logo kombify removed on request
+	// (overrides.json): clients must not draw it from any other source either.
+	LogoRemoved bool `json:"logo_removed,omitempty"`
+	// Evidence is the recognition layer that named this unit (EvidenceLabel,
+	// EvidenceImage, ...). Empty on an entry looked up by id.
+	Evidence string `json:"evidence,omitempty"`
 	// Infra entries are plumbing (proxy, updater, agent) and stay in the System
 	// bucket instead of becoming an Application.
 	Infra bool `json:"-"`
@@ -61,6 +71,32 @@ type Entry struct {
 	// container, compose service or systemd unit.
 	images []string
 	names  []string
+	// altWebPorts are further web UI container ports tried after WebPort, for an
+	// application whose older installs publish a different one.
+	altWebPorts []int
+	// webScheme is "https" when the web port is known to speak TLS.
+	webScheme string
+	// icon is the mirrored icon slug when it differs from the id.
+	icon string
+}
+
+// WebScheme is the scheme the default web port speaks: "https" only when the
+// catalog knows it is TLS, else "http".
+func (e *Entry) WebScheme() string {
+	if e != nil && e.webScheme == "https" {
+		return "https"
+	}
+	return "http"
+}
+
+// WebPorts lists the container ports the application's web UI is known on,
+// preferred first: WebPort, then the older alternatives. Empty when the catalog
+// knows no web port for it.
+func (e *Entry) WebPorts() []int {
+	if e == nil || e.WebPort <= 0 {
+		return nil
+	}
+	return append([]int{e.WebPort}, e.altWebPorts...)
 }
 
 // entries is ordered by preference: on a tie in match specificity the earlier
@@ -96,7 +132,12 @@ var entries = []Entry{
 		images: []string{"prom/prometheus", "prometheus"}, names: []string{"prometheus"}},
 	{ID: "uptime-kuma", DisplayName: "Uptime Kuma", Category: "monitoring", BrandDomain: "uptime.kuma.pet", WebPort: 3001,
 		images: []string{"louislam/uptime-kuma", "uptime-kuma"}, names: []string{"uptime-kuma", "uptimekuma"}},
-	{ID: "portainer", DisplayName: "Portainer", Category: "dev", BrandDomain: "portainer.io", WebPort: 9000,
+	// Portainer CE 2.x serves its UI over HTTPS on 9443 and its default install
+	// publishes only 8000 (Edge tunnel) and 9443; HTTP 9000 is legacy opt-in:
+	// https://docs.portainer.io/start/install-ce/server/docker/linux
+	// An older install publishes 8000 and 9000 only, so 9000 is tried next; that
+	// keeps the Edge tunnel port 8000 from being taken for the UI.
+	{ID: "portainer", DisplayName: "Portainer", Category: "dev", BrandDomain: "portainer.io", WebPort: 9443, altWebPorts: []int{9000},
 		images: []string{"portainer/portainer-ce", "portainer/portainer-ee", "portainer"}, names: []string{"portainer"}},
 	{ID: "pi-hole", DisplayName: "Pi-hole", Category: "network", BrandDomain: "pi-hole.net", WebPort: 80,
 		images: []string{"pihole/pihole", "pihole"}, names: []string{"pihole", "pi-hole"}},
@@ -185,6 +226,12 @@ type Subject struct {
 	Platform       string
 	ComposeProject string
 	ComposeService string
+	// Labels are the container's allow-listed recognition labels
+	// (RecognitionLabels): layer 1, read before the image.
+	Labels map[string]string
+	// Fingerprint is the application id the Guard proved over HTTP on the
+	// unit's own published port: layer 3, read after image and name.
+	Fingerprint string
 }
 
 // Grouping is the application a unit belongs to.
@@ -230,7 +277,10 @@ func Group(subject Subject) Grouping {
 	}
 	if isDocker(subject) {
 		if key := ContainerKey(subject.Name); key != "" {
-			return Grouping{Key: key, DisplayName: strings.TrimPrefix(strings.TrimSpace(subject.Name), "/")}
+			// The name the operator gave it on their own dashboard reads better
+			// than a container name, but the key stays the container's.
+			display := firstNonEmpty(LabelDisplayName(subject.Labels), strings.TrimPrefix(strings.TrimSpace(subject.Name), "/"))
+			return Grouping{Key: key, DisplayName: display}
 		}
 	}
 	return Grouping{Key: SystemKey, DisplayName: SystemDisplayName}
@@ -292,12 +342,25 @@ func Lookup(id string) *Entry {
 	return releasedCatalogEntry(id)
 }
 
-// Match recognizes a unit by image first (the most reliable evidence) and then
-// by name. The most specific pattern wins; the earlier entry wins a tie.
+// Match recognizes a unit in layers and records which one named it:
+//
+//  1. the container's own recognition labels (gethomepage, Glance, OCI);
+//  2. the image repository: the hand entries first, then the generated table;
+//  3. the unit, compose service or systemd name: the released catalog id, the
+//     hand name patterns, then a generated application id;
+//  4. the application the Guard proved over HTTP on the unit's own port.
+//
+// The most specific pattern wins within a layer; the earlier entry wins a tie.
 func Match(subject Subject) *Entry {
+	if entry := labelRecognition(subject.Labels); entry != nil {
+		return withEvidence(entry, EvidenceLabel)
+	}
 	if repo := ParseImage(subject.Image).Repo; repo != "" {
 		if entry := bestImageMatch(repo); entry != nil {
-			return entry
+			return withEvidence(entry, EvidenceImage)
+		}
+		if entry := generatedByImage(repo); entry != nil {
+			return withEvidence(entry, EvidenceImage)
 		}
 	}
 	candidates := []string{subject.Name, subject.ComposeService}
@@ -307,13 +370,28 @@ func Match(subject Subject) *Entry {
 			continue
 		}
 		if released := Lookup(candidate); released != nil {
-			return released
+			return withEvidence(released, EvidenceReleasedCatalog)
 		}
 		if entry := bestNameMatch(tokenize(candidate)); entry != nil {
-			return entry
+			return withEvidence(entry, EvidenceName)
+		}
+	}
+	for _, candidate := range candidates {
+		if entry := generatedByName(tokenize(strings.TrimSuffix(strings.ToLower(candidate), ".service"))); entry != nil {
+			return withEvidence(entry, EvidenceName)
+		}
+	}
+	if subject.Fingerprint != "" {
+		if entry := lookupKnown(subject.Fingerprint, true); entry != nil {
+			return withEvidence(entry, EvidenceHTTPFingerprint)
 		}
 	}
 	return nil
+}
+
+func withEvidence(entry *Entry, evidence string) *Entry {
+	entry.Evidence = evidence
+	return entry
 }
 
 func bestImageMatch(repo string) *Entry {
@@ -359,12 +437,16 @@ func copyEntry(entry *Entry) *Entry {
 		cloned.DisplayName = released.DisplayName
 		cloned.Category = released.Category
 		cloned.BrandDomain = released.BrandDomain
+	} else if generated := loadGeneratedTable().apps[entry.ID]; cloned.DisplayName == "" && generated != nil {
+		cloned.DisplayName = firstNonEmpty(generated.Name, cloned.ID)
+		cloned.Category = firstNonEmpty(generated.Category, defaultCategory)
 	} else if cloned.DisplayName == "" {
 		// Recognition is measured discovery, not released installation support.
 		cloned.DisplayName = cloned.ID
 		cloned.Category = "unknown"
 	}
 	attachReleasedApplicationPresentation(&cloned)
+	attachPresentation(&cloned)
 	return &cloned
 }
 

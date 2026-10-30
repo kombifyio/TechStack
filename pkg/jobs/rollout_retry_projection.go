@@ -1,9 +1,11 @@
 package jobs
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,7 +121,13 @@ func materializeRolloutRetryProjection(persister *unifier.SpecPersister, job *Jo
 }
 
 func managedRolloutRetryProjection(persister *unifier.SpecPersister, snapshotPath, dispatchID string) (string, error) {
-	release, err := configuredTargetStackKitRelease()
+	return managedRolloutRetryProjectionWithRelease(persister, snapshotPath, dispatchID, configuredTargetStackKitRelease)
+}
+func managedRolloutRetryProjectionForStack(ctx context.Context, tenant, stack string, persister *unifier.SpecPersister, snapshotPath, dispatchID string) (string, error) {
+	return managedRolloutRetryProjectionWithRelease(persister, snapshotPath, dispatchID, func() (*stackkitrelease.Release, error) { return TargetStackKitReleaseForStack(ctx, tenant, stack) })
+}
+func managedRolloutRetryProjectionWithRelease(persister *unifier.SpecPersister, snapshotPath, dispatchID string, resolve func() (*stackkitrelease.Release, error)) (string, error) {
+	release, err := resolve()
 	if err != nil {
 		return "", err
 	}

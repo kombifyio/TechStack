@@ -29,8 +29,13 @@ import { shellMessages } from "./shell-messages";
 import { dataProfileMessages } from "./data-profile/data-profile-messages";
 import { creationTemplateMessages } from "./wizard/creation-template-messages";
 import { marketplaceMessages } from "./wizard/marketplace-messages";
+import { useCaseConfigureMessages } from "./wizard/use-case-configure-messages";
+import { useCaseRemoveMessages } from "./wizard/use-case-remove-messages";
+import { useCaseRunMessages } from "./wizard/use-case-run-messages";
 import { creationFlowMessages } from "./wizard/creation-flow-messages";
 import { layoutMessages } from "./wizard/layout-messages";
+import { boxMessages } from "./dashboard/box-messages";
+import { appLogoMessages } from "./app-logo-messages";
 import { connectDevicesMessages } from "./dashboard/connect-devices-messages";
 import { es } from "./locales/es";
 import { zhHans } from "./locales/zh-Hans";
@@ -64,8 +69,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.en,
     ...marketplaceMessages.en,
     ...creationFlowMessages.en,
+    ...useCaseRunMessages.en,
+    ...useCaseRemoveMessages.en,
+    ...useCaseConfigureMessages.en,
     ...layoutMessages.en,
     ...connectDevicesMessages.en,
+    ...boxMessages.en,
+    ...appLogoMessages.en,
     "wizard.creation.preferenceOnly":
       "Preference saved. This release installs the suggested service; the alternative is not applied yet.",
     "wizard.preview.mail.title": "Mail",
@@ -739,21 +749,6 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.leave.confirm": "The answers you entered will be lost.",
     "wizard.step.inherited": "Already set for your Homelab",
     "wizard.step.existingOwner": "Your Homelab owner stays the same",
-    "wizard.addApp.title": "Add application",
-    "wizard.addApp.intro":
-      "Choose an application and the server it runs on. Access, people and sign-in stay as your Homelab has them.",
-    "wizard.addApp.catalogEmpty":
-      "The catalog offers no application for this Homelab yet.",
-    "wizard.addApp.recommended": "Recommended",
-    "wizard.addApp.about": "About",
-    "wizard.addApp.nodeTitle": "Where should {name} run?",
-    "wizard.addApp.nodeUnsupported":
-      "This server's StackKit does not offer {name}.",
-    "wizard.addApp.nodeNotReady": "Not ready for rollouts yet",
-    "wizard.addApp.submit": "Add application",
-    "wizard.addApp.result": "{name} was added to {node}.",
-    "wizard.addApp.resultStatus": "Status: {status}",
-    "wizard.addApp.done": "Done",
     "wizard.settings.title": "Homelab settings",
     "wizard.settings.intro":
       "Change who uses your Homelab and how you sign in. Each step acts on your running Homelab right away.",
@@ -1038,8 +1033,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.de,
     ...marketplaceMessages.de,
     ...creationFlowMessages.de,
+    ...useCaseRunMessages.de,
+    ...useCaseRemoveMessages.de,
+    ...useCaseConfigureMessages.de,
     ...layoutMessages.de,
     ...connectDevicesMessages.de,
+    ...boxMessages.de,
+    ...appLogoMessages.de,
     ...loginMessages.de,
     ...accessUsersMessages.de,
     ...nodeGuidanceMessages.de,
@@ -1726,21 +1726,6 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.leave.confirm": "Deine Eingaben gehen verloren.",
     "wizard.step.inherited": "Für dein Homelab bereits festgelegt",
     "wizard.step.existingOwner": "Der Owner deines Homelabs bleibt gleich",
-    "wizard.addApp.title": "Anwendung hinzufügen",
-    "wizard.addApp.intro":
-      "Wähle eine Anwendung und den Server, auf dem sie läuft. Zugriff, Personen und Anmeldung bleiben, wie dein Homelab sie hat.",
-    "wizard.addApp.catalogEmpty":
-      "Der Katalog bietet für dieses Homelab noch keine Anwendung an.",
-    "wizard.addApp.recommended": "Empfohlen",
-    "wizard.addApp.about": "Worum es geht",
-    "wizard.addApp.nodeTitle": "Wo soll {name} laufen?",
-    "wizard.addApp.nodeUnsupported":
-      "Das StackKit dieses Servers bietet {name} nicht an.",
-    "wizard.addApp.nodeNotReady": "Noch nicht bereit für Rollouts",
-    "wizard.addApp.submit": "Anwendung hinzufügen",
-    "wizard.addApp.result": "{name} wurde zu {node} hinzugefügt.",
-    "wizard.addApp.resultStatus": "Status: {status}",
-    "wizard.addApp.done": "Fertig",
     "wizard.settings.title": "Homelab-Einstellungen",
     "wizard.settings.intro":
       "Ändere, wer dein Homelab nutzt und wie du dich anmeldest. Jeder Schritt wirkt sofort auf dein laufendes Homelab.",
@@ -2028,8 +2013,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.es,
     ...marketplaceMessages.es,
     ...creationFlowMessages.es,
+    ...useCaseRunMessages.es,
+    ...useCaseRemoveMessages.es,
+    ...useCaseConfigureMessages.es,
     ...layoutMessages.es,
     ...connectDevicesMessages.es,
+    ...boxMessages.es,
+    ...appLogoMessages.es,
   },
   "zh-Hans": {
     ...zhHans,
@@ -2048,8 +2038,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages["zh-Hans"],
     ...marketplaceMessages["zh-Hans"],
     ...creationFlowMessages["zh-Hans"],
+    ...useCaseRunMessages["zh-Hans"],
+    ...useCaseRemoveMessages["zh-Hans"],
+    ...useCaseConfigureMessages["zh-Hans"],
     ...layoutMessages["zh-Hans"],
     ...connectDevicesMessages["zh-Hans"],
+    ...boxMessages["zh-Hans"],
+    ...appLogoMessages["zh-Hans"],
   },
   hi: {
     ...hi,
@@ -2068,8 +2063,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.hi,
     ...marketplaceMessages.hi,
     ...creationFlowMessages.hi,
+    ...useCaseRunMessages.hi,
+    ...useCaseRemoveMessages.hi,
+    ...useCaseConfigureMessages.hi,
     ...layoutMessages.hi,
     ...connectDevicesMessages.hi,
+    ...boxMessages.hi,
+    ...appLogoMessages.hi,
   },
   ar: {
     ...ar,
@@ -2088,8 +2088,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...creationTemplateMessages.ar,
     ...marketplaceMessages.ar,
     ...creationFlowMessages.ar,
+    ...useCaseRunMessages.ar,
+    ...useCaseRemoveMessages.ar,
+    ...useCaseConfigureMessages.ar,
     ...layoutMessages.ar,
     ...connectDevicesMessages.ar,
+    ...boxMessages.ar,
+    ...appLogoMessages.ar,
   },
 };
 

@@ -46,6 +46,7 @@ type agentBinaryArtifact struct {
 type agentBinaryAuthorization struct {
 	tokenHash string
 	resetAt   time.Time
+	runtime   *runtimeAgentAuthContext
 }
 
 var (
@@ -250,28 +251,20 @@ func (h workerRouteHandlers) agentInstallPins(e *httpx.Event) error {
 	if ownerID, err := requireWorkerOwner(e); err != nil || ownerID == "" {
 		return err
 	}
+	index, _, err := loadArtifactDeliveryIndex()
+	if err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Artifact delivery admission is unavailable", nil)
+	}
+	current, _, err := currentGuardManifest(guardReleaseDir())
+	if err != nil || current.manifest.Fresh(time.Now().UTC()) != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "The signed artifact policy is unavailable", nil)
+	}
 	pins := map[string]string{}
-	version := guardArtifactVersion()
-	if h.binaryArtifact != nil {
-		if artifact, err := h.binaryArtifact(); err == nil && artifact.os == managedRuntimeOSLinux && len(artifact.sha256) == sha256.Size*2 {
-			pins[artifact.arch] = artifact.sha256
+	version := index.ReleaseVersion
+	for _, entry := range index.Artifacts {
+		if entry.Kind == "guard_binary" {
+			pins[entry.Arch] = entry.SHA256
 		}
-	} else if dir := guardReleaseDir(); dir != "" {
-		if served, _, err := currentGuardManifest(dir); err == nil {
-			version = served.manifest.Version
-			for _, arch := range []string{managedRuntimeArchAMD64, "arm64"} {
-				entry, found := served.manifest.Artifact(managedRuntimeOSLinux, arch)
-				if !found {
-					continue
-				}
-				artifact, err := signedGuardBinaryArtifact(dir, managedRuntimeOSLinux, arch)
-				if err == nil && artifact.sha256 == entry.SHA256 {
-					pins[arch] = artifact.sha256
-				}
-			}
-		}
-	} else if artifact, err := currentAgentBinaryArtifact(); err == nil && artifact.os == managedRuntimeOSLinux && len(artifact.sha256) == sha256.Size*2 {
-		pins[artifact.arch] = artifact.sha256
 	}
 	e.Response.Header().Set("Cache-Control", "private, no-store")
 	return httpx.Success(e, http.StatusOK, map[string]any{
@@ -281,102 +274,9 @@ func (h workerRouteHandlers) agentInstallPins(e *httpx.Event) error {
 	})
 }
 
+// agentBinary admits delivery at the Cloudflare/R2 edge; it never serves a file.
 func (h workerRouteHandlers) agentBinary(e *httpx.Event) error {
-	requestedOS := strings.ToLower(strings.TrimSpace(e.Request.PathValue("os")))
-	requestedArch := normalizeAgentBinaryArch(e.Request.PathValue("arch"))
-	if requestedOS != managedRuntimeOSLinux || requestedArch == "" {
-		return httpx.BadRequest(e, "Unsupported agent platform", nil)
-	}
-
-	rawToken := workerRequestCredential(e.Request)
-	if rawToken == "" {
-		return httpx.Unauthorized(e, "A valid agent download capability is required")
-	}
-	now := time.Now().UTC()
-	authorization, authorized, err := h.authorizeAgentBinary(e, rawToken, now)
-	if err != nil || !authorized {
-		return err
-	}
-
-	artifactProvider := h.binaryArtifact
-	if artifactProvider == nil {
-		artifactProvider = currentAgentBinaryArtifact
-		if dir := guardReleaseDir(); dir != "" {
-			// A configured signed release is the only binary this control plane
-			// serves: the bytes the release workflow signed, not a rebuild.
-			artifactProvider = func() (agentBinaryArtifact, error) {
-				return signedGuardBinaryArtifact(dir, requestedOS, requestedArch)
-			}
-		}
-	}
-	artifact, err := artifactProvider()
-	if err != nil {
-		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary is temporarily unavailable", nil)
-	}
-	if artifact.os != requestedOS || artifact.arch != requestedArch {
-		e.Response.Header().Set("X-Kombify-Artifact-OS", artifact.os)
-		e.Response.Header().Set("X-Kombify-Artifact-Arch", artifact.arch)
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The deployed control plane does not publish a binary for the requested architecture", nil)
-	}
-	if artifact.size <= 0 || len(artifact.sha256) != sha256.Size*2 {
-		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary is temporarily unavailable", nil)
-	}
-	etag := `"` + artifact.sha256 + `"`
-	e.Response.Header().Set("ETag", etag)
-	e.Response.Header().Set(agentBinaryChecksumHeader, artifact.sha256)
-	if version := guardArtifactVersion(); version != "" {
-		e.Response.Header().Set(agentBinaryVersionHeader, version)
-	}
-	if strings.TrimSpace(e.Request.Header.Get("If-None-Match")) == etag {
-		e.Response.Header().Set("Cache-Control", "private, no-store")
-		e.Response.Header().Set("Vary", "Authorization")
-		e.Response.WriteHeader(http.StatusNotModified)
-		return nil
-	}
-
-	downloadGuard := h.binaryDownloadGuard
-	if downloadGuard == nil {
-		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary download guard is unavailable", nil)
-	}
-	release, allowed := downloadGuard.acquire(authorization.tokenHash, authorization.resetAt, now, artifact.size)
-	if !allowed {
-		e.Response.Header().Set("Retry-After", "900")
-		return httpx.Error(e, http.StatusTooManyRequests, ksapi.ErrCodeRateLimited, "Agent binary download is rate limited", nil)
-	}
-	defer release()
-
-	file, err := os.Open(artifact.path)
-	if err != nil {
-		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary is temporarily unavailable", nil)
-	}
-	defer func() { _ = file.Close() }()
-
-	filename := fmt.Sprintf("techstack-%s-%s", artifact.os, artifact.arch)
-	e.Response.Header().Set("X-Content-Type-Options", "nosniff")
-	e.Response.Header().Set("Content-Type", "application/octet-stream")
-	e.Response.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-	e.Response.Header().Set("Cache-Control", "private, no-store")
-	e.Response.Header().Set("Vary", "Authorization")
-	// The normal API write timeout is one minute. A bounded extension keeps the
-	// large exact-runtime artifact viable on slower VPS links while the global
-	// two-transfer semaphore still caps slow-client resource use.
-	deadlineErr := http.NewResponseController(e.Response).SetWriteDeadline(time.Now().Add(agentBinaryWriteTimeout))
-
-	// The handler owns the status line from here on. Without this marker a
-	// transfer that dies part-way is turned into a second response envelope on
-	// an already-committed response, which is why every truncated fleet
-	// self-update surfaced only as "superfluous response.WriteHeader" instead
-	// of a diagnosable failure.
-	e.MarkResponseStreamed()
-	counter := &agentBinaryTransferCounter{ResponseWriter: e.Response}
-	started := time.Now()
-	// ServeContent, not io.Copy: it advertises Accept-Ranges and honours a
-	// Range request, so an Agent whose transfer was cut short can resume from
-	// the byte it reached instead of restarting the whole artifact.
-	http.ServeContent(counter, e.Request, filename, artifact.modTime, file)
-	downloadGuard.record(authorization.tokenHash, counter.written)
-	logAgentBinaryTransfer(e, artifact, counter, started, deadlineErr)
-	return nil
+	return h.admitArtifact(e, "guard_binary")
 }
 
 // agentBinaryTransferCounter records how much of the artifact actually reached
@@ -482,6 +382,7 @@ func (h workerRouteHandlers) authorizeAgentBinary(
 		return agentBinaryAuthorization{
 			tokenHash: tokenHash,
 			resetAt:   now.Add(agentBinaryDefaultTokenWindow),
+			runtime:   &authCtx,
 		}, true, nil
 	}
 

@@ -3,11 +3,14 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 func (s *PostgresStore) CreateJob(ctx context.Context, req UpsertJobRequest) (*Job, error) {
@@ -22,6 +25,32 @@ func (s *PostgresStore) CreateServiceOperationJob(ctx context.Context, req Upser
 }
 
 func (s *PostgresStore) createJob(ctx context.Context, req UpsertJobRequest, serviceID string) (*Job, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	var out *Job
+	err := s.withTenant(ctx, req.TenantID, func(tx *sql.Tx) error {
+		var err error
+		out, err = s.createJobTx(ctx, tx, req, serviceID)
+		return err
+	})
+	return out, err
+}
+
+// CreateJobTx reserves an ordinary durable job inside an existing aggregate
+// transaction. It never commits; scheduler cadence and job insertion are one
+// commit, and execution remains behind the existing StartJob lease fence.
+func (s *PostgresStore) CreateJobTx(ctx context.Context, tx *sql.Tx, req UpsertJobRequest) (*Job, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("controlplane: transaction required")
+	}
+	if err := tenantcontext.ApplyTenant(ctx, tx, req.TenantID); err != nil {
+		return nil, err
+	}
+	return s.createJobTx(ctx, tx, req, "")
+}
+
+func (s *PostgresStore) createJobTx(ctx context.Context, tx *sql.Tx, req UpsertJobRequest, serviceID string) (*Job, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("controlplane: database not configured")
 	}
@@ -50,7 +79,7 @@ func (s *PostgresStore) createJob(ctx context.Context, req UpsertJobRequest, ser
 	}
 
 	var out *Job
-	err = s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+	err = func() error {
 		if serviceID != "" {
 			// Reuse StartJob's transaction-scoped stack lock and READ COMMITTED
 			// visibility; a concurrent reservation must see the preceding commit.
@@ -90,7 +119,7 @@ func (s *PostgresStore) createJob(ctx context.Context, req UpsertJobRequest, ser
 		}
 		out = job
 		return nil
-	})
+	}()
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +316,7 @@ func (s *PostgresStore) SyncJobSnapshot(ctx context.Context, syncReq SyncJobSnap
 		if scanErr != nil {
 			return scanErr
 		}
+		recordFailureOccurrenceTx(ctx, tx, job, syncReq.FailureOccurrence)
 		out = job
 		return nil
 	})
@@ -680,6 +710,74 @@ func (s *PostgresStore) ListPendingJobs(ctx context.Context, tenantID string, li
 	`, tenantID, limit)
 }
 
+// ListPendingNonBackupJobs keeps the hosted HTTP owner from filling its page
+// with work assigned to the separate backup process. Native combined-mode
+// callers retain ListPendingJobs and its original ordering/recovery contract.
+func (s *PostgresStore) ListPendingNonBackupJobs(ctx context.Context, tenantID string, limit int) ([]Job, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return s.listJobsWithPayload(ctx, tenantID, `SELECT id,tenant_id,instance_id,stack_id,type,state,priority,
+  progress,step,message,error,error_details,logs_json::text,result_json::text,payload_json::text,
+  scheduled_for,started_at,completed_at,created_at,updated_at FROM jobs
+  WHERE tenant_id=$1 AND state='pending' AND type<>'backup' AND scheduled_for<=now()
+  ORDER BY priority DESC,created_at ASC LIMIT $2`, tenantID, limit)
+}
+
+// ListPendingBackupJobPage reuses the pending jobs authority with a bounded
+// keyset, exact purpose and database-clock recovery window. Expired admissions
+// are not re-executed; their presence cannot hide a newer eligible backup.
+func (s *PostgresStore) ListPendingBackupJobPage(ctx context.Context, tenantID string, after time.Time, afterID string, limit int) ([]Job, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	var out []Job
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var err error
+		out, err = ReadPendingBackupJobPageTx(ctx, tx, tenantID, after, afterID, limit)
+		return err
+	})
+	return out, err
+}
+
+// ReadPendingBackupJobPageTx is the same production SQL inside a caller-owned
+// scoped transaction (including governed Stage denial/rollback probes).
+func ReadPendingBackupJobPageTx(ctx context.Context, tx *sql.Tx, tenantID string, after time.Time, afterID string, limit int) ([]Job, error) {
+	if tx == nil || strings.TrimSpace(tenantID) == "" {
+		return nil, fmt.Errorf("backup pending page requires its tenant transaction")
+	}
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var cursor any
+	if !after.IsZero() {
+		cursor = after.UTC()
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,tenant_id,instance_id,stack_id,type,state,priority,
+  progress,step,message,error,error_details,logs_json::text,result_json::text,payload_json::text,
+  scheduled_for,started_at,completed_at,created_at,updated_at FROM jobs
+  WHERE tenant_id=$1 AND state='pending' AND type='backup' AND scheduled_for<=now()
+   AND created_at>=now()-interval '1 hour'
+   AND ($2::timestamptz IS NULL OR (scheduled_for,id)>($2::timestamptz,$3::text))
+  ORDER BY scheduled_for ASC,id ASC LIMIT $4`, tenantID, cursor, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		job, err := scanJobWithPayload(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *job)
+	}
+	return out, rows.Err()
+}
+
 // ListPendingJobTenants pages the secret-free pending-tenant directory. It
 // returns tenant IDs only; the job rows themselves are read afterwards inside
 // the tenant-scoped RLS boundary.
@@ -772,12 +870,13 @@ func (s *PostgresStore) StartJob(ctx context.Context, tenantID, jobID string, at
 	}
 	var out *Job
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		var state, stackID, agentID string
+		var state, stackID, agentID, jobType string
+		var payload []byte
 		if err := tx.QueryRowContext(ctx, `
-			SELECT state, COALESCE(stack_id, ''), COALESCE(payload_json->>'agent_id', '') FROM jobs
+			SELECT state, COALESCE(stack_id, ''), COALESCE(payload_json->>'agent_id', ''), type, payload_json::text FROM jobs
 			WHERE tenant_id = $1 AND id = $2
 			FOR UPDATE
-		`, tenantID, jobID).Scan(&state, &stackID, &agentID); err != nil {
+		`, tenantID, jobID).Scan(&state, &stackID, &agentID, &jobType, &payload); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
@@ -786,36 +885,28 @@ func (s *PostgresStore) StartJob(ctx context.Context, tenantID, jobID string, at
 		if state != jobStatePending {
 			return ErrConflict
 		}
-		if stackID != "" {
-			// PostgreSQL text values reject NUL bytes. Length-prefix the tenant
-			// component to keep the composite advisory-lock key unambiguous while
-			// remaining valid UTF-8 text.
-			lockKey := fmt.Sprintf("%d:%s%s", len(tenantID), tenantID, stackID)
-			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lockKey); err != nil {
-				return err
-			}
-			var busy bool
-			if err := tx.QueryRowContext(ctx, `
-				SELECT EXISTS (
-					SELECT 1 FROM jobs
-					WHERE tenant_id = $1 AND stack_id = $2 AND id <> $3 AND state = 'running'
-				)
-			`, tenantID, stackID, jobID).Scan(&busy); err != nil {
-				return err
-			}
-			if busy {
-				return ErrStackExecutionBusy
-			}
+		candidate := Job{ID: jobID, StackID: stackID, Type: jobType}
+		if json.Unmarshal(payload, &candidate.Payload) != nil {
+			return ErrConflict
+		}
+		targets, err := jobExecutionTargets(candidate)
+		if err != nil {
+			return err
+		}
+		if err := lockExecutionTargetsTx(ctx, tx, tenantID, targets); err != nil {
+			return err
+		}
+		if err := refuseExecutionTargetConflictTx(ctx, tx, tenantID, jobID, targets, s.backupWorker); err != nil {
+			return err
 		}
 		// A claimed reboot or OS update holds the job's resolved agent (or its
 		// stack when the job names no agent); the job waits until it settles.
 		// The node admission lock serializes this read with a maintenance
 		// claim, which checks for pending and running jobs under the same lock.
-		if err := lockNodeAdmissionTx(ctx, tx, tenantID, agentID, stackID); err != nil {
-			return err
-		}
-		if err := refuseNodeUnderMaintenanceTx(ctx, tx, tenantID, agentID, stackID); err != nil {
-			return err
+		for _, target := range targets {
+			if err := refuseNodeUnderMaintenanceTx(ctx, tx, tenantID, target.AgentID, target.StackID); err != nil {
+				return err
+			}
 		}
 		// StartJob is the only transition into 'running', so it is the only
 		// place an execution lease is issued. The deadline comes from the
@@ -867,17 +958,40 @@ func (s *PostgresStore) CompleteJob(ctx context.Context, tenantID, jobID string,
 }
 
 func (s *PostgresStore) FailJob(ctx context.Context, tenantID, jobID string, message, details string, at time.Time) (*Job, error) {
-	return s.updateRunningJob(ctx, tenantID, `
-		UPDATE jobs
-		SET state = 'failed', error = NULLIF($3, ''), error_details = NULLIF($4, ''),
-			completed_at = $5, updated_at = $5,
-			execution_owner_id = NULL, execution_lease_expires_at = NULL
-		WHERE tenant_id = $1 AND id = $2 AND state = 'running'
-		RETURNING id, tenant_id, instance_id, stack_id, type, state, priority,
-			progress, step, message, error, error_details, logs_json::text,
-			result_json::text, scheduled_for, started_at, completed_at,
-			created_at, updated_at
-		`, tenantID, jobID, message, details, at)
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, fmt.Errorf("controlplane: tenant id required")
+	}
+	var out *Job
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		job, err := scanJob(tx.QueryRowContext(ctx, `
+			UPDATE jobs
+			SET state = 'failed', error = NULLIF($3, ''), error_details = NULLIF($4, ''),
+				completed_at = $5, updated_at = $5,
+				execution_owner_id = NULL, execution_lease_expires_at = NULL
+			WHERE tenant_id = $1 AND id = $2 AND state = 'running'
+			RETURNING id, tenant_id, instance_id, stack_id, type, state, priority,
+				progress, step, message, error, error_details, logs_json::text,
+				result_json::text, scheduled_for, started_at, completed_at,
+				created_at, updated_at
+			`, tenantID, jobID, message, details, at))
+		if err == sql.ErrNoRows {
+			return ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		recordFailureOccurrenceTx(ctx, tx, job, failureOccurrenceForStoredJob(job, ""))
+		out = job
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) getJob(ctx context.Context, tenantID, query string, args ...any) (*Job, error) {

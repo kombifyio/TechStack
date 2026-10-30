@@ -1,3 +1,4 @@
+import { fillSecret } from "../helpers/secret-input";
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import {
   TEST_CREDENTIALS,
@@ -63,13 +64,14 @@ async function loginAsAdmin(page: Page) {
   const existingEmail = page.getByTestId("windows-local-existing-email");
   if (await existingEmail.isVisible().catch(() => false)) {
     await existingEmail.fill(TEST_CREDENTIALS.email);
-    await page
-      .getByTestId("windows-local-existing-password")
-      .fill(TEST_CREDENTIALS.password);
+    await fillSecret(
+      page.getByTestId("windows-local-existing-password"),
+      TEST_CREDENTIALS.password,
+    );
     await page.getByTestId("windows-local-existing-submit").click();
   } else {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
-    await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
+    await fillSecret(page.getByLabel("Password"), TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign in locally" }).click();
   }
 

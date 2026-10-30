@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/kombifyio/techstack/pkg/guardtelemetry"
 	"github.com/google/uuid"
 )
@@ -27,7 +28,7 @@ func (p *PostgresDriveHealthStore) tenant(ctx context.Context, tenant string, fn
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id',$1,true)", tenant); err != nil {
+	if err = tenantcontext.ApplyTenant(ctx, tx, tenant); err != nil {
 		return err
 	}
 	if err = fn(tx); err != nil {

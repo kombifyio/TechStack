@@ -16,6 +16,8 @@
   import { ServiceCard } from "@kombiverselabs/ui/service";
   import Button from "#lib/components/ui/Button.svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import AppLogoControl from "#lib/components/dashboard/AppLogoControl.svelte";
+  import { appLogoKey } from "#lib/app-logo-overrides.svelte.js";
   import BrandLogoIcon from "#lib/components/BrandLogoIcon.svelte";
   import BrandLogoScope from "#lib/components/BrandLogoScope.svelte";
   import ServiceAdoptionDialog from "#lib/components/inventory/ServiceAdoptionDialog.svelte";
@@ -31,6 +33,7 @@
   } from "#lib/api/services.js";
   import {
     openServiceUrl,
+    serviceCardLogo,
     serviceCardLogoDomain,
     serviceCardLogoSrc,
     serviceCardStatus,
@@ -215,14 +218,14 @@
       (candidate) => candidate.id === application?.kit_deployment_id,
     ),
   );
-  const logoDomain = $derived(
+  const logo = $derived(
     application
-      ? serviceCardLogoDomain(
+      ? serviceCardLogo(
           application.catalog ?? application.components[0]?.catalog,
           application.application_key,
-          application.display_name,
+          [application.application_key, application.display_name],
         )
-      : "",
+      : { domain: "", src: undefined },
   );
   const status = $derived(
     application ? serviceCardStatus({ status: application.status }) : "unknown",
@@ -549,7 +552,7 @@
         data-testid="application-panel-overview"
       >
         <div class="min-w-0 space-y-6">
-          <BrandLogoScope domain={logoDomain}>
+          <BrandLogoScope domain={logo.domain}>
             <ServiceCard
               name={application.display_name}
               description={trn(
@@ -567,7 +570,7 @@
                       tr("ui.servicesApplicationId.noReachableAddressReported"),
                   )}
               icon={BrandLogoIcon}
-              logoSrc={serviceCardLogoSrc(logoDomain)}
+              logoSrc={logo.src}
               version={serviceCardVersion(version)}
               update={serviceCardUpdate(version)}
               {placement}
@@ -873,6 +876,11 @@
               <dd>{when(application.observed_at)}</dd>
             </div>
           </dl>
+          <div class="mt-4 border-t border-border pt-4">
+            <AppLogoControl
+              applicationKey={appLogoKey(application.application_key)}
+            />
+          </div>
         </aside>
       </div>
     {:else if tab === "components"}
@@ -919,6 +927,7 @@
                         component.service_key,
                         component.name,
                       ),
+                      { catalog: component.catalog },
                     )}
                     version={serviceCardVersion(component.version)}
                     update={serviceCardUpdate(component.version)}

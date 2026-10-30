@@ -3,12 +3,18 @@ package autoinstall
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/logger"
 )
+
+// ErrRemoteInstallDisabled reports Full Local admission before a download or
+// package manager can contact remote sources outside the guarded transport.
+var ErrRemoteInstallDisabled = errors.New(fulllocal.ReasonCode + ": remote dependency installation is disabled")
 
 // detector implements the Detector interface.
 type detector struct {
@@ -53,6 +59,15 @@ func (d *detector) Detect(ctx context.Context) ([]MissingDependency, error) {
 // Install installs a single dependency.
 func (d *detector) Install(ctx context.Context, dep Dependency) (*InstallResult, error) {
 	strategy := d.GetStrategy(dep)
+	if fulllocal.Active() && (strategy == StrategyDownload || strategy == StrategyPackageManager) {
+		d.log.Warn("Dependency installation refused", "dependency", dep.Name, "reason", fulllocal.ReasonCode)
+		return &InstallResult{
+			Dependency: dep,
+			Success:    false,
+			Error:      ErrRemoteInstallDisabled,
+			Strategy:   strategy,
+		}, nil
+	}
 
 	d.log.Info("Installing dependency",
 		"name", dep.Name,
@@ -126,6 +141,10 @@ func (d *detector) getVersion(dep Dependency) (string, error) {
 	parts := strings.Fields(dep.CheckCommand)
 	if len(parts) == 0 {
 		return "", fmt.Errorf("invalid check command")
+	}
+	if fulllocal.Active() && dep.Name == "Docker" {
+		// Probe the installed client without contacting a configured remote daemon.
+		parts = []string{dep.ExecutableName, "--version"}
 	}
 
 	cmd := exec.Command(parts[0], parts[1:]...)

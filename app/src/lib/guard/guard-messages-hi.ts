@@ -278,6 +278,8 @@ export const guardMessagesHi: Record<keyof typeof guardMessages.en, string> = {
     "kombify.me ने इस सर्वर का पंजीकरण अस्वीकार कर दिया।",
   "guard.reach.reason.connect_unavailable":
     "kombify Connect उपलब्ध नहीं है। थोड़ी देर में फिर जाँचें।",
+  "guard.reach.reason.connect_not_enabled":
+    "इस खाते के लिए kombify Connect अभी चालू नहीं है। स्थानीय काम और सर्वर नियंत्रण पर कोई असर नहीं है।",
   "guard.reach.reason.connect_denied":
     "kombify Connect ने इस सर्वर को सूचीबद्ध करने से इनकार कर दिया।",
   "guard.reach.reason.reach_layout_unsupported":

@@ -2,11 +2,11 @@
   "configured": true,
   "deliverability_known": true,
   "release": {
-    "tag": "v0.54.4",
-    "version": "0.54.4",
-    "sourceSha": "fa83fa6853ae5e2c5833990fcb26a20a6354d934",
-    "publicSourceSha": "9ac1e5d972181599722602257c2da1876a55d032",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.4"
+    "tag": "v0.54.12",
+    "version": "0.54.12",
+    "sourceSha": "06eead2a7c5d1a9886367f8abce675a2ec51c34b",
+    "publicSourceSha": "f7a5ee87aaec665829e3cb9fc2c251fa6646d395",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.12"
   },
   "use_cases": [
     {
@@ -16,6 +16,13 @@
           "defaultAlternative": "hermes",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "dashboard-password",
+                  "dashboard-session-secret"
+                ]
+              },
               "id": "hermes",
               "modules": [
                 {
@@ -82,6 +89,13 @@
           "defaultAlternative": "paperclip",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "database-password",
+                  "session-secret"
+                ]
+              },
               "id": "paperclip",
               "modules": [
                 {
@@ -166,6 +180,10 @@
           "defaultAlternative": "tika",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "docling",
               "modules": [
                 {
@@ -226,6 +244,10 @@
               ]
             },
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "tika",
               "modules": [
                 {
@@ -292,6 +314,12 @@
           "defaultAlternative": "litellm",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "master-key"
+                ]
+              },
               "id": "litellm",
               "modules": [
                 {
@@ -358,6 +386,10 @@
           "defaultAlternative": "openhands",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "openhands",
               "modules": [
                 {
@@ -442,9 +474,22 @@
           "defaultAlternative": "comfyui",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [
+                  {
+                    "key": "comfyui-api-nodes",
+                    "type": "boolean",
+                    "label": "ComfyUI API nodes"
+                  }
+                ],
+                "secretRefs": []
+              },
               "id": "comfyui",
               "modules": [
                 {
+                  "acceleratorProfiles": [
+                    "nvidia"
+                  ],
                   "id": "stackkits-comfyui-runtime",
                   "computeProfiles": [
                     "high",
@@ -539,6 +584,12 @@
           "defaultAlternative": "searxng",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "searxng-secret"
+                ]
+              },
               "id": "searxng",
               "modules": [
                 {
@@ -605,6 +656,12 @@
           "defaultAlternative": "speechkit",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "server-token"
+                ]
+              },
               "id": "speechkit",
               "modules": [
                 {
@@ -665,13 +722,96 @@
               ]
             }
           ]
+        },
+        {
+          "id": "ai-vectors",
+          "defaultAlternative": "qdrant",
+          "alternatives": [
+            {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "api-key"
+                ]
+              },
+              "id": "qdrant",
+              "modules": [
+                {
+                  "id": "stackkits-qdrant-runtime",
+                  "computeProfiles": [
+                    "high",
+                    "standard"
+                  ],
+                  "computeProfileFacts": {
+                    "high": {
+                      "maturity": "beta",
+                      "executable": true,
+                      "realization": "apply-ready",
+                      "hostFloor": {
+                        "minCpuCores": 2,
+                        "minRamGB": 4,
+                        "minStorageGB": 20
+                      },
+                      "reservation": {
+                        "ramGB": 0.25
+                      },
+                      "provenance": {
+                        "hostFloor": {
+                          "source": "policy",
+                          "ref": "Kombify host floor support policy"
+                        },
+                        "reservation": {
+                          "source": "policy",
+                          "ref": "Sum of pinned Compose component memoryReservation limits in foundation/architecture_v2_catalog.cue"
+                        }
+                      }
+                    },
+                    "standard": {
+                      "maturity": "beta",
+                      "executable": true,
+                      "realization": "apply-ready",
+                      "hostFloor": {
+                        "minCpuCores": 2,
+                        "minRamGB": 4,
+                        "minStorageGB": 20
+                      },
+                      "reservation": {
+                        "ramGB": 0.25
+                      },
+                      "provenance": {
+                        "hostFloor": {
+                          "source": "policy",
+                          "ref": "Kombify host floor support policy"
+                        },
+                        "reservation": {
+                          "source": "policy",
+                          "ref": "Sum of pinned Compose component memoryReservation limits in foundation/architecture_v2_catalog.cue"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
         }
       ],
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "owner-password",
+              "session-key"
+            ]
+          },
           "id": "anythingllm",
           "modules": [
             {
+              "acceleratorProfiles": [
+                "amd",
+                "nvidia"
+              ],
               "id": "stackkits-anythingllm-runtime",
               "computeProfiles": [
                 "high",
@@ -770,9 +910,51 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [
+              {
+                "key": "kombify-connector",
+                "type": "boolean",
+                "label": "kombify connector"
+              },
+              {
+                "key": "model-pack-coding",
+                "type": "boolean",
+                "label": "Coding model pack"
+              },
+              {
+                "key": "model-pack-general",
+                "type": "boolean",
+                "label": "General model pack"
+              },
+              {
+                "key": "model-pack-vision",
+                "type": "boolean",
+                "label": "Vision model pack"
+              },
+              {
+                "key": "model-size",
+                "type": "string",
+                "label": "Model size",
+                "options": [
+                  "small",
+                  "medium",
+                  "large"
+                ]
+              }
+            ],
+            "secretRefs": [
+              "owner-password",
+              "session-key"
+            ]
+          },
           "id": "private-ai",
           "modules": [
             {
+              "acceleratorProfiles": [
+                "amd",
+                "nvidia"
+              ],
               "id": "stackkits-private-ai-runtime",
               "computeProfiles": [
                 "high",
@@ -1201,6 +1383,26 @@
             "realization": "recorded",
             "pending": "needs its own PostgreSQL and ClickHouse stack"
           }
+        },
+        {
+          "id": "vectors",
+          "name": "Vector store",
+          "help": "Keeps the knowledge-base vectors of your chat module in Qdrant instead of its built-in store (Chroma in Open WebUI, LanceDB in AnythingLLM). Off by default.",
+          "required": false,
+          "enabledByDefault": false,
+          "requires": [
+            "inference",
+            "chat"
+          ],
+          "requiresAccelerator": false,
+          "default": {
+            "id": "qdrant",
+            "name": "Qdrant",
+            "note": "Open source from Berlin with its own MCP server; the API key comes from owner custody",
+            "realization": "install",
+            "workloadRef": "ai-vectors",
+            "alternativeRef": "qdrant"
+          }
         }
       ],
       "components": [
@@ -1239,6 +1441,12 @@
         {
           "id": "open-webui",
           "name": "Open WebUI",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "qdrant",
+          "name": "Qdrant",
           "role": "supporting",
           "kind": "application"
         },
@@ -1466,6 +1674,10 @@
           "defaultAlternative": "ntfy-live",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "ntfy-live",
               "modules": [
                 {
@@ -1545,6 +1757,13 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "database-password",
+              "owner-token"
+            ]
+          },
           "id": "workpaths",
           "modules": [
             {
@@ -1765,6 +1984,12 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "owner-password"
+            ]
+          },
           "id": "forgejo",
           "modules": [
             {
@@ -1825,6 +2050,12 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "owner-password"
+            ]
+          },
           "id": "gitea",
           "modules": [
             {
@@ -2035,6 +2266,14 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "database-password",
+              "owner-password",
+              "session-key"
+            ]
+          },
           "id": "paperless-ngx",
           "modules": [
             {
@@ -2183,6 +2422,12 @@
           "defaultAlternative": "euro-office",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "jwt-secret"
+                ]
+              },
               "id": "euro-office",
               "modules": [
                 {
@@ -2292,6 +2537,10 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "cloudreve",
           "modules": [
             {
@@ -2403,6 +2652,13 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "database-password",
+              "owner-password"
+            ]
+          },
           "id": "nextcloud",
           "modules": [
             {
@@ -2463,6 +2719,12 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "owner-password"
+            ]
+          },
           "id": "opencloud",
           "modules": [
             {
@@ -2777,6 +3039,16 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "application-api-key",
+              "client-api-key",
+              "database-password",
+              "encryption-key",
+              "owner-password"
+            ]
+          },
           "id": "calagopus",
           "modules": [
             {
@@ -2837,6 +3109,15 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "app-key",
+              "application-api-key",
+              "client-api-key",
+              "owner-password"
+            ]
+          },
           "id": "pelican",
           "modules": [
             {
@@ -2897,6 +3178,18 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "app-key",
+              "application-api-key",
+              "client-api-key",
+              "database-password",
+              "database-root-password",
+              "hashids-salt",
+              "owner-password"
+            ]
+          },
           "id": "pterodactyl",
           "modules": [
             {
@@ -3125,6 +3418,12 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "session-key"
+            ]
+          },
           "id": "roundcube",
           "modules": [
             {
@@ -3395,6 +3694,12 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "admin-password"
+            ]
+          },
           "id": "stalwart",
           "modules": [
             {
@@ -3643,6 +3948,10 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "coolify",
           "modules": [
             {
@@ -3720,6 +4029,89 @@
             }
           ],
           "providesRuntimeAdapterRef": "coolify"
+        },
+        {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
+          "id": "runtipi",
+          "modules": [
+            {
+              "id": "stackkits-marketplace-runtipi-runtime",
+              "computeProfiles": [
+                "high",
+                "standard"
+              ],
+              "computeProfileFacts": {
+                "high": {
+                  "maturity": "beta",
+                  "executable": true,
+                  "realization": "apply-ready",
+                  "hostFloor": {
+                    "minCpuCores": 2,
+                    "minRamGB": 4,
+                    "minStorageGB": 20
+                  },
+                  "reservation": {
+                    "cpuCores": 0.5,
+                    "ramGB": 2.25
+                  },
+                  "recommended": {
+                    "cpuCores": 2,
+                    "ramGB": 4
+                  },
+                  "provenance": {
+                    "hostFloor": {
+                      "source": "policy",
+                      "ref": "Kombify host floor support policy"
+                    },
+                    "recommended": {
+                      "source": "policy",
+                      "ref": "Kombify recommended sizing policy"
+                    },
+                    "reservation": {
+                      "source": "policy",
+                      "ref": "Kombify reservation policy; declared, not a sum of component limits"
+                    }
+                  }
+                },
+                "standard": {
+                  "maturity": "beta",
+                  "executable": true,
+                  "realization": "apply-ready",
+                  "hostFloor": {
+                    "minCpuCores": 2,
+                    "minRamGB": 4,
+                    "minStorageGB": 20
+                  },
+                  "reservation": {
+                    "cpuCores": 0.5,
+                    "ramGB": 2.25
+                  },
+                  "recommended": {
+                    "cpuCores": 2,
+                    "ramGB": 4
+                  },
+                  "provenance": {
+                    "hostFloor": {
+                      "source": "policy",
+                      "ref": "Kombify host floor support policy"
+                    },
+                    "recommended": {
+                      "source": "policy",
+                      "ref": "Kombify recommended sizing policy"
+                    },
+                    "reservation": {
+                      "source": "policy",
+                      "ref": "Kombify reservation policy; declared, not a sum of component limits"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "providesRuntimeAdapterRef": "runtipi"
         }
       ],
       "components": [
@@ -3735,7 +4127,8 @@
           "name": "Runtipi",
           "role": "alternative",
           "kind": "application",
-          "realization": "recorded"
+          "realization": "install",
+          "maturity": "beta"
         }
       ],
       "compute_tiers": {
@@ -3775,11 +4168,11 @@
             {
               "id": "runtipi",
               "name": "Runtipi",
-              "realization": "recorded"
+              "realization": "install"
             }
           ],
           "default": "coolify",
-          "realization": "recorded"
+          "realization": "install"
         }
       ],
       "title": "Marketplace"
@@ -3791,6 +4184,10 @@
           "defaultAlternative": "audiobookshelf",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "audiobookshelf",
               "modules": [
                 {
@@ -3857,6 +4254,10 @@
           "defaultAlternative": "navidrome",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "navidrome",
               "modules": [
                 {
@@ -3984,6 +4385,10 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "emby",
           "modules": [
             {
@@ -4044,6 +4449,10 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "jellyfin",
           "modules": [
             {
@@ -4336,6 +4745,12 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "owner-password"
+            ]
+          },
           "id": "adguard-home",
           "modules": [
             {
@@ -4556,6 +4971,12 @@
           "defaultAlternative": "immich-kiosk",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "immich-api-key"
+                ]
+              },
               "id": "immich-kiosk",
               "modules": [
                 {
@@ -4622,6 +5043,10 @@
           "defaultAlternative": "immich-public-proxy",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "immich-public-proxy",
               "modules": [
                 {
@@ -4688,6 +5113,13 @@
           "defaultAlternative": "immich-power-tools",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "database-password",
+                  "immich-api-key"
+                ]
+              },
               "id": "immich-power-tools",
               "modules": [
                 {
@@ -4791,6 +5223,12 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "database-password"
+            ]
+          },
           "id": "immich",
           "modules": [
             {
@@ -4821,7 +5259,7 @@
                   "provenance": {
                     "hostFloor": {
                       "source": "upstream",
-                      "ref": "Immich v2.7.0 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor"
+                      "ref": "Immich v3.3.4 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor"
                     },
                     "recommended": {
                       "source": "measured",
@@ -4854,7 +5292,7 @@
                   "provenance": {
                     "hostFloor": {
                       "source": "upstream",
-                      "ref": "Immich v2.7.0 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor"
+                      "ref": "Immich v3.3.4 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor"
                     },
                     "recommended": {
                       "source": "measured",
@@ -4871,6 +5309,12 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "database-password"
+            ]
+          },
           "id": "immich-lite",
           "modules": [
             {
@@ -5156,6 +5600,12 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "owner-password"
+            ]
+          },
           "id": "guacamole",
           "modules": [
             {
@@ -5376,6 +5826,10 @@
           "defaultAlternative": "esphome",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": []
+              },
               "id": "esphome",
               "modules": [
                 {
@@ -5442,6 +5896,18 @@
           "defaultAlternative": "mosquitto",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [
+                  {
+                    "key": "home-assistant-link",
+                    "type": "boolean",
+                    "label": "Home Assistant link"
+                  }
+                ],
+                "secretRefs": [
+                  "mqtt-password"
+                ]
+              },
               "id": "mosquitto",
               "modules": [
                 {
@@ -5547,6 +6013,12 @@
           "defaultAlternative": "zigbee2mqtt",
           "alternatives": [
             {
+              "configuration": {
+                "settings": [],
+                "secretRefs": [
+                  "mqtt-password"
+                ]
+              },
               "id": "zigbee2mqtt",
               "modules": [
                 {
@@ -5671,6 +6143,10 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "home-assistant",
           "modules": [
             {
@@ -5782,6 +6258,10 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "home-assistant-existing",
           "modules": [
             {
@@ -5800,6 +6280,10 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "home-assistant-haos",
           "modules": [
             {
@@ -5818,6 +6302,10 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": []
+          },
           "id": "home-assistant-imported",
           "modules": [
             {
@@ -6086,6 +6574,13 @@
       },
       "alternatives": [
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "database-password",
+              "database-root-password"
+            ]
+          },
           "id": "passbolt",
           "modules": [
             {
@@ -6146,6 +6641,12 @@
           ]
         },
         {
+          "configuration": {
+            "settings": [],
+            "secretRefs": [
+              "admin-token"
+            ]
+          },
           "id": "vaultwarden",
           "modules": [
             {

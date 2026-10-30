@@ -59,7 +59,10 @@
   import { brandDomainForTool } from "#lib/brand-logo.js";
   import Button from "#lib/components/ui/Button.svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
-  import { serverHistoryHref } from "#lib/server-links.js";
+  import {
+    placeUseCasesHref,
+    serverHistoryHref,
+  } from "#lib/server-links.js";
   import ServerAccessActions from "#lib/components/server-access/ServerAccessActions.svelte";
   import ManagedRuntimeRecreatePanel from "#lib/components/managed-runtime/ManagedRuntimeRecreatePanel.svelte";
   import GuardPanel from "#lib/components/guard/GuardPanel.svelte";
@@ -77,6 +80,7 @@
     Gauge,
     HardDrive,
     ListChecks,
+    Plus,
     Server,
     TerminalSquare,
     RefreshCw,
@@ -656,6 +660,19 @@
                   ? tr("ui.homelabDashboardPage.reconnecting")
                   : tr("ui.homelabDashboardPage.reconnect")}
               </Button>
+            {/if}
+            {#if canonicalServer?.id}
+              <!-- Use cases for this server's StackKit, preselected. -->
+              <a
+                href={placeUseCasesHref(canonicalServer.id)}
+                data-kx="control"
+                data-variant="secondary"
+                class="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium"
+                data-testid="server-add-use-cases"
+              >
+                <Plus class="h-4 w-4" aria-hidden="true" />
+                {tr("layout.addUseCases.entry")}
+              </a>
             {/if}
             {#if canonicalServer?.id || details.server.server_id}
               <!-- The same server as history and metrics. -->

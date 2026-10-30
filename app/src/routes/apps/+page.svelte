@@ -10,6 +10,7 @@
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import { SegmentedControl } from "@kombiverselabs/ui/primitives";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import TrademarkNotice from "#lib/components/TrademarkNotice.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr } from "#lib/i18n.svelte.js";
   import {
@@ -198,6 +199,10 @@
         />
       {/each}
     </div>
+  {/if}
+
+  {#if !loading && !failed && applications.length > 0}
+    <TrademarkNotice class="mt-6" />
   {/if}
 </div>
 

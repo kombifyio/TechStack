@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/servertls"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 	"github.com/kombifyio/techstack/pkg/usernotice"
 	"google.golang.org/grpc"
@@ -212,6 +214,13 @@ func (c *Client) Connect(ctx context.Context) error {
 				Timeout:             10 * time.Second, // Wait 10s for pong
 				PermitWithoutStream: true,             // Ping even without active streams
 			}),
+		}
+		if fulllocal.Active() {
+			// A node daemon under Full Local only connects to a core in the homelab.
+			guarded := fulllocal.Dial(nil)
+			opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
+				return guarded(ctx, "tcp", address)
+			}))
 		}
 	}
 

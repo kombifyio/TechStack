@@ -4,6 +4,7 @@
   import ServiceRegistrySelector from "./ServiceRegistrySelector.svelte";
   import InfoTip from "./InfoTip.svelte";
   import { NODE_GUIDES } from "#lib/docs-links.js";
+  import { NEW_SERVER_CREATION_HREF } from "#lib/server-links.js";
   import {
     getRegistryNodeRoleChoices,
     getStackKitFoundationChoices,
@@ -205,7 +206,7 @@
           {#if joinSurface}
             {trParts("ui.serverRegistry.joinSurface")[0]}<a
               class="underline underline-offset-2 hover:text-foreground"
-              href="/stacks/new"
+              href={NEW_SERVER_CREATION_HREF}
               data-testid="server-role-found-deployment-link"
               >{tr("ui.serverRegistry.addOneToHomelab")}</a
             >{trParts("ui.serverRegistry.joinSurface")[1]}

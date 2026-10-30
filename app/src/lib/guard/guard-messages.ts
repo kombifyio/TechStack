@@ -290,6 +290,8 @@ export const guardMessages = {
       "kombify.me refused the registration for this server.",
     "guard.reach.reason.connect_unavailable":
       "kombify Connect is unavailable. Check again shortly.",
+    "guard.reach.reason.connect_not_enabled":
+      "kombify Connect is not enabled for this account yet. Local work and server control are not affected.",
     "guard.reach.reason.connect_denied":
       "kombify Connect refused to list this server.",
     "guard.reach.reason.reach_layout_unsupported":
@@ -744,6 +746,8 @@ export const guardMessages = {
       "kombify.me hat die Registrierung dieses Servers abgelehnt.",
     "guard.reach.reason.connect_unavailable":
       "kombify Connect ist nicht verfügbar. Prüfe in Kürze erneut.",
+    "guard.reach.reason.connect_not_enabled":
+      "kombify Connect ist für dieses Konto noch nicht freigeschaltet. Lokale Arbeit und Serversteuerung sind nicht betroffen.",
     "guard.reach.reason.connect_denied":
       "kombify Connect hat es abgelehnt, diesen Server zu listen.",
     "guard.reach.reason.reach_layout_unsupported":

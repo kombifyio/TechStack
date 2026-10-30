@@ -136,6 +136,55 @@ test("the dashboard's per-stack polling keeps the product ready", async ({
   expect(pool).not.toBeNull();
 });
 
+// Journey step for 2026-10-27: Stable's Guard could not answer the identity
+// snapshot, the panel then replaced everyone, the owner included, with "The
+// list of people is unavailable", and edge devices (kombify Box, kombify
+// Watch) were mixed into the kombify clients. The owner row always shows,
+// a missing snapshot is a notice, and edge devices have their own section.
+test("the Devices & people panel keeps the owner and lists edge devices apart", async ({
+  page,
+}) => {
+  test.skip(!ROLE, "no stack-owning runtime role is selected");
+  test.setTimeout(150_000);
+  const auth = await authenticateRuntimeUser(ROLE!, page, {
+    productBase: PRODUCT_BASE,
+    apiBase: API_BASE,
+    sessionCookieName:
+      process.env.TECHSTACK_E2E_SESSION_COOKIE_NAME ?? "techstack_session",
+  });
+  const stacks = await ownerJSON(auth.token, "/api/v1/stacks");
+  expect(stacks.status).toBe(200);
+  test.skip(
+    stackIDsFrom(stacks.body).length === 0,
+    `${ROLE!} owns no stack, so the dashboard loads no people`,
+  );
+
+  await page.goto(`${PRODUCT_BASE}/dashboard`, {
+    waitUntil: "domcontentloaded",
+  });
+  const panel = page.getByTestId("dashboard-people");
+  const shown = await panel
+    .waitFor({ state: "visible", timeout: 60_000 })
+    .then(() => true)
+    .catch(() => false);
+  test.skip(!shown, `${ROLE!} has no server inventory, so no people panel`);
+
+  await expect(
+    panel.locator(
+      '[data-testid="people-row"][data-kind="person"][data-audience="owner"]',
+    ),
+  ).toHaveCount(1, { timeout: 60_000 });
+  await expect(panel.getByTestId("people-state")).toHaveCount(0);
+  // With kombify Connect answering, edge devices get their own section even
+  // when none is registered yet.
+  await expect(panel.locator('[aria-busy="true"]')).toHaveCount(0, {
+    timeout: 60_000,
+  });
+  if ((await panel.getByTestId("devices-state").count()) === 0) {
+    await expect(panel.getByTestId("edge-devices-heading")).toBeVisible();
+  }
+});
+
 async function ownerJSON(token: string, endpoint: string) {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     headers: { Accept: "application/json", Authorization: `Bearer ${token}` },

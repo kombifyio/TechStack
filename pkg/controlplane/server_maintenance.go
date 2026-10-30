@@ -185,12 +185,11 @@ func (s *MemoryStore) activeNodeJobLocked(tenantID, agentID, stackID string) *Jo
 	agentID, stackID = strings.TrimSpace(agentID), strings.TrimSpace(stackID)
 	var oldest *Job
 	for _, job := range s.jobs {
-		if job.TenantID != tenantID || !nodeJobActive(job.State) {
+		if job.TenantID != tenantID || (!nodeJobActive(job.State) && !relocationHoldsExecution(job)) {
 			continue
 		}
-		target, _ := job.Payload["agent_id"].(string)
-		target = strings.TrimSpace(target)
-		if (agentID != "" && target == agentID) || (stackID != "" && target == "" && job.StackID == stackID) {
+		targets := existingJobExecutionTargets(job)
+		if maintenanceTargetsOverlap(ExecutionTarget{StackID: stackID, AgentID: agentID}, targets) {
 			if oldest == nil || job.CreatedAt.Before(oldest.CreatedAt) {
 				oldest = cloneJob(job)
 			}

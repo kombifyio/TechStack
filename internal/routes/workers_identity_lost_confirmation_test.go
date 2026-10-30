@@ -57,7 +57,7 @@ func TestGuardAgentLostConfirmationAnswerBindsOnceAndKeepsNoCapability(t *testin
 	if err := os.WriteFile(residue, []byte("#cloud-config\nKOMBI_TOKEN="+raw+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := hostidentity.Open(t.TempDir())
+	manager, err := hostidentity.Open(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

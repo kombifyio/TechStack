@@ -686,16 +686,23 @@ func (s *MemoryStore) StartJob(_ context.Context, tenantID, jobID string, at tim
 	if job.State != jobStatePending {
 		return nil, ErrConflict
 	}
-	if strings.TrimSpace(job.StackID) != "" {
-		for candidateID, candidate := range s.jobs {
-			if candidateID != jobID && candidate.TenantID == tenantID && candidate.StackID == job.StackID && candidate.State == jobStateRunning {
-				return nil, ErrStackExecutionBusy
-			}
+	targets, err := jobExecutionTargets(job)
+	if err != nil {
+		return nil, err
+	}
+	for candidateID, candidate := range s.jobs {
+		if candidateID == jobID || candidate.TenantID != tenantID || (candidate.State != jobStateRunning && !relocationHoldsExecution(candidate)) {
+			continue
+		}
+		other := existingJobExecutionTargets(candidate)
+		if executionTargetsOverlap(targets, other) {
+			return nil, ErrStackExecutionBusy
 		}
 	}
-	agentID, _ := job.Payload["agent_id"].(string)
-	if s.memoryNodeUnderMaintenanceLocked(tenantID, agentID, job.StackID) {
-		return nil, ErrNodeUnderMaintenance
+	for _, target := range targets {
+		if s.memoryNodeUnderMaintenanceLocked(tenantID, target.AgentID, target.StackID) {
+			return nil, ErrNodeUnderMaintenance
+		}
 	}
 	job.State = jobStateRunning
 	job.StartedAt = &at

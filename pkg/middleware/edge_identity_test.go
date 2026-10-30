@@ -2,9 +2,6 @@ package middleware
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -17,7 +14,9 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/dataprofile"
 	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth/edgeauthtest"
 	"github.com/kombifyio/techstack/internal/gocommon/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/tenantdb"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
@@ -39,42 +38,11 @@ func newTestEvent(method, path string) *httpx.Event {
 
 func signEdgeRequest(t *testing.T, e *httpx.Event, secret string) {
 	t.Helper()
-
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce := "test-nonce-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
-	signedPath := e.Request.URL.RequestURI()
 	if e.Request.Header.Get(headerEdgeService) == "" {
 		e.Request.Header.Set(headerEdgeService, "capabilities")
 	}
-	service := e.Request.Header.Get(headerEdgeService)
-	publicPrefix := e.Request.Header.Get(headerPublicPrefix)
-
-	payload := strings.Join([]string{
-		edgeSignatureVersion,
-		defaultEdgeKeyID,
-		e.Request.Method,
-		signedPath,
-		e.Request.Header.Get(headerEdgeAuth),
-		service,
-		publicPrefix,
-		e.Request.Header.Get("X-User-ID"),
-		e.Request.Header.Get("X-Org-ID"),
-		e.Request.Header.Get("X-User-Email"),
-		e.Request.Header.Get("X-User-Tier"),
-		e.Request.Header.Get("X-User-Roles"),
-		e.Request.Header.Get("X-User-Scope"),
-		ts,
-		nonce,
-	}, "\n")
-
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(payload))
-
-	e.Request.Header.Set(headerEdgeTimestamp, ts)
-	e.Request.Header.Set(headerEdgeNonce, nonce)
-	e.Request.Header.Set(headerEdgeSignedPath, signedPath)
-	e.Request.Header.Set(headerEdgeKeyID, defaultEdgeKeyID)
-	e.Request.Header.Set(headerEdgeSignature, edgeSignatureVersion+"="+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
+	nonce := "test-nonce-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
+	edgeauthtest.Sign(t, e.Request, edgeauthtest.Config{Version: edgeSignatureVersion, Secret: secret, KeyID: defaultEdgeKeyID, At: time.Now(), Nonce: nonce})
 }
 
 // TestEdgeIdentityMiddleware_SelfHosted verifies that in self-hosted mode the
@@ -86,12 +54,19 @@ func TestEdgeIdentityMiddleware_SelfHosted(t *testing.T) {
 
 	e := newTestEvent("GET", "/test")
 	e.Request.Header.Set("X-User-ID", "user-123")
+	e.Request.Header.Set(tenantdb.ContextTokenHeader, "untrusted-local-header")
 	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
 
 	if err := mw(e); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if tenantdb.ContextTokenFromContext(e.Request.Context()) != "" {
+		t.Fatal("self-hosted pass-through promoted an untrusted token into context")
+	}
+	if e.Request.Header.Get(tenantdb.ContextTokenHeader) != "untrusted-local-header" {
+		t.Fatal("self-hosted pass-through changed the existing raw header behavior")
+	}
 	// In self-hosted mode headers should NOT be stripped (middleware is a no-op).
 	if e.Request.Header.Get("X-User-ID") == "" {
 		t.Error("expected X-User-ID to remain in self-hosted mode (no-op middleware)")
@@ -285,6 +260,7 @@ func TestEdgeIdentityMiddleware_EdgeAuth_RejectsTamperedFlags(t *testing.T) {
 	})
 
 	e := newTestEvent("GET", "/test")
+	e.Request.Header.Set(tenantdb.ContextTokenHeader, "opaque-db-context-with-no-claims")
 	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
 	e.Request.Header.Set("X-User-ID", "user-flags")
 	signEdgeRequest(t, e, testEdgeAuthSecret)
@@ -305,6 +281,9 @@ func TestEdgeIdentityMiddleware_EdgeAuth_RejectsTamperedFlags(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if tenantdb.ContextTokenFromContext(e.Request.Context()) != "" || e.Request.Header.Get(tenantdb.ContextTokenHeader) != "" {
+		t.Fatal("edge-denied request retained DB-context transport")
+	}
 	rec := e.Response.(*httptest.ResponseRecorder)
 	if rec.Code != 401 {
 		t.Fatalf("expected 401 for tampered flags, got %d", rec.Code)
@@ -856,42 +835,11 @@ func signEdgeRequestV2(t *testing.T, e *httpx.Event, secret string) {
 
 func signEdgeRequestV2At(t *testing.T, e *httpx.Event, secret string, issuedAt time.Time) {
 	t.Helper()
-
-	ts := strconv.FormatInt(issuedAt.Unix(), 10)
-	nonce := "test-nonce-v2-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
 	if e.Request.Header.Get(headerEdgeService) == "" {
 		e.Request.Header.Set(headerEdgeService, "capabilities")
 	}
-	signedPath := e.Request.URL.RequestURI()
-
-	payload := strings.Join([]string{
-		"v2",
-		defaultEdgeKeyID,
-		e.Request.Method,
-		signedPath,
-		e.Request.Header.Get(headerEdgeAuth),
-		e.Request.Header.Get(headerEdgeService),
-		e.Request.Header.Get(headerPublicPrefix),
-		e.Request.Header.Get("X-User-ID"),
-		e.Request.Header.Get("X-Org-ID"),
-		e.Request.Header.Get("X-User-Email"),
-		e.Request.Header.Get("X-User-Tier"),
-		e.Request.Header.Get("X-User-Roles"),
-		e.Request.Header.Get("X-User-Scope"),
-		e.Request.Header.Get("X-Kombify-Entitlements"),
-		e.Request.Header.Get("X-Kombify-Knowledge-Tier"),
-		ts,
-		nonce,
-	}, "\n")
-
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(payload))
-
-	e.Request.Header.Set(headerEdgeTimestamp, ts)
-	e.Request.Header.Set(headerEdgeNonce, nonce)
-	e.Request.Header.Set(headerEdgeSignedPath, signedPath)
-	e.Request.Header.Set(headerEdgeKeyID, defaultEdgeKeyID)
-	e.Request.Header.Set(headerEdgeSignature, "v2="+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
+	nonce := "test-nonce-v2-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
+	edgeauthtest.Sign(t, e.Request, edgeauthtest.Config{Version: "v2", Secret: secret, KeyID: defaultEdgeKeyID, At: issuedAt, Nonce: nonce})
 }
 
 func attachSignedTechStackDecision(
@@ -1040,6 +988,7 @@ func TestEdgeIdentityMiddleware_EdgeAuth_V2Signature_TamperedEntitlements_Return
 	})
 
 	e := newTestEvent("GET", "/test")
+	e.Request.Header.Set(tenantdb.ContextTokenHeader, "opaque-db-context-with-no-claims")
 	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
 	e.Request.Header.Set("X-User-ID", "user-v2")
 	e.Request.Header.Set("X-Kombify-Entitlements", "ai.responses")
@@ -1053,6 +1002,9 @@ func TestEdgeIdentityMiddleware_EdgeAuth_V2Signature_TamperedEntitlements_Return
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if tenantdb.ContextTokenFromContext(e.Request.Context()) != "" || e.Request.Header.Get(tenantdb.ContextTokenHeader) != "" {
+		t.Fatal("edge-denied request retained DB-context transport")
+	}
 	rec := e.Response.(*httptest.ResponseRecorder)
 	if rec.Code != 401 {
 		t.Fatalf("expected 401 for tampered v2 entitlements, got %d", rec.Code)
@@ -1081,34 +1033,11 @@ func TestEdgeIdentityMiddleware_EdgeAuth_RejectsEnvelopeSignedForAnotherService(
 // X-User-Email-Verified, before timestamp and nonce (go-common edgeauth).
 func signEdgeRequestV9(t *testing.T, e *httpx.Event, secret string) {
 	t.Helper()
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce := "test-nonce-v9-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
 	if e.Request.Header.Get(headerEdgeService) == "" {
 		e.Request.Header.Set(headerEdgeService, "techstack")
 	}
-	signedPath := e.Request.URL.RequestURI()
-	h := e.Request.Header.Get
-	payload := strings.Join([]string{
-		commonedgeauth.EdgeSignatureVersionV9, defaultEdgeKeyID, e.Request.Method, signedPath,
-		h(headerEdgeAuth), h(headerEdgeService), h(headerPublicPrefix),
-		h(commonedgeauth.HeaderUserIssuer),
-		h("X-User-ID"), h("X-Org-ID"), h("X-User-Email"), h("X-User-Tier"), h("X-User-Roles"), h("X-User-Scope"),
-		h(commonedgeauth.HeaderEntitlements), h(commonedgeauth.HeaderKnowledgeTier),
-		h(commonedgeauth.HeaderClientID), h(commonedgeauth.HeaderProductID), h(commonedgeauth.HeaderAIWorkload),
-		h(commonedgeauth.HeaderResourceScope),
-		h(commonedgeauth.HeaderPrincipalType), h(commonedgeauth.HeaderAgentID), h(commonedgeauth.HeaderAgentClass),
-		h(commonedgeauth.HeaderAgentPerimeter), h(commonedgeauth.HeaderAgentPolicy),
-		h(commonedgeauth.HeaderUserAMR), h(commonedgeauth.HeaderUserACR), h(commonedgeauth.HeaderUserAuthTime),
-		h(commonedgeauth.HeaderUserEmailVerified),
-		ts, nonce,
-	}, "\n")
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(payload))
-	e.Request.Header.Set(headerEdgeTimestamp, ts)
-	e.Request.Header.Set(headerEdgeNonce, nonce)
-	e.Request.Header.Set(headerEdgeSignedPath, signedPath)
-	e.Request.Header.Set(headerEdgeKeyID, defaultEdgeKeyID)
-	e.Request.Header.Set(headerEdgeSignature, commonedgeauth.EdgeSignatureVersionV9+"="+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
+	nonce := "test-nonce-v9-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
+	edgeauthtest.Sign(t, e.Request, edgeauthtest.Config{Version: commonedgeauth.EdgeSignatureVersionV9, Secret: secret, KeyID: defaultEdgeKeyID, At: time.Now(), Nonce: nonce, SignedPath: e.Request.URL.RequestURI()})
 }
 
 // Regression (kombify-Techstack-7kf0): only a verified v9 envelope that signs
@@ -1273,9 +1202,13 @@ func TestEdgeIdentityMiddleware_DataProfile_EnforceDeniesMissingAndTampered(t *t
 			} else {
 				e = newSignedTechStackProfileEvent(t, euZeroProfile())
 			}
+			e.Request.Header.Set(tenantdb.ContextTokenHeader, "opaque-db-context-with-no-claims")
 			tamper(e)
 			if err := mw(e); err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+			if tenantdb.ContextTokenFromContext(e.Request.Context()) != "" || e.Request.Header.Get(tenantdb.ContextTokenHeader) != "" {
+				t.Fatal("profile-denied request retained DB-context transport")
 			}
 			rec := e.Response.(*httptest.ResponseRecorder)
 			if rec.Code != http.StatusForbidden {
@@ -1315,4 +1248,67 @@ func TestEdgeIdentityMiddleware_DataProfile_UnsignedRequestNeverCarriesProfile(t
 		t.Fatal("an unsigned caller supplied a profile")
 	}
 	assertNoProfileHeaders(t, e.Request)
+}
+
+// The token stays opaque: only the existing database verifier may accept claims.
+func TestEdgeIdentityMiddleware_OpaqueDBContextTransport(t *testing.T) {
+	const opaque = "opaque-db-context-with-no-claims"
+	for _, tc := range []struct {
+		name                                 string
+		signed, tampered, legacy, noIdentity bool
+		token                                string
+		wantToken, wantIdentity              bool
+	}{
+		{name: "signed", signed: true, token: opaque, wantToken: true, wantIdentity: true},
+		{name: "unsigned", token: opaque},
+		{name: "tampered", signed: true, tampered: true, token: opaque},
+		{name: "legacy shared secret", legacy: true, token: opaque, wantIdentity: true},
+		{name: "no identity", signed: true, noIdentity: true, token: opaque},
+		{name: "too long", signed: true, token: strings.Repeat("x", 4097), wantIdentity: true},
+		{name: "missing", signed: true, wantIdentity: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := EdgeIdentityConfig{Mode: config.ModeSaaS, EdgeAuthSecret: testEdgeAuthSecret}
+			if tc.legacy {
+				cfg.Secret = "transport-legacy-test-secret"
+			}
+			e := newTestEvent("GET", "/opaque-db-context")
+			if !tc.noIdentity {
+				e.Request.Header.Set("X-User-ID", "transport-user")
+				e.Request.Header.Set("X-Org-ID", "transport-org")
+			}
+			e.Request.Header.Set(tenantdb.ContextTokenHeader, tc.token)
+			if tc.signed {
+				e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
+				signEdgeRequest(t, e, testEdgeAuthSecret)
+			}
+			if tc.legacy {
+				e.Request.Header.Set("X-Edge-Auth-Secret", cfg.Secret)
+			}
+			if tc.tampered {
+				e.Request.Header.Set("X-User-ID", "tampered-user")
+			}
+			if err := EdgeIdentityMiddlewareWithConfig(cfg)(e); err != nil {
+				t.Fatal(err)
+			}
+			got := tenantdb.ContextTokenFromContext(e.Request.Context())
+			if tc.wantToken && got != opaque {
+				t.Fatal("opaque token did not reach Common transport context")
+			}
+			if !tc.wantToken && got != "" {
+				t.Fatal("unadmitted token reached Common transport context")
+			}
+			if e.Request.Header.Get(tenantdb.ContextTokenHeader) != "" {
+				t.Fatal("raw DB-context header survived stripping")
+			}
+			id := identity.FromContext(e.Request.Context())
+			if tc.wantIdentity {
+				if id == nil || id.UserID != "transport-user" || id.OrgID != "transport-org" {
+					t.Fatal("transport changed the existing identity or tenant")
+				}
+			} else if id != nil && id.IsAuthenticated() {
+				t.Fatal("DB-context token authenticated a request")
+			}
+		})
+	}
 }

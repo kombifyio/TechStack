@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 // ErrNotFound means no reach row exists for the worker.
 var ErrNotFound = errors.New("guardreach: no reach state for this worker")
-
-const tenantGUC = "app.tenant_id"
 
 // Key names one reach row.
 type Key struct{ TenantID, WorkerID string }
@@ -124,7 +124,7 @@ func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", tenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {

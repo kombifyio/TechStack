@@ -38,6 +38,25 @@ const identityMaintenanceInterval = 10 * time.Minute
 const stackKitRuntimeConvergenceInterval = 5 * time.Minute
 const runtimePackageConvergenceRetryInterval = 15 * time.Second
 
+// runtimePackageConvergenceMaxRetryInterval bounds the backoff of a Guard whose
+// runtime packages have not converged yet. It equals the control plane's
+// StackKits download budget window (Retry-After 900), so a refused or
+// rate-limited node asks at most once per window instead of every 15 s for the
+// token lifetime (platform-f4ine: about 33,000 refused downloads from one node
+// in 13 days).
+const runtimePackageConvergenceMaxRetryInterval = 15 * time.Minute
+
+// runtimePackageConvergenceRetryDelay doubles the first retry interval for each
+// consecutive failed attempt before the first convergence: 15 s, 30 s, 1 min,
+// 2 min, 4 min, 8 min, then 15 min until the packages converge.
+func runtimePackageConvergenceRetryDelay(consecutiveFailures int) time.Duration {
+	delay := runtimePackageConvergenceRetryInterval
+	for i := 1; i < consecutiveFailures && delay < runtimePackageConvergenceMaxRetryInterval; i++ {
+		delay *= 2
+	}
+	return min(delay, runtimePackageConvergenceMaxRetryInterval)
+}
+
 type currentStackKitCommandRuntime interface {
 	EnsureRuntime(context.Context, agentpkg.StackKitRuntimeBootstrapConfig) error
 	Execute(context.Context, *agentpb.StackKitCommand) *agentpb.StackKitResult
@@ -272,9 +291,12 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 		// StackKit must still report what it is actually running. The kill
 		// switch exists so a fleet operator can silence host probes without
 		// waiting for an agent release.
+		// The HTTP fingerprint only reaches the host's own published container
+		// ports; its switch silences those requests on its own.
 		Discovery: httpguard.DiscoveryConfig{
-			Disabled: !envBoolDefault("TECHSTACK_AGENT_SERVICE_DISCOVERY", true),
-			Probe:    execution.dockerProbe(),
+			Disabled:           !envBoolDefault("TECHSTACK_AGENT_SERVICE_DISCOVERY", true),
+			DisableFingerprint: !envBoolDefault("TECHSTACK_AGENT_SERVICE_FINGERPRINT", true),
+			Probe:              execution.dockerProbe(),
 		},
 	})
 	interval := cfg.heartbeatInterval
@@ -487,6 +509,7 @@ func convergeRuntimePackages(
 		interval = time.Minute
 	}
 	ready := false
+	failures := 0
 	for {
 		status := convergeRuntimePackagesOnceStatus(ctx, stop, executor, techstackCfg, stackKitCfg, log, tryMigration)
 		for _, publish := range statusPublishers {
@@ -499,14 +522,16 @@ func convergeRuntimePackages(
 			return
 		}
 		if converged && !ready {
-			ready = true
+			ready, failures = true, 0
 			if markReady != nil {
 				markReady(true)
 			}
 		}
 		delay := interval
 		if !ready {
-			delay = runtimePackageConvergenceRetryInterval
+			failures++
+			delay = runtimePackageConvergenceRetryDelay(failures)
+			log.Info("runtime_convergence_retry_scheduled", "attempt", failures, "delay", delay.String())
 		}
 		timer := time.NewTimer(delay)
 		select {

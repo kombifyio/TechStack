@@ -318,7 +318,7 @@ func (h *serviceRuntimeHandlers) applicationReadModel(e *httpx.Event) ([]service
 	}
 	rows = projectDeclaredServiceControls(rows, servers)
 	grouped := make(map[string]*serviceApplicationResponse)
-	response := h.responseForRequest()
+	response := h.responseForRequest(e.Request.Context())
 	for _, row := range rows {
 		if !ownedStacks[row.StackID] || stringFromAnyMap(row.Metadata, serviceSupersededBy) != "" {
 			continue
@@ -351,12 +351,14 @@ func (h *serviceRuntimeHandlers) applicationReadModel(e *httpx.Event) ([]service
 			observed := row.ObservedAt.UTC()
 			application.ObservedAt = &observed
 		}
-		application.Access = preferApplicationAccess(application.Access, component.Access, component.InternalAddress)
 	}
 	result := make([]serviceApplicationResponse, 0, len(grouped))
 	for _, application := range grouped {
-		sort.Slice(application.Components, func(i, j int) bool { return application.Components[i].Name < application.Components[j].Name })
+		// Stable: components with one name keep the inventory row order, so the
+		// access choice below never depends on which sidecar happened to sort last.
+		sort.SliceStable(application.Components, func(i, j int) bool { return application.Components[i].Name < application.Components[j].Name })
 		primary := primaryApplicationComponent(application.Components)
+		application.Access = applicationAccessFor(application.Components)
 		application.AllowedActions = applicationActionUnion(application.Components)
 		application.Catalog, application.Version, application.PlacementClass = primary.Catalog, primary.Version, primary.PlacementClass
 		result = append(result, *application)
@@ -379,20 +381,26 @@ func primaryApplicationComponent(components []serviceRuntimeResponse) serviceRun
 	}
 	best, bestRank := components[0], -1
 	for _, component := range components {
-		rank := 0
-		switch {
-		case component.Catalog != nil && !component.Catalog.Infra && component.Catalog.Category != "database":
-			rank = 3
-		case component.Catalog != nil:
-			rank = 2
-		case component.ObservedState == string(serviceregistry.ObservedRunning):
-			rank = 1
-		}
-		if rank > bestRank {
+		if rank := applicationComponentRank(component); rank > bestRank {
 			best, bestRank = component, rank
 		}
 	}
 	return best
+}
+
+// applicationComponentRank orders the components of one application by how
+// well they speak for it: a recognized non-infrastructure, non-database
+// component (3), any recognized one (2), a running one (1), the rest (0).
+func applicationComponentRank(component serviceRuntimeResponse) int {
+	switch {
+	case component.Catalog != nil && !component.Catalog.Infra && component.Catalog.Category != "database":
+		return 3
+	case component.Catalog != nil:
+		return 2
+	case component.ObservedState == string(serviceregistry.ObservedRunning):
+		return 1
+	}
+	return 0
 }
 
 func aggregateApplicationStatus(current, health, observed string) string {
@@ -409,26 +417,60 @@ func aggregateApplicationStatus(current, health, observed string) string {
 	return current
 }
 
-func preferApplicationAccess(current serviceApplicationAccess, public map[string]any, internal string) serviceApplicationAccess {
-	mode := stringFromAnyMap(public, serviceAccessModeKey)
-	address := stringFromAnyMap(public, serviceAccessURLKey)
-	if mode == serviceAccessDirect {
-		address = safeObservedDirectServiceURL(address)
-	} else if mode == serviceAccessRelay {
-		address = safeKombifyRelayURL(address)
-	} else {
-		address = ""
+// applicationAccessFor derives the one access an application shows from all of
+// its components, independent of the order they arrive in. A public address of
+// any component wins; without one, the internal address of the component that
+// best speaks for the application (applicationComponentRank) is used, so an app
+// links to its web UI and not to the port of a database or cache sidecar that
+// merely sorts after it. Any non-database, non-infrastructure component ranks
+// the same (an unrecognized one carries the generic catalog entry), so equal
+// ranks prefer an address that carries a scheme, which Guard emits only when it
+// proves a web UI, over a bare host:port; after that the first component in the
+// given order wins.
+func applicationAccessFor(components []serviceRuntimeResponse) serviceApplicationAccess {
+	var public, internal serviceApplicationAccess
+	publicRank, internalScore := -1, -1
+	for _, component := range components {
+		rank := applicationComponentRank(component)
+		if address := publicApplicationAddress(component.Access); address != "" {
+			if rank > publicRank {
+				public, publicRank = serviceApplicationAccess{Kind: "public", Address: address, OpenURL: address}, rank
+			}
+			continue
+		}
+		address := boundedInternalServiceAddress(component.InternalAddress)
+		if address == "" {
+			continue
+		}
+		// Rank decides; a proven scheme only breaks a tie.
+		score := rank * 2
+		if lower := strings.ToLower(address); strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+			score++
+		}
+		if score > internalScore {
+			internal, internalScore = serviceApplicationAccess{Kind: "internal", Address: address, Reason: "internal_address_only"}, score
+		}
 	}
-	if address != "" {
-		return serviceApplicationAccess{Kind: "public", Address: address, OpenURL: address}
+	switch {
+	case publicRank >= 0:
+		return public
+	case internalScore >= 0:
+		return internal
 	}
-	if current.OpenURL != "" {
-		return current
+	return serviceApplicationAccess{Kind: serviceAccessUnavailable, Reason: "no_reachable_address_reported"}
+}
+
+// publicApplicationAddress is the address a component's access contract allows
+// to be opened from outside the node: an observed direct URL or a relay URL.
+func publicApplicationAddress(access map[string]any) string {
+	address := stringFromAnyMap(access, serviceAccessURLKey)
+	switch stringFromAnyMap(access, serviceAccessModeKey) {
+	case serviceAccessDirect:
+		return safeObservedDirectServiceURL(address)
+	case serviceAccessRelay:
+		return safeKombifyRelayURL(address)
 	}
-	if internal = boundedInternalServiceAddress(internal); internal != "" {
-		return serviceApplicationAccess{Kind: "internal", Address: internal, Reason: "internal_address_only"}
-	}
-	return current
+	return ""
 }
 
 func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
@@ -529,7 +571,7 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 		if readErr != nil {
 			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Application identity authority is unavailable", nil)
 		}
-		pin, pinErr := h.applicationAdmission()
+		pin, pinErr := h.adoptionReleaseForStack(e.Request.Context(), tenantID, service.StackID)
 		if pinErr != nil {
 			return adoptionUnavailable(e, pinErr)
 		}
@@ -939,7 +981,7 @@ func (h *serviceRuntimeHandlers) list(e *httpx.Event) error {
 	}
 	rows = projectDeclaredServiceControls(rows, servers)
 	items := make([]serviceRuntimeResponse, 0, len(rows))
-	response := h.responseForRequest()
+	response := h.responseForRequest(e.Request.Context())
 	for _, row := range rows {
 		if !ownedStacks[row.StackID] || stringFromAnyMap(row.Metadata, serviceSupersededBy) != "" {
 			continue
@@ -1060,12 +1102,21 @@ func (h *serviceRuntimeHandlers) readAdmission() func() (*agentpb.StackKitReleas
 
 // A list projects one current signed admission across its eligible rows. The
 // closure belongs only to this read request; execution still admits afresh.
-func (h *serviceRuntimeHandlers) responseForRequest() func(controlplane.ServiceRuntime, *controlplane.ServerRuntime) serviceRuntimeResponse {
+func (h *serviceRuntimeHandlers) responseForRequest(contexts ...context.Context) func(controlplane.ServiceRuntime, *controlplane.ServerRuntime) serviceRuntimeResponse {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
 	admission := h.readAdmission()
 	if admission != nil {
 		admission = sync.OnceValues(admission)
 	}
 	return func(service controlplane.ServiceRuntime, server *controlplane.ServerRuntime) serviceRuntimeResponse {
+		if jobs.StageCandidateReleaseConfigured() {
+			return h.responseWithAdmission(service, server, func() (*agentpb.StackKitReleasePin, error) {
+				return jobs.ApplicationAdoptionReleaseForStack(ctx, service.TenantID, service.StackID, true)
+			})
+		}
 		return h.responseWithAdmission(service, server, admission)
 	}
 }

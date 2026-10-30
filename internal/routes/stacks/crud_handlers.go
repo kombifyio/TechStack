@@ -346,7 +346,19 @@ func (h crudRouteHandlers) admitManagedCreate(e *httpx.Event, ownerID, tenantID 
 }
 
 func (h crudRouteHandlers) writeManagedCreateAdmissionError(e *httpx.Event, stackID string, request jobs.ManagedLeaseRequest, err error, phase string) error {
+	if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+		return refusal
+	}
 	details := map[string]any{creationStackIDField: stackID, "admission_phase": phase}
+	var policyDenial *monthlyruntime.CapacityPolicyDenialError
+	if errors.As(err, &policyDenial) && policyDenial != nil &&
+		policyDenial.TenantID == request.TenantID && policyDenial.OwnerSubjectID == request.OwnerID &&
+		policyDenial.ProviderID == request.Provider {
+		policyDetails := policyDenial.Details()
+		policyDetails[creationStackIDField] = stackID
+		policyDetails["admission_phase"] = phase
+		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden, policyDenial.Error(), policyDetails)
+	}
 	var capacity *providercontrol.ManagedRuntimeCapacityExceededError
 	if errors.As(err, &capacity) {
 		h.enqueueManagedRuntimeCapacityNotification(e.Request.Context(), stackID, request, capacity)
@@ -598,6 +610,9 @@ func (h crudRouteHandlers) provisionStack(e *httpx.Event) error {
 			OwnerSpecBootstrap: ownerSpecRuntimeBootstrap(ownerSpecAccess),
 		})
 		if provisionErr != nil {
+			if refusal := tenantguard.ExecutionRefusal(provisionErr); refusal != nil {
+				return refusal
+			}
 			if errors.Is(provisionErr, orchestrator.ErrProvisionIdempotencyConflict) {
 				return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
 					"Idempotency-Key was already used for a different provision request", map[string]any{
@@ -726,6 +741,9 @@ func deployOrchestratorUnavailable(e *httpx.Event, stackID string) error {
 // deployStartError maps orchestrator deploy-start failures onto the existing
 // response contract shared by both deploy paths.
 func (h crudRouteHandlers) deployStartError(e *httpx.Event, stackID string, deployErr error) error {
+	if refusal := tenantguard.ExecutionRefusal(deployErr); refusal != nil {
+		return refusal
+	}
 	if errors.Is(deployErr, orchestrator.ErrDeployIdempotencyConflict) {
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
 			"Idempotency-Key was already used for a different deploy request", map[string]any{
@@ -789,6 +807,9 @@ func (h crudRouteHandlers) destroyStack(e *httpx.Event) error {
 			OfflineRemoval: offlineRemoval,
 		})
 		if destroyErr != nil {
+			if refusal := tenantguard.ExecutionRefusal(destroyErr); refusal != nil {
+				return refusal
+			}
 			if refused, refusal := offlineRemovalRefusal(e, destroyErr); refused {
 				return refusal
 			}
@@ -886,6 +907,9 @@ func (h crudRouteHandlers) startCreateStackWithOrchestrator(e *httpx.Event, disp
 		PreparedManagedLease: dispatch.preparedLease,
 	})
 	if err != nil {
+		if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+			return refusal
+		}
 		if createStackIdempotencyKey(e) != "" {
 			if handled, replayErr := h.replayCreateJob(e, tenantID, &persistedStack{Id: dispatch.stackID, Name: dispatch.name, IdempotentReplay: true}, dispatch.serverID); handled || replayErr != nil {
 				return replayErr

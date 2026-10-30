@@ -8,9 +8,15 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 func (s *Scanner) probeHost(ctx context.Context, ip string, timeout time.Duration) *DiscoveredDevice {
+	ip, err := fulllocal.AdmitIP(ip)
+	if err != nil {
+		return nil
+	}
 	// Skip probing hosts that are Docker veth bridge or common docker IPs (heuristic to reduce noise)
 	if strings.HasPrefix(ip, "172.") && strings.Contains(ip, ".") && s.config.ExcludeLocalIPs {
 		// common docker network starts with 172.*, but we still allow scanning if user specified subnet explicitly
@@ -30,7 +36,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip string, timeout time.Duratio
 	}
 
 	// Try to resolve hostname
-	names, err := net.LookupAddr(ip)
+	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
 	if err == nil && len(names) > 0 {
 		device.Hostname = strings.TrimSuffix(names[0], ".")
 	}
@@ -46,6 +52,10 @@ func (s *Scanner) probeHost(ctx context.Context, ip string, timeout time.Duratio
 
 // ping checks if a host is reachable.
 func (s *Scanner) ping(ctx context.Context, ip string, timeout time.Duration) bool {
+	ip, err := fulllocal.AdmitIP(ip)
+	if err != nil {
+		return false
+	}
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
@@ -57,6 +67,6 @@ func (s *Scanner) ping(ctx context.Context, ip string, timeout time.Duration) bo
 		cmd = exec.CommandContext(ctx, "ping", "-c", "1", "-W", fmt.Sprintf("%d", int(timeout.Seconds())), ip)
 	}
 
-	err := cmd.Run()
+	err = cmd.Run()
 	return err == nil
 }

@@ -73,8 +73,10 @@ type Manifest struct {
 // StackKitsRuntime is the pinned StackKits runtime of a release. The top-level
 // digests describe the linux/amd64 runtime; LinuxArm64 describes linux/arm64.
 type StackKitsRuntime struct {
-	Version       string `json:"version"`
-	ArchiveSHA256 string `json:"archiveSha256"`
+	// Candidate is present only in an Actions-only internal Preview candidate.
+	Candidate     *PreviewCandidateProvenance `json:"candidate,omitempty"`
+	Version       string                      `json:"version"`
+	ArchiveSHA256 string                      `json:"archiveSha256"`
 	// BinarySHA256 and ServerSHA256 are the digests of the `stackkit` and
 	// `stackkit-server` executables inside the published archive.
 	BinarySHA256 string `json:"binarySha256"`
@@ -179,6 +181,11 @@ func (m *Manifest) validateShape() error {
 		seen[key] = true
 	}
 	if m.StackKits != nil {
+		if m.StackKits.Candidate != nil {
+			if err := m.StackKits.Candidate.Validate(); err != nil {
+				return err
+			}
+		}
 		amd64, _ := m.StackKits.ForArch("amd64")
 		if strings.TrimSpace(m.StackKits.Version) == "" || !amd64.valid() ||
 			(m.StackKits.LinuxArm64 != nil && !m.StackKits.LinuxArm64.valid()) {

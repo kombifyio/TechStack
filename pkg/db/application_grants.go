@@ -21,7 +21,7 @@ func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 	if err := verifyApplicationPrivileges(ctx, tx, principal, false); err != nil {
 		return err
 	}
-	policy, err := loadApplicationPolicy(ctx, tx, true)
+	policy, err := loadPrincipalPolicy(ctx, tx, principal, true)
 	if err != nil {
 		return err
 	}
@@ -32,6 +32,11 @@ func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 	if _, err := tx.ExecContext(ctx, "GRANT USAGE ON SCHEMA public TO "+role); err != nil {
 		return err
 	}
+	if policy.ContextSchema {
+		if _, err := tx.ExecContext(ctx, "GRANT USAGE ON SCHEMA kombify_ctx TO "+role); err != nil {
+			return err
+		}
+	}
 	for oid, privileges := range policy.Tables {
 		var selected []string
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
@@ -39,7 +44,11 @@ func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 				selected = append(selected, privilege)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, "GRANT "+strings.Join(selected, ",")+" ON TABLE "+pgx.Identifier{"public", policy.TableNames[oid]}.Sanitize()+" TO "+role); err != nil {
+		table := pgx.Identifier{"public", policy.TableNames[oid]}
+		if policy.TableNames[oid] == "kombify_ctx.role_class" {
+			table = pgx.Identifier{"kombify_ctx", "role_class"}
+		}
+		if _, err := tx.ExecContext(ctx, "GRANT "+strings.Join(selected, ",")+" ON TABLE "+table.Sanitize()+" TO "+role); err != nil {
 			return err
 		}
 	}
@@ -49,7 +58,11 @@ func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 		}
 	}
 	for _, signature := range policy.Functions {
-		if _, err := tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION public."+signature+" TO "+role); err != nil {
+		qualified := "public." + signature
+		if strings.HasPrefix(signature, "kombify_ctx.") {
+			qualified = signature
+		}
+		if _, err := tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION "+qualified+" TO "+role); err != nil {
 			return err
 		}
 	}

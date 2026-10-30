@@ -198,7 +198,11 @@
       const result = await loadPeople(ids, ownerName);
       people =
         result.state === "ready"
-          ? { state: "ready", items: personActors(result.items) }
+          ? {
+              state: "ready",
+              items: personActors(result.items),
+              notices: result.notices,
+            }
           : result;
     } catch {
       people = { state: "error", message: tr("ui.people.householdListUnavailableTheHomelab") };
@@ -307,6 +311,11 @@
       {tr("actors.people")}
     </h2>
     {@render sectionState(people, tr("actors.peopleEmpty"), loadPeopleSection)}
+    {#if people.state === "ready"}
+      {#each people.notices ?? [] as notice (notice)}
+        <p class="text-sm text-muted-foreground" role="status">{notice}</p>
+      {/each}
+    {/if}
     {#if people.state === "ready" && people.items.length}
       <EntityCollection
         items={people.items}

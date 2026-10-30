@@ -70,6 +70,9 @@ type ReclaimExpiredJobExecutionRequest struct {
 	// operator-readable reason rather than a bare state change.
 	ResultPatch map[string]any
 	ReclaimedAt time.Time
+	// ReasonCode is the reclaim reason; it is the error code of the job's
+	// failure occurrence.
+	ReasonCode string
 }
 
 // ResumeExpiredJobExecutionRequest returns one exact resumable wait to pending

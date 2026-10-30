@@ -264,6 +264,19 @@ type ManagedRuntimeTargetRequest struct {
 	Metadata  map[string]string
 }
 
+// ManagedRuntimeExecutionTargetResolver resolves a target whose node credential
+// use stays in the separately supervised native Execution authority. A resolved
+// address is a projection, never a replacement SSH credential or provider grant.
+type ManagedRuntimeExecutionTargetResolver interface {
+	ResolveManagedRuntimeExecutionTarget(context.Context, ManagedRuntimeTargetRequest) (*ManagedRuntimeTarget, error)
+}
+
+// ManagedRuntimeTargetPreparer observes the existing managed host baseline
+// without moving a node credential into the rollout's HTTP process.
+type ManagedRuntimeTargetPreparer interface {
+	PrepareManagedRuntimeTarget(context.Context, ManagedRuntimeTargetRequest) (*RuntimeTargetBootstrapResult, error)
+}
+
 type ManagedRuntimeTarget struct {
 	Host                  string
 	PublicIP              string

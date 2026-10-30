@@ -320,7 +320,7 @@ func resolveManagedRuntimeTarget(ctx context.Context, cfg *ProvisionConfig, job 
 		metadataString(spec, leaseIDField),
 	)
 	if cfg != nil && cfg.RuntimeActions.RuntimeTargetResolver != nil && leaseID != "" {
-		target, err := cfg.RuntimeActions.RuntimeTargetResolver.ResolveManagedRuntimeTarget(ctx, ManagedRuntimeTargetRequest{
+		request := ManagedRuntimeTargetRequest{
 			StackID:   snapshot.TargetID,
 			StackName: firstNonEmpty(metadataString(spec, "stack_name"), snapshot.TargetName),
 			StackKit:  metadataString(spec, metadataKeyStackKitCatalogRef),
@@ -329,7 +329,14 @@ func resolveManagedRuntimeTarget(ctx context.Context, cfg *ProvisionConfig, job 
 			LeaseID:   leaseID,
 			Provider:  firstNonEmpty(stringFromMap(snapshot.Result, metadataKeyProviderID), metadataString(spec, metadataKeyProviderID)),
 			Metadata:  specMetadata(spec),
-		})
+		}
+		resolve := cfg.RuntimeActions.RuntimeTargetResolver.ResolveManagedRuntimeTarget
+		executionCustody := false
+		if remote, ok := cfg.RuntimeActions.RuntimeTargetResolver.(ManagedRuntimeExecutionTargetResolver); ok {
+			resolve = remote.ResolveManagedRuntimeExecutionTarget
+			executionCustody = true
+		}
+		target, err := resolve(ctx, request)
 		if err != nil {
 			if managedRuntimeTargetTerminalError(err) {
 				// Terminal states ("enrollment failed", "VM gone", forbidden, ...)
@@ -339,7 +346,7 @@ func resolveManagedRuntimeTarget(ctx context.Context, cfg *ProvisionConfig, job 
 			return nil, fmt.Errorf("managed runtime lease address is not available yet for lease %q: %w", leaseID, err)
 		}
 		if normalized := normalizeManagedRuntimeTarget(target); normalized != nil {
-			if !managedRuntimeTargetHasRuntimeActionCredential(normalized) {
+			if !executionCustody && !managedRuntimeTargetHasRuntimeActionCredential(normalized) {
 				return nil, managedRuntimeTargetCredentialUnavailableError(leaseID, normalized)
 			}
 			return normalized, nil
@@ -364,6 +371,68 @@ func resolveManagedRuntimeTarget(ctx context.Context, cfg *ProvisionConfig, job 
 		return nil, fmt.Errorf("managed runtime lease address missing for lease %q; wait until VM lease enrollment exposes %s or %s, then retry rollout", leaseID, metadataKeyRuntimeSSHHost, metadataKeyRuntimePublicIP)
 	}
 	return nil, fmt.Errorf("managed runtime lease address missing; wait until VM lease enrollment exposes %s or %s, then retry rollout", metadataKeyRuntimeSSHHost, metadataKeyRuntimePublicIP)
+}
+
+// clearFailedNativeHostPreparation discards only an active observation window
+// and its stale waiting projections when a different dependency fails terminally.
+// Cancellation retains the original bound; the queue owns canceled state.
+func clearFailedNativeHostPreparation(ctx context.Context, job *Job, err error) {
+	if job == nil || err == nil || isJobWaitError(err) || ctx.Err() == context.Canceled {
+		return
+	}
+	job.mutateResult(func(result map[string]interface{}) {
+		if _, active := result[nativeHostPreparationStartedKey]; !active {
+			return
+		}
+		delete(result, nativeHostPreparationStartedKey)
+		delete(result, "target_bootstrap")
+		if proof, ok := result["runtime_proof"].(map[string]interface{}); ok {
+			delete(proof, "target_bootstrap")
+		}
+		if proof, ok := result["e2e_proof"].(map[string]interface{}); ok {
+			delete(proof, "target_bootstrap")
+			delete(proof, "target_bootstrap_reason")
+		}
+	})
+}
+
+// boundNativeHostPreparationDependencyWait keeps a resumed dependency's yield
+// inside the original host-preparation window. Successful refreshes still reach
+// the preparer, which observes readiness once before deciding its deadline.
+func boundNativeHostPreparationDependencyWait(result map[string]interface{}, observedAt time.Time, err error) error {
+	var wait *JobWaitError
+	if err == nil || !errors.As(err, &wait) || wait == nil || !resumingNativeHostPreparation(result, observedAt) {
+		return err
+	}
+	startedAt, _ := time.Parse(time.RFC3339Nano, stringFromMap(result, nativeHostPreparationStartedKey))
+	remaining := startedAt.Add(defaultRuntimeTargetBootstrapTimeout).Sub(observedAt)
+	if remaining <= 0 {
+		return wrapProvisionCause(StepStackKitPrepare, fmt.Errorf("native host-preparation dependency exceeded its original observation window"),
+			"The managed host did not finish its first-boot preparation before the existing deadline. Inspect its bootstrap evidence before retrying.")
+	}
+	if wait.ResumeAfter > remaining {
+		bounded := *wait
+		bounded.ResumeAfter = remaining
+		return &bounded
+	}
+	return err
+}
+
+// resumingNativeHostPreparation recognizes a persisted, already admitted
+// enrollment. Existing Guard admission and current-generation typed command
+// binding remain authoritative; the completed enrollment deadline is not repeated.
+func resumingNativeHostPreparation(result map[string]interface{}, observedAt time.Time) bool {
+	startedAt, err := time.Parse(time.RFC3339Nano, stringFromMap(result, nativeHostPreparationStartedKey))
+	if err != nil || startedAt.IsZero() || startedAt.After(observedAt.Add(time.Minute)) {
+		return false
+	}
+	for _, key := range []string{"auto_deploy_guard_verified_at", "managed_runtime_target_verified_at"} {
+		verifiedAt, err := time.Parse(time.RFC3339Nano, stringFromMap(result, key))
+		if err != nil || verifiedAt.IsZero() || verifiedAt.After(startedAt) {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveManagedRuntimeTargetWithWait(ctx context.Context, cfg *ProvisionConfig, job *Job, spec *core.KombinationSpec, q *Queue) (*ManagedRuntimeTarget, error) {
@@ -391,6 +460,13 @@ func resolveManagedRuntimeTargetWithWaitClock(ctx context.Context, cfg *Provisio
 		metadataString(spec, leaseIDField),
 	)
 	observedAt := now().UTC()
+	if leaseID != "" && resumingNativeHostPreparation(snapshot.Result, observedAt) {
+		// Refresh through the lease-backed resolver, never the unbound cache.
+		// A failed refresh is returned, not a replacement enrollment window.
+		target, err := resolveManagedRuntimeTargetAttempt(ctx, cfg, job, spec,
+			managedRuntimeTargetResolveAttemptTimeout(timeout, interval))
+		return target, boundNativeHostPreparationDependencyWait(snapshot.Result, now().UTC(), err)
+	}
 	waitStartedAt, ok := managedRuntimeEnrollmentWaitStartedAt(snapshot.Result)
 	// Auto-deploy has already crossed provider-ready. Address and credential
 	// resolution must spend the original enrollment budget, including on resume.

@@ -23,12 +23,19 @@ type OperatorSelfDisclosure struct {
 	UpdatedAt      time.Time
 }
 
+// OperatorSelfDisclosureValue is the writable value used by an optional atomic
+// comparison. A conditional replacement never creates a missing record.
+type OperatorSelfDisclosureValue struct {
+	Source     string                      `json:"source"`
+	Disclosure core.OperatorSelfDisclosure `json:"disclosure"`
+}
+
 // OperatorSelfDisclosureStore persists self-disclosures per tenant and
 // principal. Upsert replaces the whole disclosure: the operator's latest
 // answers are the truth, and an unanswered question means "not told".
 type OperatorSelfDisclosureStore interface {
 	GetOperatorSelfDisclosure(ctx context.Context, tenantID, ownerSubjectID string) (*OperatorSelfDisclosure, error)
-	UpsertOperatorSelfDisclosure(ctx context.Context, disclosure OperatorSelfDisclosure) (*OperatorSelfDisclosure, error)
+	UpsertOperatorSelfDisclosure(ctx context.Context, disclosure OperatorSelfDisclosure, ifUnchanged *OperatorSelfDisclosureValue) (*OperatorSelfDisclosure, error)
 }
 
 // Self-disclosure sources record how the answers reached the store, so

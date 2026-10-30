@@ -181,6 +181,10 @@ type PlannedPersonIntent struct {
 
 // ServerIntent describes the server being onboarded by this run.
 type ServerIntent struct {
+	// ExistingServerID selects an already enrolled, unassigned canonical Guard
+	// server for the first installation. It is Techstack orchestration intent,
+	// never a field in the StackKits specification.
+	ExistingServerID string `json:"existing_server_id,omitempty"`
 	// Roles uses Architecture v2 vocabulary; empty defaults to the seed's
 	// own first node on "found" and to a worker on "join".
 	Roles []string `json:"roles,omitempty"`
@@ -250,6 +254,14 @@ func (intent WizardIntent) Validate() error {
 	for _, role := range intent.Server.Roles {
 		if NormalizeRole(role) == "" {
 			return fmt.Errorf("specv2: unknown server role %q", role)
+		}
+	}
+	if strings.TrimSpace(intent.Server.ExistingServerID) != "" {
+		if intent.KitAssignment.Mode != KitAssignmentFound {
+			return fmt.Errorf("specv2: existing_server_id requires a found installation")
+		}
+		if transport := strings.TrimSpace(intent.Server.Transport); transport != "" && transport != TransportInstallCommand {
+			return fmt.Errorf("specv2: existing_server_id cannot request provisioning or reconnection")
 		}
 	}
 	for slug, settings := range intent.UseCaseSettings {

@@ -32,6 +32,9 @@ type HealthDependencies struct {
 	// migration count (PocketBase retirement: Postgres is the source of truth).
 	DB             *db.DB
 	ExecutionScope func() map[string]string
+	// BackupOwner names the process that owns scheduled backups, so a
+	// declared in-process Stable mode is visible, never silent.
+	BackupOwner string
 }
 
 // dbHealthStatus captures control-plane Postgres connectivity and schema state.
@@ -101,6 +104,22 @@ func controlPlaneDBHealth(database *db.DB) dbHealthStatus {
 	return status
 }
 
+// schemaHealth reports this binary's schema floor, its newest embedded
+// migration and the newest applied ledger row. The post-activation contract
+// step reads embedded_max from every live revision (D-2026-10-27-06).
+func schemaHealth(deps *HealthDependencies) db.SchemaState {
+	state := db.EmbeddedSchemaState()
+	if deps == nil || deps.DB == nil || deps.DB.DB == nil {
+		return state
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if applied, err := db.AppliedSchemaMax(ctx, deps.DB.Probe()); err == nil {
+		state.AppliedMax = &applied
+	}
+	return state
+}
+
 // RegisterHealthRoutesWithDeps adds health endpoints with dependency checks.
 // This is the preferred method for production deployments with Kubernetes.
 func RegisterHealthRoutesWithDeps(r *httpx.Router, version string, buildRevision string, startTime time.Time, deps *HealthDependencies) {
@@ -120,6 +139,10 @@ func RegisterHealthRoutesWithDeps(r *httpx.Router, version string, buildRevision
 		}
 		if revision := normalizedBuildRevision(buildRevision); revision != "" {
 			payload["revision"] = revision
+		}
+		payload["schema"] = schemaHealth(deps)
+		if deps != nil && deps.BackupOwner != "" {
+			payload["backup_owner"] = deps.BackupOwner
 		}
 		if deps != nil && deps.ExecutionScope != nil {
 			if scope := deps.ExecutionScope(); scope != nil {

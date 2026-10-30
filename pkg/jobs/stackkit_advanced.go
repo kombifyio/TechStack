@@ -154,6 +154,9 @@ func newAdvancedDispatcher(ctx context.Context, sender StackKitCommandSender, is
 	if err != nil {
 		return nil, fmt.Errorf("managed deployment has no Advanced trust binding; run advanced_trust_import: %w", err)
 	}
+	if request.WizardExtend != nil && binding.StackID != request.StackKitInstanceID {
+		return nil, fmt.Errorf("wizard extension differs from the enrolled Advanced instance")
+	}
 	if request.BackupRenewal != nil && binding.StackID != request.StackKitInstanceID {
 		return nil, fmt.Errorf("backup renewal differs from enrolled Advanced instance")
 	}
@@ -274,6 +277,9 @@ func advancedResultMap(result stackkitcommand.AdvancedOperationResult) map[strin
 func runAdvancedStackKitLifecycle(ctx context.Context, cfg StackKitLifecycleConfig, release stackkitrelease.Release, jobID string, request StackKitLifecycleRequest) (map[string]interface{}, error) {
 	dispatcher, err := newAdvancedDispatcher(ctx, cfg.Sender, cfg.AdvancedIssuer, release, request)
 	if err != nil {
+		return nil, err
+	}
+	if err := revalidateWizardExecutionBinding(ctx, cfg.Sender, release, request, dispatcher.binding.OwnerRef, jobID+"-binding-plan"); err != nil {
 		return nil, err
 	}
 	if request.Operation == StackKitLifecyclePublicTLSRepair {

@@ -81,7 +81,13 @@ func (d *HostSecurityRepairDispatcher) Repair(ctx context.Context, target guardp
 	if d == nil || d.sender == nil {
 		return guardposture.RepairResult{}, errors.New("host security repair dispatch is not available")
 	}
-	release, err := d.releaseResolver()
+	resolve := d.releaseResolver
+	if StageCandidateReleaseConfigured() {
+		resolve = func() (*stackkitrelease.Release, error) {
+			return TargetStackKitReleaseForWorker(ctx, target.TenantID, target.AgentID)
+		}
+	}
+	release, err := resolve()
 	if err != nil {
 		return guardposture.RepairResult{}, fmt.Errorf("resolve pinned StackKits release: %w", err)
 	}

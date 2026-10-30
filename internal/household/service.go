@@ -112,6 +112,10 @@ type Target struct {
 	TenantID string
 	OwnerID  string
 	StackID  string
+	// Managed projections bind these before their first dispatch. A current
+	// inventory change must not silently select a different runtime.
+	AgentID            string
+	StackKitInstanceID string
 }
 
 // Invitation is the node's answer to an invite. ActivationURL is the one-time
@@ -129,6 +133,24 @@ type IdentityRuntime interface {
 	Invite(ctx context.Context, target Target, username, email, displayName string, apps AppGrant) (Invitation, error)
 	Remove(ctx context.Context, target Target, username string) error
 	UpdateApps(ctx context.Context, target Target, username string, apps AppGrant) error
+}
+
+// RevisionedIdentityRuntime fences the actual node effect, including removals
+// without a saved invite reference. No legacy command may substitute for it.
+type RevisionedIdentityRuntime interface {
+	Project(context.Context, Target, IdentityProjection) (Invitation, error)
+}
+
+// ProjectionTargetResolver resolves the exact approved runtime before the
+// durable projection target is committed. It performs no node mutation.
+type ProjectionTargetResolver interface {
+	ResolveProjectionTarget(context.Context, Target) (Target, error)
+}
+
+type IdentityProjection struct {
+	Key, Action, Username, Email, DisplayName string
+	Revision                                  uint64
+	Apps                                      AppGrant
 }
 
 // Homelabs reads the owner's homelab.
@@ -185,7 +207,8 @@ type ProjectionRequest struct {
 	Member       Member
 	Action       string
 	// Apps are the node app ids of add and update_apps (see AppGrant).
-	Apps AppGrant
+	Apps     AppGrant
+	Revision uint64
 }
 
 // ProjectionResult is the outcome of a projection.
@@ -215,9 +238,20 @@ func (s *Service) Project(ctx context.Context, req ProjectionRequest) (Projectio
 	if owner == subject {
 		return ProjectionResult{}, ErrOwnerMember
 	}
-	tenantID, err := s.Tenants.ResolveOwnerTenant(ctx, req.HintTenant, owner)
+	var tenantID string
+	var err error
+	if system, ok := s.Tenants.(interface {
+		ResolveProjectionOwnerTenant(context.Context, string, string) (string, error)
+	}); ok && req.Revision > 0 {
+		tenantID, err = system.ResolveProjectionOwnerTenant(ctx, owner, subject)
+	} else {
+		tenantID, err = s.Tenants.ResolveOwnerTenant(ctx, req.HintTenant, owner)
+	}
 	if err != nil {
 		return ProjectionResult{}, err
+	}
+	if req.Revision > 0 {
+		return s.projectRevision(ctx, tenantID, owner, req)
 	}
 	switch req.Action {
 	case ActionAdd:
@@ -426,11 +460,12 @@ type LinkRequest struct {
 
 // LinkBegin is what Cloud needs to run the OIDC login against the node.
 type LinkBegin struct {
-	StackID  string
-	Username string
-	Issuer   string
-	ClientID string
-	Scope    string
+	ReferenceID string
+	StackID     string
+	Username    string
+	Issuer      string
+	ClientID    string
+	Scope       string
 }
 
 // BeginLink resolves the invited reference and the stack's Pocket ID issuer.
@@ -439,14 +474,15 @@ func (s *Service) BeginLink(ctx context.Context, req LinkRequest) (LinkBegin, er
 	if err != nil {
 		return LinkBegin{}, err
 	}
-	return LinkBegin{StackID: ref.StackID, Username: ref.Username, Issuer: issuer, ClientID: s.clientID(), Scope: LinkScopes}, nil
+	return LinkBegin{ReferenceID: ref.ReferenceID, StackID: ref.StackID, Username: ref.Username, Issuer: issuer, ClientID: s.clientID(), Scope: LinkScopes}, nil
 }
 
 // LinkProof is the Pocket ID login the member completed.
 type LinkProof struct {
 	LinkRequest
-	IDToken string
-	Nonce   string
+	ReferenceID string
+	IDToken     string
+	Nonce       string
 }
 
 // CompleteLink verifies the member's Pocket ID login and marks the reference
@@ -454,12 +490,15 @@ type LinkProof struct {
 // stack, carry the nonce Cloud used, and name the invited person: the Pocket ID
 // username, or else the invited e-mail address.
 func (s *Service) CompleteLink(ctx context.Context, proof LinkProof) (*controlplane.HomelabIdentityRef, error) {
-	if strings.TrimSpace(proof.IDToken) == "" || strings.TrimSpace(proof.Nonce) == "" {
+	if strings.TrimSpace(proof.IDToken) == "" || strings.TrimSpace(proof.Nonce) == "" || proof.ReferenceID == "" || proof.StackID == "" {
 		return nil, ErrProofInvalid
 	}
-	tenantID, ref, issuer, err := s.invitedRef(ctx, proof.LinkRequest)
+	_, ref, issuer, err := s.invitedRef(ctx, proof.LinkRequest)
 	if err != nil {
 		return nil, err
+	}
+	if ref.ReferenceID != proof.ReferenceID {
+		return nil, ErrNoReference
 	}
 	claims, err := s.Verifier.Verify(ctx, issuer, s.clientID(), proof.IDToken)
 	if err != nil {
@@ -471,7 +510,7 @@ func (s *Service) CompleteLink(ctx context.Context, proof LinkProof) (*controlpl
 	if !claimsNameInvitee(claims, ref) {
 		return nil, fmt.Errorf("%w: the login is not the invited person", ErrProofInvalid)
 	}
-	return s.Links.MarkHouseholdLinked(ctx, tenantID, ref.StackID, ref.CloudSubject, s.now())
+	return s.Links.MarkHouseholdLinked(ctx, *ref, s.now())
 }
 
 func claimsNameInvitee(claims *oidcclient.Claims, ref *controlplane.HomelabIdentityRef) bool {

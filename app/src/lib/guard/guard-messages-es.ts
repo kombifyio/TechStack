@@ -293,6 +293,8 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
     "kombify.me rechazó el registro de este servidor.",
   "guard.reach.reason.connect_unavailable":
     "kombify Connect no está disponible. Vuelve a comprobar en breve.",
+  "guard.reach.reason.connect_not_enabled":
+    "kombify Connect aún no está activado para esta cuenta. El trabajo local y el control del servidor no se ven afectados.",
   "guard.reach.reason.connect_denied":
     "kombify Connect se negó a listar este servidor.",
   "guard.reach.reason.reach_layout_unsupported":

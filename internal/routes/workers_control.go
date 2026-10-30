@@ -58,6 +58,13 @@ type workerControlRequest struct {
 	// Report is the revisioned outcome of a binding-aware Guard. Its absence
 	// marks a legacy Guard result.
 	Report *guardbinding.ResultReport `json:"report,omitempty"`
+	// HeldPredecessorCommands lists the prior commands of the same tenant whose
+	// unacknowledged outcome the Guard holds from an earlier worker binding.
+	HeldPredecessorCommands []guardbinding.PredecessorCommand `json:"held_predecessor_commands,omitempty"`
+	// PredecessorWorkerID and PredecessorRecovery deliver one such outcome under
+	// the signed, result-only recovery statement the control plane issued.
+	PredecessorWorkerID string                            `json:"predecessor_worker_id,omitempty"`
+	PredecessorRecovery *guardbinding.PredecessorRecovery `json:"predecessor_recovery,omitempty"`
 }
 
 // credentialGeneration is the generation of the credential that authenticated
@@ -112,6 +119,11 @@ func (h workerRouteHandlers) nextTypedCommand(e *httpx.Event) error {
 			return httpx.Success(e, http.StatusOK, map[string]any{"resolutions": resolutions})
 		}
 	}
+	if recovery := h.predecessorRecoveryFor(e.Request.Context(), authCtx, request.HeldPredecessorCommands); recovery != nil {
+		// Like a resolution, the recovery statement comes before new work: it
+		// lets the Guard deliver the held outcomes that still fence this server.
+		return httpx.Success(e, http.StatusOK, map[string]any{"predecessor_recovery": recovery})
+	}
 	pollCtx, cancel := context.WithTimeout(e.Request.Context(), guardCommandPollTimeout)
 	defer cancel()
 	var command *agentpb.StackKitCommand
@@ -156,8 +168,8 @@ func (h workerRouteHandlers) nextTypedCommand(e *httpx.Event) error {
 	payload := map[string]any{"command": command}
 	if binding != nil {
 		binding.ServerID = authCtx.ServerID
-		signer, err := h.bindingSignerFor(authCtx.TenantID, authCtx.RuntimeAgentID)
-		if err == nil {
+		signer, err := h.bindingSignerFor(e.Request.Context(), authCtx.TenantID, authCtx.RuntimeAgentID)
+		if err == nil && signer != nil {
 			err = signer.Sign(binding)
 		}
 		if err != nil {
@@ -185,6 +197,11 @@ func (h workerRouteHandlers) submitTypedCommandResult(e *httpx.Event) error {
 	}
 	if bound, ok := h.typedControl.(boundTenantWorkerTypedControl); ok && request.Report != nil {
 		return h.submitTypedReport(e, bound, authCtx, request)
+	}
+	if strings.TrimSpace(request.PredecessorWorkerID) != "" {
+		// A predecessor outcome is accepted only as a bound revision; it never
+		// falls through to the legacy path of the current worker.
+		return writeGuardDenial(e, guardbinding.Denyf(guardbinding.CodePredecessorScope, "a predecessor outcome needs the binding contract"))
 	}
 	if request.Result == nil {
 		return httpx.BadRequest(e, "Invalid typed control result", nil)
@@ -217,10 +234,23 @@ func (h workerRouteHandlers) submitTypedReport(e *httpx.Event, control boundTena
 	} else if resultID != "" && resultID != commandID {
 		return writeGuardDenial(e, guardbinding.Denyf(guardbinding.CodeBindingMismatch, "result names another command"))
 	}
+	predecessor := strings.TrimSpace(request.PredecessorWorkerID)
+	if predecessor != "" {
+		if denial := h.admitPredecessorDelivery(e.Request.Context(), authCtx, commandID, predecessor, request.PredecessorRecovery); denial != nil {
+			slog.Warn("guard_predecessor_delivery_refused", "tenant_id", authCtx.TenantID, "runtime_agent_id", authCtx.RuntimeAgentID,
+				"predecessor_worker_id", predecessor, "command_id", commandID, "reason", denial.Code)
+			return writeGuardDenial(e, denial)
+		}
+	}
 	ack, err := control.SubmitReportForTenant(e.Request.Context(), agentcontrol.ReportRequest{
 		TenantID: authCtx.TenantID, AgentID: authCtx.RuntimeAgentID, CommandID: commandID,
 		Generation: credentialGeneration(authCtx), Report: *request.Report, Result: request.Result,
+		PredecessorAgentID: predecessor,
 	})
+	if err == nil && predecessor != "" {
+		slog.Info("guard_predecessor_outcome_recovered", "tenant_id", authCtx.TenantID, "runtime_agent_id", authCtx.RuntimeAgentID,
+			"predecessor_worker_id", predecessor, "command_id", commandID, "revision", request.Report.Revision)
+	}
 	if err != nil {
 		var denial *guardbinding.Denial
 		switch {

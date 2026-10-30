@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 const verifierTTL = 10 * time.Minute
@@ -101,7 +103,7 @@ func (v *OIDCVerifier) httpClient() *http.Client {
 		}
 		v.client = &http.Client{
 			Timeout:   10 * time.Second,
-			Transport: &http.Transport{DialContext: dialer.DialContext, TLSHandshakeTimeout: 5 * time.Second, Proxy: nil},
+			Transport: fulllocal.Transport(&http.Transport{DialContext: dialer.DialContext, TLSHandshakeTimeout: 5 * time.Second, Proxy: nil}),
 		}
 	}
 	return v.client

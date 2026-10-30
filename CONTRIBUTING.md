@@ -1,27 +1,70 @@
-# Contributing
+# Contributing to kombify Techstack Open Core
 
-kombify Techstack Open Core is a Go control plane with a SvelteKit operator UI
-and a Windows local client.
+Thanks for helping. This page says how a contribution reaches a release and
+what to expect from us.
 
-## This repository is a generated release mirror
+## How this repository works
 
-`kombifyio/TechStack` is produced from an explicit allowlist in the upstream
-development repository. Every release replaces the tree here with the curated
-export of that release; `.techstack-public-export.json` records the exact
-upstream commit and the digest of the exported tree. Pull requests cannot be
-merged into this repository, because the next export would overwrite them.
+`kombifyio/TechStack` is the public release mirror of kombify Techstack Open Core. Its source of
+truth is a private repository, and each release replaces the tree here with a
+curated export. Your pull request is still the way in:
 
-Contributions are welcome and land through the upstream tree:
+1. We review it here, without running your code on our infrastructure first.
+2. If we take it, we import the change into the source with your authorship
+   kept. Changes to build configuration or to security-sensitive parts we
+   re-implement ourselves and credit to you.
+3. When the release that carries it is published, we close your pull request
+   with the commit and the version, and the release notes credit you by handle.
 
-1. Open an issue or a Discussion that describes the change and, if you have
-   one, links to your branch or fork.
-2. A maintainer ports the patch upstream, reviews and merges it there, and it
-   appears here with the next release. You are credited in the release notes.
+If we do not take it, we say why on the pull request.
+
+## Before you start
+
+- **Fixes:** open an issue first, or link one.
+- **New features:** start with an idea in [Discussions](https://github.com/kombifyio/TechStack/discussions) so
+  we can say whether it fits before you spend time.
+- **Small changes** (typos, docs): open a pull request directly.
+
+## Sign off your commits (DCO)
+
+Every commit carries a sign-off line that certifies the
+[Developer Certificate of Origin](https://developercertificate.org/), version
+1.1: you wrote the change or have the right to submit it under the licence of
+this repository ([LICENSE](LICENSE)). Add the line with
+`git commit -s`:
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+Use your real name. If you forgot, `git rebase --signoff <base>` adds the line to
+every commit of your branch, and you force-push the result to your own branch.
+We ask for a missing sign-off on the pull request before we review further.
+
+## Rules
+
+- Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+- Sign off every commit, as above.
+- Say which AI tool helped, if any. A person who can explain the change is
+  accountable for it.
+- No secrets, credentials, personal data or private hostnames in a diff.
+- Draft pull requests are welcome for early feedback.
+
+## What to expect
+
+| Step | Target |
+| --- | --- |
+| First response | One business day |
+| Verdict (take, change, or decline with reason) | Three business days |
+| Release | The next release after import; see the [changelog](https://docs.kombify.io/changelog/overview) |
+
+These are targets, not contractual promises.
 
 ## Local development
 
-You need Go (version in `go.mod`), Node.js 24, and pnpm 11. No account,
-private registry, or hosted kombify service is required.
+Techstack Open Core is a Go control plane with a SvelteKit operator UI and a
+Windows local client. You need Go (version in `go.mod`), Node.js 24, and pnpm
+11. No account, private registry, or hosted kombify service is required.
 
 ```sh
 go build ./...
@@ -34,7 +77,7 @@ The container image builds from the repository root with
 `docker build -t techstack:selfhost .`; `deploy/selfhosted/` holds the Compose
 setup and its `.env.example`.
 
-## Bundled third-party source
+### Bundled third-party source
 
 - `internal/gocommon/` is the unmodified source of the shared kombify Go
   library packages this tree imports, under their own Apache-2.0 `LICENSE`.
@@ -47,10 +90,7 @@ Change them upstream, not here.
 
 ## Reporting
 
-- Bugs: open an issue with the release version and reproduction steps.
-- Questions and ideas: GitHub Discussions (see `SUPPORT.md`).
-- Security vulnerabilities: report privately, never in a public issue. See
-  `SECURITY.md`.
-
-Do not add internal infrastructure details, private service URLs, or secrets
-to public docs, tests, workflows, or examples.
+- Bugs: the [bug form](https://github.com/kombifyio/TechStack/issues/new?template=bug_report.yml) in this repository.
+- Ideas: [Discussions](https://github.com/kombifyio/TechStack/discussions).
+- Questions: see [SUPPORT.md](SUPPORT.md).
+- Vulnerabilities: privately, see [SECURITY.md](SECURITY.md).

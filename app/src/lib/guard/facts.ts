@@ -739,6 +739,7 @@ export const GUARD_REACH_REASON_CODES: ReadonlySet<string> = new Set([
   "kombify_me_unavailable",
   "kombify_me_denied",
   "connect_unavailable",
+  "connect_not_enabled",
   "connect_denied",
   "reach_layout_unsupported",
   "revocation_incomplete",

@@ -88,6 +88,7 @@ type v2Boot struct {
 }
 
 type grpcBoot struct {
+	runtimeLogs    *grpcserver.RuntimeLogStore
 	server         *grpcserver.Server
 	identityIssuer routes.WorkerAgentIdentityIssuer
 	addr           string
@@ -246,13 +247,21 @@ func runTechstack(ctx context.Context) error {
 	if handled, err := handleEarlyCommand(ctx, os.Args); handled {
 		return err
 	}
+	if err := checkPublicBackupCustody(); err != nil {
+		return err
+	}
+	if err := checkAdvancedIssuerProcessCustody(); err != nil {
+		return err
+	}
 
+	// Full Local retains the same OTel pipeline with a homelab-only exporter
+	// transport (D-2026-10-24-01); an absent endpoint keeps export disabled.
 	otelShutdown, otelErr := telemetry.Init(ctx, "kombify-techstack", version)
 	if otelErr != nil {
 		return fmt.Errorf("initialize telemetry: %w", otelErr)
 	}
 	defer func() { _ = otelShutdown(context.Background()) }()
-	sentryShutdown := commonobservability.MustInit(commonobservability.Config{
+	sentryShutdown := initErrorReporting(commonobservability.Config{
 		Service:     "kombify-techstack",
 		DSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
 		Environment: techstackSentryEnvironment(),
@@ -318,6 +327,9 @@ func runTechstack(ctx context.Context) error {
 
 	controlStores := stackControlPlaneStores(v2Boot)
 	orchCfg := orchestrator.DefaultConfig()
+	if scheduledBackupOwner(startup.cfg) == backupOwnerPrivateWorker {
+		orchCfg.JobTypeFilter = func(kind jobs.JobType) bool { return kind != jobs.JobTypeBackup }
+	}
 	orchCfg.StackStore = controlStores.Stacks
 	orchCfg.JobStore = controlStores.Jobs
 	orchCfg.WorkerStore = workerControlPlaneStore(v2Boot)
@@ -369,6 +381,24 @@ func runTechstack(ctx context.Context) error {
 			// Connected round-trip evidence, as on the HTTPS hub.
 			grpcState.server.SetStackKitRoundTripRecorder(typedControl.RecordMTLSRoundTrip)
 		}
+	}
+	// Runtime logs belong to both HTTP and gRPC ingress. Preview deliberately
+	// has no shared gRPC listener, but its admitted installer must retain logs.
+	grpcState.runtimeLogs = grpcState.server.RuntimeLogStore()
+	if grpcState.runtimeLogs == nil {
+		grpcState.runtimeLogs, err = grpcserver.OpenRuntimeLogStore(startup.cfg.Server.RuntimeLogPath, startup.cfg.Server.RuntimeLogMaxEntries)
+		if err != nil {
+			log.Warn("runtime_log_store_memory_fallback", "error", err, "persistence", "memory_only")
+			grpcState.runtimeLogs, err = grpcserver.OpenRuntimeLogStore("", startup.cfg.Server.RuntimeLogMaxEntries)
+			if err != nil {
+				return fmt.Errorf("open in-memory runtime log store: %w", err)
+			}
+		}
+		defer func() {
+			if closeErr := grpcState.runtimeLogs.Close(); closeErr != nil {
+				log.Warn("runtime_log_store_close_failed", "error", closeErr)
+			}
+		}()
 	}
 	notificationOutbox := bootProductNotificationOutbox(v2Boot, startup.cfg.Edition, log)
 	if notificationOutbox != nil {
@@ -571,6 +601,16 @@ func handleEarlyCommand(ctx context.Context, args []string) (bool, error) {
 		return true, nil
 	case "advanced-issuer-bootstrap":
 		return true, runAdvancedIssuerBootstrap(ctx)
+	case "execution-serve":
+		return true, runExecutionServer(ctx)
+	case "backup-worker":
+		return true, runBackupWorker(ctx)
+	case "execution-verify":
+		return true, runExecutionVerification(ctx)
+	case "execution-qualify":
+		return true, runExecutionQualification(ctx)
+	case "backup-worker-journey":
+		return true, runBackupWorkerJourney(ctx)
 	case "database-delivery":
 		return true, runDatabaseDelivery(ctx, args[2:])
 	case "provider-control-bootstrap":
@@ -735,6 +775,12 @@ func ensureDefaultControlPlaneTenant(ctx context.Context, cfg *config.Config, bo
 		tenantKind = saasTenantKind
 	}
 	if !config.RunsSharedWork() {
+		if cfg != nil && cfg.DeploymentMode.IsSaaS() {
+			// Hosted secondary HTTP resolves each verified identity's tenant
+			// at login/request time. An unrelated global default row is not
+			// an admission prerequisite, and this boot creates none.
+			return nil
+		}
 		_, err := controlplane.NewPostgresStore(boot.db.DB).GetTenant(ctx, tenantID)
 		return err
 	}
@@ -1164,6 +1210,7 @@ func bindGlobalMiddleware(router *httpx.Router, deps routeDeps) {
 	router.BindFunc(middleware.RequestIDMiddleware)
 	bindCORS(router, cfg)
 	router.BindFunc(middleware.EdgeIdentityMiddlewareFromConfig(cfg))
+	router.BindFunc(hidePreviewFromCrawlers)
 	router.BindFunc(previewTransportAdmission)
 	router.BindFunc(v2SessionIdentityMiddleware(deps.v2))
 	router.BindFunc(testIdentityAdmission)

@@ -36,7 +36,7 @@ func (o *Orchestrator) RefreshApplicationConnector(ctx context.Context, tenantID
 	if err != nil {
 		return "", err
 	}
-	req, err := jobs.ApplicationConnectorRefreshRequest(original, head.Service)
+	req, err := jobs.ApplicationConnectorRefreshRequestForStack(ctx, original, head.Service)
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +55,7 @@ func (o *Orchestrator) RefreshApplicationConnector(ctx context.Context, tenantID
 	}
 	// Admitting the release digests the StackKits bundle; do it only for a
 	// refresh that is actually enqueued.
-	if _, err = jobs.ApplicationConnectorRelease(); err != nil {
+	if _, err = jobs.ApplicationConnectorReleaseForStack(ctx, tenantID, req.StackID, false); err != nil {
 		return "", err
 	}
 	return o.EnqueueStackKitLifecycle(ctx, req)
@@ -69,7 +69,7 @@ func (o *Orchestrator) ReconcileApplicationConnectors(ctx context.Context, tenan
 	if o == nil {
 		return
 	}
-	if err := jobs.CachedApplicationConnectorAvailable(); err != nil {
+	if _, err := jobs.ApplicationConnectorReleaseForStack(ctx, tenantID, stackID, true); err != nil {
 		return
 	}
 	services, ok := o.cfg.StackStore.(controlplane.ServiceRuntimeStore)

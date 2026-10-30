@@ -19,11 +19,12 @@ import {
 } from "#lib/api/connectDevices.js";
 
 import { tr, trn } from "#lib/i18n.svelte.js";
+import { listEdgeDevices, type EdgeDevice } from "#lib/api/edgeDevices.js";
 export type Audience = "owner" | "household";
 
 export type SectionState<T> =
   | { state: "loading" }
-  | { state: "ready"; items: T[] }
+  | { state: "ready"; items: T[]; notices?: string[] }
   | { state: "unavailable"; message: string }
   | { state: "error"; message: string };
 
@@ -47,7 +48,8 @@ export interface DeviceEntry {
   clients: string[];
   lastSeen?: string;
   online: boolean | null;
-  source: ConnectDevice;
+  source: ConnectDevice | EdgeDevice;
+  edge?: EdgeDevice;
 }
 
 export type PeopleEntry = PersonEntry | DeviceEntry;
@@ -56,18 +58,26 @@ export const connectUnavailableMessage = () =>
   tr("ui.people.connectedClientsAppearHereOnce");
 export const connectErrorMessage = () => tr("ui.people.deviceListUnavailable");
 export const householdUnavailableMessage = () =>
-  tr("ui.people.householdListUnavailableTheHomelab");
-export const identityNotReadyMessage = () =>
+  tr("ui.people.liveStatusNotReporting");
+export const identityNotReadyMessage = () => tr("ui.people.liveStatusPending");
+export const noHomelabPeopleMessage = () =>
   tr("ui.people.ownerAndHouseholdAppearOnce");
+export const edgeLoadErrorMessage = () => tr("box.loadError");
 
 /** A device counts as online when it reported within this window. */
 const ONLINE_WINDOW_MS = 10 * 60 * 1000;
+// Edge devices check in every 5 minutes (settings polls refresh it once Gateway touches them).
+const EDGE_ONLINE_WINDOW_MS = 7 * 60 * 1000;
 
-function onlineFrom(lastSeen: string | undefined, now: number): boolean | null {
+function onlineFrom(
+  lastSeen: string | undefined,
+  now: number,
+  windowMs = ONLINE_WINDOW_MS,
+): boolean | null {
   if (!lastSeen) return null;
   const at = Date.parse(lastSeen);
   if (Number.isNaN(at)) return null;
-  return now - at <= ONLINE_WINDOW_MS;
+  return now - at <= windowMs;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -76,6 +86,8 @@ const PLATFORM_LABELS: Record<string, string> = {
   linux: "Linux",
   android: "Android",
   ios: "iOS",
+  "kombify-box": "kombify Box",
+  "kombify-watch": "kombify Watch",
 };
 
 export function platformLabel(platform: string): string {
@@ -236,9 +248,12 @@ const OWNER_STATUS: Record<string, string> = {
 };
 
 /**
- * Fold the per-deployment identity reads into owner + household. A read that
- * failed, or a Guard snapshot the backend marks `identity_status_failed`, is
- * never shown as an empty household.
+ * Fold the per-deployment identity reads into owner + household. The owner
+ * (the signed-in account) and the people planned in the Wizard are
+ * Techstack's own records and always show; only live sign-in status and
+ * invited members need the homelab. A read that failed, or a Guard snapshot
+ * the backend marks `identity_status_failed`, adds a notice instead of
+ * passing for an empty household.
  */
 export function peopleFromIdentity(
   results: PromiseSettledResult<HomelabIdentityStatus>[],
@@ -247,9 +262,6 @@ export function peopleFromIdentity(
   const answered = results.flatMap((result) =>
     result.status === "fulfilled" ? [result.value] : [],
   );
-  if (answered.length === 0) {
-    return { state: "unavailable", message: householdUnavailableMessage() };
-  }
   const reporting = answered.filter(
     (status) =>
       !(
@@ -257,18 +269,24 @@ export function peopleFromIdentity(
         status.owner.reason_code === "identity_status_failed"
       ),
   );
-  if (reporting.length === 0) {
-    return { state: "unavailable", message: householdUnavailableMessage() };
-  }
   const withProvider = reporting.filter(
     (status) => status.owner.status !== "unavailable",
   );
-  if (withProvider.length === 0) {
-    return { state: "unavailable", message: identityNotReadyMessage() };
-  }
-  const owner =
-    withProvider.find((status) => status.owner.status === "active")?.owner ??
-    withProvider[0]!.owner;
+  // A stack that did not report hides its invited members, also when
+  // another stack reports.
+  const notices = [
+    ...(reporting.length < results.length
+      ? [householdUnavailableMessage()]
+      : []),
+    ...(reporting.length > 0 && withProvider.length === 0
+      ? [identityNotReadyMessage()]
+      : []),
+  ];
+  const owner: HomelabIdentityStatus["owner"] = withProvider.find(
+    (status) => status.owner.status === "active",
+  )?.owner ??
+    withProvider[0]?.owner ??
+    reporting[0]?.owner ?? { status: "failed" };
   const people: PersonEntry[] = [
     {
       id: "person:owner",
@@ -295,6 +313,14 @@ export function peopleFromIdentity(
         online: null,
       });
     }
+  }
+  // Without a live member list an invitation cannot be ruled out, so a
+  // planned person is not called "not invited yet".
+  const plannedStatus =
+    withProvider.length > 0
+      ? tr("ui.people.notInvitedYet")
+      : tr("ui.people.plannedMember");
+  for (const status of answered) {
     for (const planned of status.household.planned_people ?? []) {
       const key = `planned:${planned.client_ref}`;
       const invited = [...members.values()].some(
@@ -312,12 +338,12 @@ export function peopleFromIdentity(
           planned.email?.trim() ||
           tr("ui.people.plannedMember"),
         detail: planned.email?.trim() || tr("ui.people.plannedInTheWizard"),
-        status: tr("ui.people.notInvitedYet"),
+        status: plannedStatus,
         online: null,
       });
     }
   }
-  return { state: "ready", items: [...people, ...members.values()] };
+  return { state: "ready", items: [...people, ...members.values()], notices };
 }
 
 export async function loadPeople(
@@ -325,7 +351,7 @@ export async function loadPeople(
   ownerName: string,
 ): Promise<SectionState<PersonEntry>> {
   if (deploymentIds.length === 0) {
-    return { state: "unavailable", message: identityNotReadyMessage() };
+    return { state: "unavailable", message: noHomelabPeopleMessage() };
   }
   const results = await Promise.allSettled(
     deploymentIds.map((id) => getHomelabIdentity(id)),
@@ -334,5 +360,54 @@ export async function loadPeople(
 }
 
 export async function loadDevices(): Promise<SectionState<DeviceEntry>> {
-  return devicesFromConnect(await listConnectDevices());
+  const [clients, edges] = await Promise.all([
+    listConnectDevices(),
+    listEdgeDevices(),
+  ]);
+  const clientState = devicesFromConnect(clients);
+  const edgeMessage = edges.state === "error" ? edgeLoadErrorMessage() : "";
+  if (clientState.state !== "ready" && edges.state !== "ready") {
+    return {
+      state:
+        clientState.state === "error" || edges.state === "error"
+          ? "error"
+          : "unavailable",
+      message: [
+        "message" in clientState ? clientState.message : "",
+        edgeMessage,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+  }
+  const now = Date.now();
+  return {
+    state: "ready",
+    items: [
+      ...(clientState.state === "ready" ? clientState.items : []),
+      ...(edges.state === "ready"
+        ? edges.value.map((edge): DeviceEntry => ({
+            id: `edge:${edge.device_id}`,
+            kind: "device",
+            audience: "owner",
+            name: edge.display_name,
+            detail: [edge.board, edge.firmware_version, edge.local_ip]
+              .filter(Boolean)
+              .join(" · "),
+            platform: edge.kind,
+            clients: [],
+            lastSeen: edge.last_seen_at,
+            online: onlineFrom(edge.last_seen_at, now, EDGE_ONLINE_WINDOW_MS),
+            source: edge,
+            edge,
+          }))
+        : []),
+    ],
+    notices: [
+      ...(clientState.state !== "ready" && "message" in clientState
+        ? [clientState.message]
+        : []),
+      ...(edges.state === "error" ? [edgeMessage] : []),
+    ],
+  };
 }

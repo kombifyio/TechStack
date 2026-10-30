@@ -1097,21 +1097,6 @@ export const hi: Record<string, string> = {
     "चुनिए कि यह डिवाइस कैसे जुड़े। आपके Homelab की पहुँच, लोग और साइन-इन जैसे हैं वैसे रहते हैं।",
   "wizard.step.inherited": "आपके Homelab के लिए पहले से सेट",
   "wizard.step.existingOwner": "आपका Homelab मालिक वही रहता है",
-  "wizard.addApp.title": "एप्लिकेशन जोड़ें",
-  "wizard.addApp.intro":
-    "एक एप्लिकेशन और वह सर्वर चुनें जिस पर यह चलेगा। एक्सेस, लोग और साइन-इन वैसे ही रहते हैं जैसे आपके Homelab में हैं।",
-  "wizard.addApp.catalogEmpty":
-    "कैटलॉग में इस Homelab के लिए अभी कोई एप्लिकेशन नहीं है।",
-  "wizard.addApp.recommended": "अनुशंसित",
-  "wizard.addApp.about": "विवरण",
-  "wizard.addApp.nodeTitle": "{name} कहाँ चलना चाहिए?",
-  "wizard.addApp.nodeUnsupported":
-    "इस सर्वर का StackKit {name} प्रदान नहीं करता।",
-  "wizard.addApp.nodeNotReady": "अभी रोलआउट के लिए तैयार नहीं",
-  "wizard.addApp.submit": "एप्लिकेशन जोड़ें",
-  "wizard.addApp.result": "{name} को {node} में जोड़ा गया।",
-  "wizard.addApp.resultStatus": "स्थिति: {status}",
-  "wizard.addApp.done": "हो गया",
   "wizard.settings.title": "Homelab सेटिंग्स",
   "wizard.settings.intro":
     "बदलें कि आपका Homelab कौन उपयोग करता है और आप कैसे साइन इन करते हैं। हर चरण आपके चल रहे Homelab पर तुरंत लागू होता है।",
@@ -2112,6 +2097,8 @@ export const hi: Record<string, string> = {
   "ui.people.householdListUnavailableTheHomelab": "लोगों की सूची अभी उपलब्ध नहीं है। थोड़ी देर में फिर कोशिश कीजिए।",
   "ui.people.identityProviderNotReady": "साइन-इन सेवा तैयार नहीं है",
   "ui.people.identityStatusUnavailable": "साइन-इन स्थिति उपलब्ध नहीं है",
+  "ui.people.liveStatusNotReporting": "आपका Homelab अभी साइन-इन स्थिति नहीं भेज रहा है, इसलिए आमंत्रित सदस्य छूट सकते हैं। थोड़ी देर में फिर कोशिश कीजिए।",
+  "ui.people.liveStatusPending": "आपके Homelab की साइन-इन सेवा तैयार होते ही साइन-इन स्थिति और आमंत्रित सदस्य यहाँ दिखेंगे।",
   "ui.people.member": "सदस्य",
   "ui.people.notInvitedYet": "अभी आमंत्रित नहीं",
   "ui.people.ownerAndHouseholdAppearOnce": "आपके Homelab की साइन-इन सेवा तैयार होते ही आप और आपके आमंत्रित लोग यहाँ दिखेंगे।",
@@ -2602,8 +2589,6 @@ export const hi: Record<string, string> = {
   "ui.serviceSheet.notPlaced": "प्लेस नहीं किया गया",
   "ui.serviceSheet.ownership": "स्वामित्व: {value}",
   "ui.serviceSheet.stackkit": "StackKit {version}",
-  "ui.services.aRegisteredNodeIsRequired":
-    "सेवाएँ जोड़ने से पहले एक पंजीकृत Node ज़रूरी है।",
   "ui.services.aboutToMove":
     "आप इस एप्लिकेशन को {slot} से {slot} पर ले जाने वाले हैं।",
   "ui.services.action.freeze": "फ़्रीज़ करें",
@@ -2620,7 +2605,6 @@ export const hi: Record<string, string> = {
     "कार्रवाई पूरी हुई; इन्वेंटरी रिफ़्रेश हो रही है।",
   "ui.services.actionTitle": "{action} {name}",
   "ui.services.addACatalogApplicationOr": "कैटलॉग से कोई एप्लिकेशन जोड़िए या अप्रबंधित सर्वर इन्वेंटरी इम्पोर्ट कीजिए।",
-  "ui.services.addANewApplication": "नया एप्लिकेशन जोड़ें",
   "ui.services.addService": "सेवा जोड़ें",
   "ui.services.adoptIntoManagement": "प्रबंधन में शामिल करें…",
   "ui.services.all": "सभी",
@@ -2649,7 +2633,6 @@ export const hi: Record<string, string> = {
   "ui.services.capacityTelemetryRefreshFailed":
     "क्षमता टेलीमेट्री रिफ़्रेश विफल रहा",
   "ui.services.catalog": "कैटलॉग",
-  "ui.services.catalogServiceCouldNotBe": "कैटलॉग सेवा जोड़ी नहीं जा सकी।",
   "ui.services.clearTheFilterToShow":
     "सभी एप्लिकेशन दिखाने के लिए फ़िल्टर हटाइए।",
   "ui.services.cloudVps": "क्लाउड VPS",
@@ -2694,7 +2677,6 @@ export const hi: Record<string, string> = {
   "ui.services.moveToAnotherNode": "दूसरे सर्वर पर मूव करें…",
   "ui.services.mutationsRequireOwnerApprovalA":
     "बदलावों के लिए ओनर की मंज़ूरी चाहिए; मापी गई स्थिति बदलने से पहले StackKits सत्यापन चलता है।",
-  "ui.services.newApplication": "नया एप्लिकेशन",
   "ui.services.noApplicationsDeployed": "कोई एप्लिकेशन डिप्लॉय नहीं है",
   "ui.services.noApplicationsMatching":
     "{status} स्थिति वाला कोई एप्लिकेशन नहीं",

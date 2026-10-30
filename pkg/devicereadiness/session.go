@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/secrets"
 )
 
@@ -151,25 +152,11 @@ func Connect(ctx context.Context, target Target, auth Auth, policy HostKeyPolicy
 		Timeout:         DefaultDialTimeout,
 	}
 
-	type dialResult struct {
-		client *ssh.Client
-		err    error
+	client, err := fulllocal.DialSSH(ctx, target.address(), config)
+	if err != nil {
+		return nil, fmt.Errorf("device readiness: cannot reach %s@%s: %w", target.User, target.address(), err)
 	}
-	done := make(chan dialResult, 1)
-	go func() {
-		client, dialErr := ssh.Dial("tcp", target.address(), config)
-		done <- dialResult{client: client, err: dialErr}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case result := <-done:
-		if result.err != nil {
-			return nil, fmt.Errorf("device readiness: cannot reach %s@%s: %w", target.User, target.address(), result.err)
-		}
-		return &Session{client: result.client, target: target, hostKeyFingerprint: fingerprint}, nil
-	}
+	return &Session{client: client, target: target, hostKeyFingerprint: fingerprint}, nil
 }
 
 // Close releases the connection and anything opened through it.

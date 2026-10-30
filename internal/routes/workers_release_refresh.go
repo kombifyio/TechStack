@@ -14,11 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/guardrelease"
 	"github.com/kombifyio/techstack/pkg/logger"
 )
 
 const (
+	guardReleaseSeedManifestFile = "release-manifest-seed.json"
+	guardReleaseSeedManifestSig  = "release-manifest-seed.sigstore.json"
 	// guardReleaseRefreshEnv set to "off" disables the manifest refresher.
 	guardReleaseRefreshEnv = "TECHSTACK_GUARD_RELEASE_REFRESH"
 	// guardReleaseSourceEnv names the GitHub repository (owner/name) whose
@@ -42,6 +45,10 @@ type guardManifestVerifier interface {
 	VerifyManifest(raw, bundleJSON []byte) (*guardrelease.Manifest, error)
 }
 
+var guardManifestVerifierFactory = func(now func() time.Time) (guardManifestVerifier, error) {
+	return guardrelease.NewConfiguredVerifier(now)
+}
+
 // guardManifestVersion is one signed manifest with its Sigstore bundle.
 type guardManifestVersion struct {
 	raw      []byte
@@ -60,27 +67,45 @@ var refreshedGuardManifest struct {
 // the release directory and the refreshed one. The refreshed manifest is used
 // only for the same release version, and only when it was issued later, so the
 // served manifest never moves backwards. The reason names the file that failed.
-func currentGuardManifest(dir string) (_ *guardManifestVersion, reason string, _ error) {
-	raw, err := readBoundedFile(filepath.Join(dir, guardReleaseManifestFile), guardrelease.MaxManifestBytes)
+func readVerifiedGuardManifest(dir, manifestFile, bundleFile string) (_ *guardManifestVersion, reason string, _ error) {
+	raw, err := readBoundedFile(filepath.Join(dir, manifestFile), guardrelease.MaxManifestBytes)
 	if err != nil {
 		return nil, "manifest", err
 	}
-	manifest, err := guardrelease.ParseManifest(raw)
+	parsed, err := guardrelease.ParseManifest(raw)
 	if err != nil {
 		return nil, "manifest_invalid", err
 	}
-	sig, err := readBoundedFile(filepath.Join(dir, guardReleaseManifestSig), guardrelease.MaxBundleBytes)
+	sig, err := readBoundedFile(filepath.Join(dir, bundleFile), guardrelease.MaxBundleBytes)
 	if err != nil {
 		return nil, "manifest_bundle", err
 	}
-	seed := &guardManifestVersion{raw: raw, sig: sig, manifest: manifest}
+	// Authenticate the immutable image pair at its issuance. Delivery paths
+	// separately require current freshness; refresh can recover after expiry.
+	verifier, err := guardManifestVerifierFactory(func() time.Time { return parsed.IssuedAt })
+	if err != nil {
+		return nil, "verifier", err
+	}
+	manifest, err := verifier.VerifyManifest(raw, sig)
+	if err != nil {
+		return nil, "manifest_unverified", err
+	}
+	return &guardManifestVersion{raw: raw, sig: sig, manifest: manifest}, "", nil
+}
+
+// currentGuardManifest chooses the newest authenticated policy for this image.
+func currentGuardManifest(dir string) (_ *guardManifestVersion, reason string, _ error) {
+	initial, reason, err := readVerifiedGuardManifest(dir, guardReleaseManifestFile, guardReleaseManifestSig)
+	if err != nil {
+		return nil, reason, err
+	}
 	refreshedGuardManifest.RLock()
 	refreshed := refreshedGuardManifest.value
 	refreshedGuardManifest.RUnlock()
-	if refreshed != nil && refreshed.manifest.Version == seed.manifest.Version && refreshed.manifest.IssuedAt.After(seed.manifest.IssuedAt) {
+	if refreshed != nil && refreshed.manifest.Version == initial.manifest.Version && refreshed.manifest.IssuedAt.After(initial.manifest.IssuedAt) {
 		return refreshed, "", nil
 	}
-	return seed, "", nil
+	return initial, "", nil
 }
 
 type guardReleaseRefresher struct {
@@ -92,10 +117,6 @@ type guardReleaseRefresher struct {
 	verifier guardManifestVerifier
 	now      func() time.Time
 	log      *logger.Logger
-
-	bundleOnce   sync.Once
-	bundleDigest string
-	bundleErr    error
 }
 
 // StartGuardReleaseRefresher keeps the served Guard release manifest current
@@ -110,23 +131,28 @@ type guardReleaseRefresher struct {
 func StartGuardReleaseRefresher(ctx context.Context) {
 	dir := guardReleaseDir()
 	log := logger.Get().WithComponent("guard-release-refresh")
+	// Authenticate both the immutable catalog seed and the image's current
+	// policy synchronously before any artifact request can be admitted. A bad
+	// image remains available for unrelated routes, while artifact admission
+	// continues to fail closed on its own request path.
+	if dir != "" {
+		if _, _, err := loadArtifactDeliveryIndex(); err != nil {
+			log.Error("guard_release_boot_policy_unavailable", "error", err.Error())
+		} else if current, _, err := currentGuardManifest(dir); err != nil {
+			log.Error("guard_release_boot_policy_unavailable", "error", err.Error())
+		} else if verifier, err := guardrelease.NewConfiguredVerifier(nil); err != nil {
+			log.Error("guard_release_boot_policy_unavailable", "error", err.Error())
+		} else if err := guardrelease.ObserveVerifiedPolicy(current.raw, current.sig, verifier); err != nil {
+			log.Warn("guard_release_boot_policy_stale", "error", err.Error())
+		}
+	}
+	if fulllocal.Active() {
+		return // the refresh would fetch from GitHub; the image seed is served
+	}
 	if dir == "" || strings.EqualFold(strings.TrimSpace(os.Getenv(guardReleaseRefreshEnv)), "off") {
 		return
 	}
-	options := guardrelease.Options{}
-	if path := strings.TrimSpace(os.Getenv("TECHSTACK_GUARD_RELEASE_TRUSTED_ROOT")); path != "" {
-		rootJSON, err := readBoundedFile(path, 1<<20)
-		if err != nil {
-			log.Error("guard_release_refresh_disabled", "reason", "trusted_root_unreadable", "error", err.Error())
-			return
-		}
-		options.TrustedRootJSON = rootJSON
-	}
-	issuer, san := strings.TrimSpace(os.Getenv("TECHSTACK_GUARD_RELEASE_SIGNER_ISSUER")), strings.TrimSpace(os.Getenv("TECHSTACK_GUARD_RELEASE_SIGNER_SAN_REGEXP"))
-	if issuer != "" || san != "" {
-		options.Identity = guardrelease.Identity{Issuer: issuer, SANRegexp: san}
-	}
-	verifier, err := guardrelease.NewVerifier(options)
+	verifier, err := guardrelease.NewConfiguredVerifier(nil)
 	if err != nil {
 		log.Error("guard_release_refresh_disabled", "reason", "verifier_invalid", "error", err.Error())
 		return
@@ -214,13 +240,20 @@ func (r *guardReleaseRefresher) refreshOnce(ctx context.Context) (bool, error) {
 	if dropped := droppedPolicy(current.manifest, candidate); dropped != "" {
 		return false, fmt.Errorf("the published manifest would weaken the served policy: %s", dropped)
 	}
+	index, _, err := loadArtifactDeliveryIndex()
+	if err != nil {
+		return false, fmt.Errorf("read the immutable delivery catalog: %w", err)
+	}
 	for _, artifact := range candidate.Artifacts {
-		served, err := signedGuardBinaryArtifact(r.dir, artifact.OS, artifact.Arch)
-		if err != nil || served.sha256 != artifact.SHA256 {
+		served, indexed := index.artifact("guard_binary", artifact.OS, artifact.Arch)
+		if !indexed || served.SHA256 != artifact.SHA256 || served.Size != artifact.Size {
 			return false, fmt.Errorf("the published manifest names another %s/%s binary than this control plane serves", artifact.OS, artifact.Arch)
 		}
 	}
 	r.warnOnBundleDrift(candidate)
+	if err := guardrelease.ObserveVerifiedPolicy(raw, sig, r.verifier); err != nil {
+		return false, fmt.Errorf("share verified Guard policy with runtime admission: %w", err)
+	}
 	refreshedGuardManifest.Lock()
 	refreshedGuardManifest.value = &guardManifestVersion{raw: raw, sig: sig, manifest: candidate}
 	refreshedGuardManifest.Unlock()
@@ -252,27 +285,22 @@ func droppedPolicy(current, candidate *guardrelease.Manifest) string {
 // a revocation must not wait for an image rebuild; Guards refuse the runtime
 // install (binding_mismatch) until the image is redeployed.
 func (r *guardReleaseRefresher) warnOnBundleDrift(candidate *guardrelease.Manifest) {
-	path := strings.TrimSpace(os.Getenv(stackKitReleaseBundleEnv))
-	if candidate.StackKits == nil || path == "" {
+	// Read only the immutable signed seed; payloads live in R2. Policy updates
+	// still take effect on drift, while runtime admission refuses a stale catalog.
+	raw, err := readBoundedFile(filepath.Join(r.dir, guardReleaseSeedManifestFile), guardrelease.MaxManifestBytes)
+	if err != nil {
+		r.log.Warn("guard_release_seed_unreadable", "error", err.Error())
 		return
 	}
-	r.bundleOnce.Do(func() {
-		file, err := os.Open(path) // #nosec G304 -- the operator-configured StackKits bundle this control plane serves.
-		if err != nil {
-			r.bundleErr = err
-			return
-		}
-		defer func() { _ = file.Close() }()
-		r.bundleDigest, r.bundleErr = guardrelease.BundleTreeDigest(file)
-	})
-	if r.bundleErr != nil {
-		r.log.Warn("guard_release_bundle_unreadable", "error", r.bundleErr.Error())
+	seed, err := guardrelease.ParseManifest(raw)
+	if err != nil {
+		r.log.Warn("guard_release_seed_invalid", "error", err.Error())
 		return
 	}
-	if r.bundleDigest != candidate.StackKits.BundleSHA256 {
-		r.log.Error("guard_release_bundle_drift",
-			"message", "the signed manifest names another StackKits runtime bundle than this control plane serves; Guards refuse runtime installs until the image is redeployed",
-			"served_tree", r.bundleDigest, "manifest_tree", candidate.StackKits.BundleSHA256)
+	anchor, _ := json.Marshal(seed.StackKits)
+	current, _ := json.Marshal(candidate.StackKits)
+	if string(anchor) != string(current) {
+		r.log.Error("guard_release_bundle_drift", "message", "the signed runtime differs from the immutable delivery catalog; runtime admission is unavailable until catalog migration")
 	}
 }
 

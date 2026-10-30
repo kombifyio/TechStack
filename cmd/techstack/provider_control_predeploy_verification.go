@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/kombifyio/techstack/pkg/db"
 )
@@ -13,7 +14,16 @@ import (
 // Ordinary preDeploy receives application/purpose credentials, never the
 // migration owner. Validate the same exact grants and tenant fences used at
 // preparation/startup; read the real authority owner instead of impersonating it.
+// preDeploySchemaFloorWait bounds how long an activation waits for its own
+// Delivery's database leg to apply the schema floor.
+const preDeploySchemaFloorWait = 15 * time.Minute
+
 func verifyProviderAndIssuerPreDeploy(ctx context.Context) error {
+	if mode, err := advancedIssuerCustodyMode(); err != nil {
+		return err
+	} else if mode == advancedIssuerCustodyRemote {
+		return verifyAdvancedIssuerRuntimeWithEvidence(ctx, map[string]any{"provider_custody": "execution-process", "application_provider_custody": false})
+	}
 	if os.Getenv(db.EnvMigrationDatabaseURL) != "" ||
 		os.Getenv(db.EnvDatabaseMigrationMode) != "verify" || os.Getenv("TECHSTACK_ALLOW_DB_GENESIS") != "false" {
 		return errors.New("provider preDeploy requires runtime verify-only custody without administrative credentials or genesis")
@@ -40,7 +50,9 @@ func verifyProviderAndIssuerPreDeploy(ctx context.Context) error {
 	if err = db.VerifyExpectedDatabaseIdentity(ctx, application.DB); err != nil {
 		return err
 	}
-	if err = application.VerifyMigrations(ctx); err != nil {
+	// The same Delivery's database leg applies this binary's schema floor.
+	// Activation waits for that leg only, never for another environment.
+	if err = application.WaitForSchemaFloor(ctx, preDeploySchemaFloorWait, 15*time.Second); err != nil {
 		return err
 	}
 	provider, err := db.OpenContext(ctx, providerConfig)

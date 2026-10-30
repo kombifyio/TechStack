@@ -144,6 +144,9 @@ func runAdvancedIssuerBootstrap(ctx context.Context) error {
 	if err = database.Migrate(ctx); err != nil {
 		return err
 	}
+	if err = prepareApplicationPrincipal(ctx, database, cfg); err != nil {
+		return err
+	}
 	if err = prepareAdvancedIssuerFromConfig(ctx, database, cfg); err != nil {
 		return err
 	}

@@ -42,7 +42,13 @@ type ResourceResponse struct {
 // RegisterAgentRoutes adds agent API endpoints.
 // These endpoints provide access to connected gRPC agents.
 func RegisterAgentRoutes(r *httpx.Router, grpcServer *grpcserver.Server) {
-	handler := agentRouteHandler{grpcServer: grpcServer}
+	RegisterAgentRoutesWithRuntimeLogs(r, grpcServer, grpcServer.RuntimeLogStore())
+}
+
+// RegisterAgentRoutesWithRuntimeLogs keeps HTTP runtime history independent of
+// whether this channel owns a gRPC listener. Connected-agent APIs are unchanged.
+func RegisterAgentRoutesWithRuntimeLogs(r *httpx.Router, grpcServer *grpcserver.Server, runtimeLogs *grpcserver.RuntimeLogStore) {
+	handler := agentRouteHandler{grpcServer: grpcServer, runtimeLogs: runtimeLogs}
 	r.GET("/api/v1/agents", handler.listAgents)
 	r.GET("/api/v1/agents/{id}", handler.getAgent)
 	r.POST("/api/v1/agents/{id}/command", handler.sendCommand)
@@ -54,7 +60,15 @@ func RegisterAgentRoutes(r *httpx.Router, grpcServer *grpcserver.Server) {
 }
 
 type agentRouteHandler struct {
-	grpcServer *grpcserver.Server
+	grpcServer  *grpcserver.Server
+	runtimeLogs *grpcserver.RuntimeLogStore
+}
+
+func (h agentRouteHandler) runtimeLogStore() *grpcserver.RuntimeLogStore {
+	if h.runtimeLogs != nil {
+		return h.runtimeLogs
+	}
+	return h.grpcServer.RuntimeLogStore()
 }
 
 // agentTenantScope resolves the tenant a hosted caller may see agents of. The
@@ -250,11 +264,8 @@ func (h agentRouteHandler) getRuntimeLogs(e *httpx.Event) error {
 		return tenantErr
 	}
 	query := runtimeLogQueryFromRequest(e.Request, tenantID)
-	if h.grpcServer == nil {
-		return httpx.Success(e, http.StatusOK, agentLogsResponse(nil))
-	}
-	server := h.grpcServer
-	return httpx.Success(e, http.StatusOK, agentLogsResponse(server.GetRuntimeLogs(query)))
+	store := h.runtimeLogStore()
+	return httpx.Success(e, http.StatusOK, agentLogsResponse(store.GetRuntimeLogs(query)))
 }
 
 func (h agentRouteHandler) streamRuntimeLogs(e *httpx.Event) error {
@@ -266,9 +277,9 @@ func (h agentRouteHandler) streamRuntimeLogs(e *httpx.Event) error {
 	if tenantErr != nil {
 		return tenantErr
 	}
-	server, err := h.requireGRPCServer(e)
-	if err != nil {
-		return err
+	store := h.runtimeLogStore()
+	if store == nil {
+		return httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Runtime log store not available", nil)
 	}
 
 	e.Response.Header().Set("Content-Type", "text/event-stream")
@@ -282,13 +293,13 @@ func (h agentRouteHandler) streamRuntimeLogs(e *httpx.Event) error {
 	}
 
 	query := runtimeLogQueryFromRequest(e.Request, tenantID)
-	history := server.GetRuntimeLogs(query)
+	history := store.GetRuntimeLogs(query)
 	if sendErr := sendSSEEvent(e.Response, "history", agentLogsResponse(history)); sendErr != nil {
 		return nil
 	}
 	flusher.Flush()
 
-	ch, cancel := server.SubscribeRuntimeLogs(query, 200)
+	ch, cancel := store.SubscribeRuntimeLogs(query, 200)
 	defer cancel()
 	return streamAgentLogEvents(e, flusher, ch)
 }

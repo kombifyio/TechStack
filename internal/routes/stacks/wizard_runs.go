@@ -1,4 +1,4 @@
-// POST /api/v1/wizard/runs — the wizard-run facade (ADR-0036 phase 3).
+// POST /api/v1/wizard/runs â€” the wizard-run facade (ADR-0036 phase 3).
 //
 // One endpoint for both wizard run kinds: the first run founds the homelab
 // with its first kit deployment, every later run expands it (found a new kit
@@ -52,7 +52,7 @@ import (
 
 const (
 	// stackConfigKeySpecV2 is the config_json key holding the projected
-	// Architecture v2 stack spec — the join/rollout authority for native-v2
+	// Architecture v2 stack spec â€” the join/rollout authority for native-v2
 	// stacks. pkg/jobs mirrors this literal (payload contract).
 	stackConfigKeySpecV2 = "stack_spec_v2"
 	// stackConfigKeySpecV1State demotes the frozen user_config sibling after
@@ -105,6 +105,7 @@ type WizardRunRouteConfig struct {
 	Trust              trust.RouteStores
 	ManagedLeases      jobs.ManagedLeaseManager
 	ManagedExpansion   WizardManagedRuntimeExpansion
+	ExistingServers    WizardExistingServers
 	GuestProvisioner   WizardGuestProvisioner
 	NotificationOutbox productnotifications.ProductEventEnqueuer
 	Wallet             controlplane.WalletStore
@@ -181,6 +182,9 @@ type wizardRunHandlers struct {
 func RegisterWizardRunRoutes(r *httpx.Router, cfg WizardRunRouteConfig) {
 	h := newWizardRunHandlers(cfg)
 	r.POST("/api/v1/wizard/runs", h.createWizardRun)
+	r.GET("/api/v1/stacks/{id}/use-cases/configuration", h.getUseCaseConfiguration)
+	r.POST("/api/v1/stacks/{id}/use-cases/{workload}/configure", h.configureUseCase)
+	r.POST("/api/v1/stacks/{id}/use-cases/remove", h.removeUseCase)
 	// GET /api/v1/wizard/runs/active - the owner's latest run with a live job
 	// snapshot; the dashboard banner and the creating page's resume use it.
 	r.GET("/api/v1/wizard/runs/active", h.getActiveWizardRun)
@@ -237,7 +241,7 @@ type wizardRunRequest struct {
 	Intent specv2.WizardIntent `json:"intent"`
 	// Owner passes owner-bootstrap options through to the create core
 	// (owner_source, owner_email, recovery material refs). Ignored on
-	// expansion runs — the owner already exists.
+	// expansion runs â€” the owner already exists.
 	Owner     map[string]any          `json:"owner,omitempty"`
 	Managed   *wizardRunManagedParams `json:"managed,omitempty"`
 	Remote    *wizardRunRemoteParams  `json:"remote,omitempty"`
@@ -400,7 +404,10 @@ func (h wizardRunHandlers) getActiveWizardRun(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"Failed to read the wizard-run ledger", nil)
 	}
-	job := h.wizardRunJob(e.Request.Context(), tenantID, run.JobID)
+	job, groupErr := h.wizardRunOperationJob(e.Request.Context(), tenantID, run)
+	if groupErr != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wizard operation outcomes are unavailable", nil)
+	}
 	if !h.wizardRunNoticeCurrent(e.Request.Context(), tenantID, run, job, time.Now()) {
 		return httpx.Success(e, http.StatusOK, map[string]any{"run": nil})
 	}
@@ -677,7 +684,7 @@ func (h wizardRunHandlers) reserveWizardRun(e *httpx.Event, run *wizardRunState)
 // resume, and decides the effective run kind: a first-run against a homelab
 // that already operates kit deployments is coerced to an expansion (never a
 // second homelab, never a parallel first-run). A resume is exempt from
-// coercion — the first delivery already fixed the run's shape, and re-coercing
+// coercion â€” the first delivery already fixed the run's shape, and re-coercing
 // would strip the owner section and diverge the retry from the original.
 func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState) bool {
 	ctx := e.Request.Context()

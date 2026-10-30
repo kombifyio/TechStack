@@ -84,3 +84,34 @@ func (l *PostgresLedger) listTenantPage(
 
 var _ RunnableTenantSource = (*PostgresLedger)(nil)
 var _ DueProviderDecommissionTenantSource = (*PostgresLedger)(nil)
+
+// DueProviderDecommissionTenant reads only scalar membership and the bounded
+// keyset cursor from the existing restricted directory. Other tenants' rows
+// never enter the HTTP process or an application-side list. Overflow is an
+// explicit failure, never an assertion that the exact tenant has no work.
+func (l *PostgresLedger) DueProviderDecommissionTenant(ctx context.Context, tenant string) (bool, error) {
+	if l == nil || l.db == nil || tenant == "" || strings.TrimSpace(tenant) != tenant || strings.ContainsRune(tenant, 0) {
+		return false, ErrInvalidRequest
+	}
+	cursor := ""
+	for count := 0; count < 32; count++ {
+		var found, beyond bool
+		var last string
+		var rows int
+		err := l.db.QueryRowContext(ctx, `SELECT COALESCE(bool_or(tenant_id=$3),false),COALESCE(bool_or(tenant_id>$3),false),COALESCE(max(tenant_id),''),count(*) FROM provider_control_list_due_decommission_wait_tenants($1,$2)`, cursor, 101, tenant).Scan(&found, &beyond, &last, &rows)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+		if rows < 101 || beyond {
+			return false, nil
+		}
+		if last == "" || last == cursor {
+			return false, fmt.Errorf("%w: decommission recovery cursor did not advance", ErrInvalidRequest)
+		}
+		cursor = last
+	}
+	return false, fmt.Errorf("%w: bounded decommission recovery directory exhausted", ErrInvalidRequest)
+}

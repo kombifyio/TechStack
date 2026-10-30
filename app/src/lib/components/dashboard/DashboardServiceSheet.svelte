@@ -5,6 +5,8 @@
   import Button from "#lib/components/ui/Button.svelte";
   import type { CanonicalService } from "#lib/api/services.js";
   import { openServiceUrl } from "#lib/service-card-adapter.js";
+  import AppLogoControl from "./AppLogoControl.svelte";
+  import { canonicalServiceLogoKey } from "#lib/application-logo.js";
   import { serviceCardStatus } from "#lib/service-card-adapter.js";
   import {
     serviceAccessUrl,
@@ -82,6 +84,7 @@
             {tr("ui.dashboard.service.noAddress")}
           </p>
         {/if}
+        <AppLogoControl applicationKey={canonicalServiceLogoKey(service)} />
       </div>
     {/snippet}
     {#snippet actionBar()}

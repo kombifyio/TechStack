@@ -22,8 +22,8 @@ func ReleaseChannel() string {
 	return "stable"
 }
 
-// SecondaryChannel reports a deployment beside stable on the stable database:
-// Preview, or Early Access, which the edge serves under the same links to the
+// SecondaryChannel reports a deployment beside stable. Preview uses Stage:
+// Early Access is served by the edge under the same links to the
 // people who opted in (CI-CD-PLATFORM-STANDARD §4.6 "Channel model"). Both
 // serve signed-in people over HTTP only; shared, homelab, machine and
 // migration work stays on stable.

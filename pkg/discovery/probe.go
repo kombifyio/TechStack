@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 // Prober performs deep discovery via SSH.
@@ -234,7 +236,7 @@ func (p *Prober) Probe(ctx context.Context, req *ProbeRequest) (*ProbeResult, er
 	}
 
 	// Build SSH config with TOFU host key verification
-	hostAddr := fmt.Sprintf("%s:%d", req.IP, port)
+	hostAddr := net.JoinHostPort(req.IP, fmt.Sprint(port))
 	config := &ssh.ClientConfig{
 		User:            req.SSHUser,
 		HostKeyCallback: p.hostKeys.GetCallback(hostAddr),
@@ -259,8 +261,7 @@ func (p *Prober) Probe(ctx context.Context, req *ProbeRequest) (*ProbeResult, er
 	config.Auth = authMethods
 
 	// Connect
-	addr := fmt.Sprintf("%s:%d", req.IP, port)
-	client, err := ssh.Dial("tcp", addr, config)
+	client, err := fulllocal.DialSSH(ctx, hostAddr, config)
 	if err != nil {
 		result.Status = ProbeStatusFailed
 		result.Error = fmt.Sprintf("SSH connection failed: %v", err)
@@ -399,7 +400,7 @@ func (p *Prober) QuickProbe(ctx context.Context, ip string, port int, user, pass
 		port = 22
 	}
 
-	hostAddr := fmt.Sprintf("%s:%d", ip, port)
+	hostAddr := net.JoinHostPort(ip, fmt.Sprint(port))
 	config := &ssh.ClientConfig{
 		User:            user,
 		HostKeyCallback: p.hostKeys.GetCallback(hostAddr),
@@ -419,8 +420,7 @@ func (p *Prober) QuickProbe(ctx context.Context, ip string, port int, user, pass
 	}
 	config.Auth = authMethods
 
-	addr := fmt.Sprintf("%s:%d", ip, port)
-	client, err := ssh.Dial("tcp", addr, config)
+	client, err := fulllocal.DialSSH(ctx, hostAddr, config)
 	if err != nil {
 		return fmt.Errorf("SSH connection failed: %w", err)
 	}

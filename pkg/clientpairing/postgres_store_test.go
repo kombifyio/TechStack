@@ -21,7 +21,7 @@ func TestPostgresConsumeUsesOneConditionalUpdate(t *testing.T) {
 	consumedAt := testNow.Add(time.Minute)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).
 		WithArgs(tenantGUC, testTenant).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("UPDATE client_pairing_codes[\\s\\S]+consumed_at IS NULL[\\s\\S]+expires_at > \\$5[\\s\\S]+RETURNING").
@@ -58,7 +58,7 @@ func TestPostgresConsumeDiagnosesReplayAfterAtomicUpdateLoses(t *testing.T) {
 	consumedAt := testNow.Add(time.Minute)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).
 		WithArgs(tenantGUC, testTenant).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("UPDATE client_pairing_codes").

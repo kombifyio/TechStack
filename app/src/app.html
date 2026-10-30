@@ -15,6 +15,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script>
+      // Shared client contracts check own properties during module evaluation.
+      if (typeof Object.hasOwn !== "function") {
+        Object.defineProperty(Object, "hasOwn", {
+          value: function hasOwn(object, property) {
+            return Object.prototype.hasOwnProperty.call(object, property);
+          },
+          configurable: true,
+          writable: true,
+        });
+      }
+
       // Pre-paint design-axis init (KOMBIFY-DESIGN-SYSTEM-STANDARD §6).
       //
       // Both the class AND data-appearance, and the pair has to stay in sync:

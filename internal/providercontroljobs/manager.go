@@ -22,6 +22,7 @@ import (
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 )
 
@@ -110,9 +111,10 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 }
 
 // PreflightCreateOrBindLease performs the native admission application's
-// read-only availability check before an HTTP route persists or queues a job.
-// It deliberately returns no grant or token; CreateOrBindLease repeats the
-// authoritative checks while atomically reserving capacity and admission state.
+// read-only availability check before an HTTP route queues a job. On an
+// attested Stage, only a sealed positive POST then binds process ownership.
+// It returns no grant or token; CreateOrBindLease repeats the authoritative
+// checks while atomically reserving capacity and admission state.
 func (m *Manager) PreflightCreateOrBindLease(
 	ctx context.Context,
 	req jobs.ManagedLeaseRequest,
@@ -124,7 +126,10 @@ func (m *Manager) PreflightCreateOrBindLease(
 	if err != nil {
 		return err
 	}
-	return m.admission.PreflightProvision(ctx, normalized.admission)
+	if err := m.admission.PreflightProvision(ctx, normalized.admission); err != nil {
+		return err
+	}
+	return releasechannel.AdmitStageMutation(ctx, normalized.providerID)
 }
 
 // CreateOrBindLease atomically admits a native lease/server/operation intent.
@@ -140,6 +145,9 @@ func (m *Manager) CreateOrBindLease(
 	normalized, err := normalizeManagedLeaseRequest(req)
 	if err != nil {
 		return nil, err
+	}
+	if !releasechannel.AdmitsJobExecution(normalized.admission.TenantID) {
+		return nil, releasechannel.ErrTenantNotOwned
 	}
 	// NativeAdmission owns the provision activation gate after its durable
 	// replay lookup. Rechecking the gate here would make an already committed

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/logger"
 )
 
@@ -182,6 +183,9 @@ func (d *TopologyDetector) detectNAT() bool {
 
 // detectCloudProvider checks for cloud metadata services.
 func (d *TopologyDetector) detectCloudProvider() string {
+	if fulllocal.Active() {
+		return ""
+	}
 	// AWS
 	if d.checkMetadataService("169.254.169.254", "/latest/meta-data/") {
 		return "aws"
@@ -248,6 +252,9 @@ func (d *TopologyDetector) getLocalIP() string {
 
 // getPublicIP attempts to get the public IP address.
 func (d *TopologyDetector) getPublicIP(ctx context.Context) string {
+	if fulllocal.Active() {
+		return ""
+	}
 	// Try multiple services
 	services := []string{
 		"https://api.ipify.org",
@@ -394,9 +401,14 @@ func (d *TopologyDetector) testLocalNetworkReachability(ctx context.Context, gat
 	if gateway == "" {
 		return false
 	}
+	// The same admitted literal is used by both TCP and the ping subprocess.
+	gateway, err := fulllocal.AdmitIP(gateway)
+	if err != nil {
+		return false
+	}
 
 	// Ping gateway
-	conn, err := net.DialTimeout("tcp", gateway+":80", 2*time.Second)
+	conn, err := fulllocal.Dial((&net.Dialer{Timeout: 2 * time.Second}).DialContext)(ctx, "tcp", net.JoinHostPort(gateway, "80"))
 	if err == nil {
 		conn.Close()
 		return true

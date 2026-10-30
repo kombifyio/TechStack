@@ -6,15 +6,28 @@
 package tenantguard
 
 import (
+	"errors"
 	"strings"
 	"sync"
 
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 var state struct {
 	mu   sync.RWMutex
 	saas bool
+}
+
+// ExecutionRefusal preserves the existing structured403 response for central
+// Stage ownership denials before a route projects a generic workflow failure.
+func ExecutionRefusal(err error) *httpx.APIError {
+	if !errors.Is(err, releasechannel.ErrTenantNotOwned) && !errors.Is(err, releasechannel.ErrStageOwnerNotAdmitted) {
+		return nil
+	}
+	return httpx.NewForbiddenError("This runtime does not admit execution for this test owner", map[string]any{
+		"reason_code": "stage_owner_not_admitted", "retryable": false,
+	})
 }
 
 // Configure sets the deployment posture once at route wiring. Self-hosted

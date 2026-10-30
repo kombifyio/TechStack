@@ -44,7 +44,7 @@ func (s *PostgresStore) GetOperatorSelfDisclosure(ctx context.Context, tenantID,
 	return out, nil
 }
 
-func (s *PostgresStore) UpsertOperatorSelfDisclosure(ctx context.Context, disclosure OperatorSelfDisclosure) (*OperatorSelfDisclosure, error) {
+func (s *PostgresStore) UpsertOperatorSelfDisclosure(ctx context.Context, disclosure OperatorSelfDisclosure, ifUnchanged *OperatorSelfDisclosureValue) (*OperatorSelfDisclosure, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("controlplane: database not configured")
 	}
@@ -57,9 +57,36 @@ func (s *PostgresStore) UpsertOperatorSelfDisclosure(ctx context.Context, disclo
 		return nil, fmt.Errorf("controlplane: encode self-disclosure: %w", err)
 	}
 	tenantID := normalized.TenantID
+	var expectedJSON []byte
+	if ifUnchanged != nil {
+		expectedJSON, err = json.Marshal(ifUnchanged.Disclosure)
+		if err != nil {
+			return nil, fmt.Errorf("controlplane: encode expected self-disclosure: %w", err)
+		}
+	}
 
 	var out *OperatorSelfDisclosure
 	err = s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		if ifUnchanged != nil {
+			// Compare inside the mutation, after any competing writer's lock is
+			// released. A prior GET cannot authorize overwriting a newer value.
+			row, err := scanOperatorSelfDisclosure(tx.QueryRowContext(ctx, `
+				UPDATE operator_self_disclosures
+				SET source = $3, disclosure_json = $4::jsonb
+				WHERE tenant_id = $1 AND owner_subject_id = $2
+				  AND source = $5 AND disclosure_json = $6::jsonb
+				RETURNING `+operatorSelfDisclosureColumns,
+				tenantID, normalized.OwnerSubjectID, normalized.Source, string(answersJSON),
+				ifUnchanged.Source, string(expectedJSON)))
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrConflict
+			}
+			if err != nil {
+				return err
+			}
+			out = row
+			return nil
+		}
 		row, err := scanOperatorSelfDisclosure(tx.QueryRowContext(ctx, `
 			INSERT INTO operator_self_disclosures (
 				id, tenant_id, owner_subject_id, schema_version, source, disclosure_json

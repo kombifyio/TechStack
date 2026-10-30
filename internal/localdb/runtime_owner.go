@@ -20,7 +20,8 @@ import (
 
 // embeddedRuntimeOwner is the login role the local runtime migrates and runs
 // as. Migrations 153 to 155 refuse a superuser or BYPASSRLS migration owner,
-// so the bootstrap superuser only prepares this role and never serves the app.
+// so the bootstrap superuser only prepares this role and the migration
+// prerequisites (migrationSystemRolesSQL) and never serves the app.
 const embeddedRuntimeOwner = "techstack_owner"
 
 // ensureRuntimeOwner makes embeddedRuntimeOwner a NOSUPERUSER NOBYPASSRLS
@@ -66,6 +67,12 @@ func ensureRuntimeOwner(ctx context.Context, adminDSN string, port uint32) (stri
 	if _, err := tx.Exec(ctx, statement); err != nil {
 		return "", fmt.Errorf("prepare local runtime owner role failed (SQLSTATE %s)", sqlState(err))
 	}
+	if _, err := tx.Exec(ctx, migrationSystemRolesSQL); err != nil {
+		return "", fmt.Errorf("prepare local migration system roles failed (SQLSTATE %s)", sqlState(err))
+	}
+	if _, err := tx.Exec(ctx, "GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO "+role+" WITH GRANT OPTION"); err != nil {
+		return "", fmt.Errorf("grant local runtime owner the control-system identity read failed (SQLSTATE %s)", sqlState(err))
+	}
 	if _, err := tx.Exec(ctx, "ALTER DATABASE "+pgx.Identifier{embeddedDatabase}.Sanitize()+" OWNER TO "+role); err != nil {
 		return "", fmt.Errorf("transfer local database ownership: %w", err)
 	}
@@ -93,6 +100,23 @@ func ensureRuntimeOwner(ctx context.Context, adminDSN string, port uint32) (stri
 	}
 	return dsn, nil
 }
+
+// migrationSystemRolesSQL creates the NOLOGIN system roles that migrations 168
+// and 173 adopt but the NOCREATEROLE runtime owner cannot create, with the
+// exact posture those migrations require. A managed instance has them before
+// its migrations run; here the bootstrap superuser prepares them on every
+// start, so a fresh store and one created before 168 both migrate. An existing
+// role is left as it is: the migrations refuse a wrong posture or membership.
+const migrationSystemRolesSQL = `DO $techstack_local_system_roles$
+DECLARE
+    system_role text;
+BEGIN
+    FOREACH system_role IN ARRAY ARRAY['techstack_household_worker','techstack_platform_projection_system'] LOOP
+        IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = system_role) THEN
+            EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION', system_role);
+        END IF;
+    END LOOP;
+END $techstack_local_system_roles$`
 
 func reownUserObjectsSQL(owner string) string {
 	return `DO $techstack_local_owner$

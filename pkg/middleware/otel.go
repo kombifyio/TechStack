@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/logger"
 )
 
 // OTelMiddleware extracts trace context from incoming headers and creates
@@ -36,6 +37,16 @@ func OTelMiddleware(e *httpx.Event) error {
 	defer span.End()
 
 	e.Request = r.WithContext(ctx)
+	// Keep request correlation on the local structured logger independently
+	// of export configuration. Only validated OTel identifiers and flags enter
+	// this record, never request headers, paths, payloads or identity data.
+	if sc := span.SpanContext(); sc.IsValid() {
+		logger.Get().InfoContext(ctx, "http_trace_context",
+			"trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String(),
+			"trace_sampled", sc.IsSampled(), "span_remote", sc.IsRemote(),
+			"span_recording", span.IsRecording(),
+		)
+	}
 	// Observe committed responses without removing streaming interfaces from
 	// the writer. Informational headers do not commit the final status.
 	status := 0

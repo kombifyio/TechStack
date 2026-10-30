@@ -6,38 +6,43 @@ import (
 )
 
 type MemoryStore struct {
-	mu                sync.RWMutex
-	now               func() time.Time
-	homelabs          map[string]Homelab
-	wizardRuns        map[string]WizardRun
-	onboarding        map[string]OnboardingState
-	selfDisclosures   map[string]OperatorSelfDisclosure
-	stacks            map[string]Stack
-	jobs              map[string]Job
-	jobLeases         map[string]memoryJobExecutionLease
-	worker            map[string]Worker
-	workerIdentities  map[string]WorkerIdentity
-	workerProofs      map[string]time.Time
-	tokens            map[string]PairingToken
-	nodes             map[string]Node
-	svcs              map[string]Service
-	serviceRuntime    map[string]ServiceRuntime
-	rilSrv            map[string]RILServer
-	rilCmd            map[string]RILCommand
-	rilEvt            map[string]RILHealEvent
-	rilCrd            map[string]RILActionCard
-	servers           map[string]ServerRuntime
-	serverTransitions map[string][]ServerStateTransition
-	serverInventory   map[string][]ServerInventorySnapshot
-	serverOutbox      []ServerRegistryOutboxItem
-	serverGuardEpochs map[string]struct{}
-	metricBuckets     map[memoryMetricKey]map[time.Time]*MetricBucket
-	nextServerEventID int64
-	wallet            map[string]WalletItem
-	driftResults      map[string]DriftResult
-	ownerSpecTokens   map[string]OwnerSpecToken
-	events            map[string]ActivityEvent
-	serverMaintenance map[string]ServerMaintenanceJob
+	mu               sync.RWMutex
+	now              func() time.Time
+	homelabs         map[string]Homelab
+	wizardRuns       map[string]WizardRun
+	onboarding       map[string]OnboardingState
+	selfDisclosures  map[string]OperatorSelfDisclosure
+	stacks           map[string]Stack
+	jobs             map[string]Job
+	jobLeases        map[string]memoryJobExecutionLease
+	worker           map[string]Worker
+	workerIdentities map[string]WorkerIdentity
+	// guardHandoffs and releasedKeyCustody back GuardTenantHandoffStore
+	// (Guard G04); both are created on first use.
+	guardHandoffs      map[string]GuardTenantHandoff
+	guardHandoffUse    map[string]GuardTenantHandoffConsume
+	releasedKeyCustody map[string]bool
+	workerProofs       map[string]time.Time
+	tokens             map[string]PairingToken
+	nodes              map[string]Node
+	svcs               map[string]Service
+	serviceRuntime     map[string]ServiceRuntime
+	rilSrv             map[string]RILServer
+	rilCmd             map[string]RILCommand
+	rilEvt             map[string]RILHealEvent
+	rilCrd             map[string]RILActionCard
+	servers            map[string]ServerRuntime
+	serverTransitions  map[string][]ServerStateTransition
+	serverInventory    map[string][]ServerInventorySnapshot
+	serverOutbox       []ServerRegistryOutboxItem
+	serverGuardEpochs  map[string]struct{}
+	metricBuckets      map[memoryMetricKey]map[time.Time]*MetricBucket
+	nextServerEventID  int64
+	wallet             map[string]WalletItem
+	driftResults       map[string]DriftResult
+	ownerSpecTokens    map[string]OwnerSpecToken
+	events             map[string]ActivityEvent
+	serverMaintenance  map[string]ServerMaintenanceJob
 }
 
 func NewMemoryStore() *MemoryStore {

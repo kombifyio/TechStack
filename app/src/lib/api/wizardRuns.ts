@@ -20,6 +20,8 @@ export interface WizardIntent {
   domain_base?: string;
   goals?: string[];
   server: {
+    /** Existing enrolled canonical server; the backend revalidates ownership and readiness. */
+    existing_server_id?: string;
     roles?: string[];
     purpose?: string;
     transport?:
@@ -124,6 +126,8 @@ export interface WizardRunResponse {
   node_id: string;
   name?: string;
   job_id?: string;
+  /** Every per-node lifecycle job; completion requires all of them. */
+  job_ids?: string[];
   pairing_job_id?: string;
   planned_server_id?: string;
   existing_server_ids?: string[];

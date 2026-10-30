@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// A failed test would attach an ARIA snapshot of the page to the report, and
+// that snapshot prints input values, passwords included.
+process.env.PLAYWRIGHT_NO_COPY_PROMPT ??= "1";
+
 const defaultProductURL = "https://techstack.kombify.io";
 const configuredProductURL =
   process.env.TECHSTACK_RUNTIME_E2E_PRODUCT_URL ??
@@ -47,6 +51,7 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   reporter: [
+    ["./tests/helpers/drop-error-context-reporter.ts"],
     ["list"],
     [
       "html",

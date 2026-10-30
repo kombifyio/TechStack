@@ -130,7 +130,7 @@ func (h *serviceRuntimeHandlers) prepareAdoption(e *httpx.Event) error {
 	if err = h.validateAdoptionSource(e, t, r); err != nil {
 		return err
 	}
-	pin, err := h.applicationAdmission()
+	pin, err := h.adoptionReleaseForStack(e.Request.Context(), t.tenant, t.stack.ID)
 	if err != nil {
 		return adoptionUnavailable(e, err)
 	}
@@ -234,7 +234,7 @@ func (h *serviceRuntimeHandlers) releaseAdoption(e *httpx.Event) error {
 	if err = h.validateAdoptionSource(e, t, r); err != nil {
 		return err
 	}
-	pin, err := h.applicationAdmission()
+	pin, err := h.adoptionReleaseForStack(e.Request.Context(), t.tenant, t.stack.ID)
 	if err != nil {
 		return adoptionUnavailable(e, err)
 	}

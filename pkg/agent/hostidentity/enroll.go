@@ -440,7 +440,7 @@ func redeem(ctx context.Context, client *http.Client, m *Manager, b Bootstrap, a
 				_ = m.SetState(StateRecoveryNeeded, "pairing_capability_rejected")
 				return nil, fmt.Errorf("%w: the pairing capability was rejected (HTTP %d); create a new one in the dashboard", ErrRecoveryNeeded, response.StatusCode)
 			case response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests:
-				return nil, fmt.Errorf("the control plane rejected the enrollment (HTTP %d)", response.StatusCode)
+				return nil, fmt.Errorf("the control plane rejected the enrollment (HTTP %d)%s", response.StatusCode, refusalReason(data))
 			default:
 				doErr = fmt.Errorf("the control plane answered HTTP %d", response.StatusCode)
 			}
@@ -489,4 +489,38 @@ func sleep(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// refusalReason quotes the control plane's structured refusal reason and
+// message, so an operator sees why an enrollment was refused (for example a
+// cross-tenant rebind that needs `techstack agent handoff`). Only those two
+// bounded fields are printed, never the raw body.
+func refusalReason(body []byte) string {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Details struct {
+				Reason string `json:"reason"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) != nil || envelope.Error.Message == "" {
+		return ""
+	}
+	clip := func(value string, limit int) string {
+		value = strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f {
+				return ' '
+			}
+			return r
+		}, value)
+		if len(value) > limit {
+			return strings.ToValidUTF8(value[:limit], "")
+		}
+		return value
+	}
+	if reason := clip(envelope.Error.Details.Reason, 64); reason != "" {
+		return ": " + reason + ": " + clip(envelope.Error.Message, 400)
+	}
+	return ": " + clip(envelope.Error.Message, 400)
 }

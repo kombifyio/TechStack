@@ -416,7 +416,7 @@ func (h serverRuntimeHandlers) list(e *httpx.Event) error {
 		item.Reach = reach[strings.TrimSpace(row.WorkerID)]
 		h.applyPosture(&item, row.WorkerID, postureViews)
 		item.Capabilities = capabilities[strings.TrimSpace(row.WorkerID)]
-		h.applyStackKitActions(&item, row)
+		h.applyStackKitActions(e.Request.Context(), &item, row)
 		h.applyBindingRepair(&item)
 		items = append(items, item)
 	}
@@ -507,7 +507,7 @@ func (h serverRuntimeHandlers) get(e *httpx.Event) error {
 	item.Reach = h.reachByWorker(e.Request.Context(), server.TenantID)[strings.TrimSpace(server.WorkerID)]
 	h.applyPosture(&item, server.WorkerID, h.postureViews(e.Request.Context(), server.TenantID))
 	item.Capabilities = h.capabilitiesForWorker(e.Request.Context(), server.TenantID, server.WorkerID)
-	h.applyStackKitActions(&item, *server)
+	h.applyStackKitActions(e.Request.Context(), &item, *server)
 	h.applyBindingRepair(&item)
 	return httpx.ConditionalSuccess(e, item, item.withoutElapsedCounters())
 }

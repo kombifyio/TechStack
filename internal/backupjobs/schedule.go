@@ -11,9 +11,13 @@ package backupjobs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
+	"github.com/kombifyio/techstack/pkg/jobs"
 )
 
 const tenantGUC = "app.tenant_id"
@@ -113,6 +117,68 @@ type Due struct {
 
 // Store persists and reads the projection.
 type Store struct{ db *sql.DB }
+
+// DispatchDue serializes the existing schedule row, reads its current owner
+// from the canonical stack and atomically reserves the existing durable job
+// with cadence advancement. A crash or unavailable entitlement rolls back;
+// another worker cannot dispatch the same slot while this row is locked.
+func (s *Store) DispatchDue(ctx context.Context, due Due, now time.Time, admission jobs.BackupAdmission,
+	reserve func(context.Context, *sql.Tx, jobs.BackupPayload, time.Time) error,
+	onDenied func(Due, jobs.BackupAdmissionDecision)) error {
+	if reserve == nil || admission == nil {
+		return fmt.Errorf("atomic backup dispatch requires admission and durable job reservation")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := tenantcontext.ApplyTenant(ctx, tx, due.TenantID); err != nil {
+		return err
+	}
+	var current Schedule
+	var slot time.Time
+	var cadence string
+	current.TenantID, current.StackID = due.TenantID, due.StackID
+	err = tx.QueryRowContext(ctx, `SELECT owner_id,stack_name,cadence,hour_utc,minute_utc,weekday_utc,include_content,enabled,next_due_at
+	 FROM stack_backup_schedules WHERE tenant_id=$1 AND stack_id=$2 FOR UPDATE SKIP LOCKED`, due.TenantID, due.StackID).
+		Scan(&current.OwnerID, &current.StackName, &cadence, &current.HourUTC, &current.MinuteUTC, &current.WeekdayUTC, &current.IncludeContent, &current.Enabled, &slot)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !current.Enabled || slot.After(now) {
+		return nil
+	}
+	current.Cadence = Cadence(cadence)
+	var owner string
+	if err := tx.QueryRowContext(ctx, `SELECT owner_subject_id FROM stacks WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL`, due.TenantID, due.StackID).Scan(&owner); err != nil || owner == "" || owner != current.OwnerID {
+		return fmt.Errorf("backup schedule has no current canonical stack owner")
+	}
+	decision, err := jobs.AdmitBackup(ctx, admission, jobs.BackupAdmissionRequest{TenantID: due.TenantID, StackID: due.StackID, UserID: owner, IncludeContent: current.IncludeContent})
+	if err != nil {
+		return err
+	}
+	if !decision.Denied {
+		err = reserve(ctx, tx, jobs.BackupPayload{TenantID: due.TenantID, StackID: due.StackID, OwnerID: owner, StackName: current.StackName,
+			IncludeContent: current.IncludeContent, QuotaBytes: decision.QuotaBytes, AdmittedUsedBytes: decision.UsedBytes}, slot)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE stack_backup_schedules SET last_run_at=$3,next_due_at=$4,updated_at=now() WHERE tenant_id=$1 AND stack_id=$2`, due.TenantID, due.StackID, now.UTC(), current.NextDue(now)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if decision.Denied && onDenied != nil {
+		onDenied(due, decision)
+	}
+	return nil
+}
 
 func NewStore(db *sql.DB) (*Store, error) {
 	if db == nil {

@@ -7,14 +7,9 @@
     type EntityLabels,
     type EntityPlacement,
   } from "@kombiverselabs/ui/entity";
-  import { clientBootstrap } from "#lib/client/bootstrap.js";
   import type { AppCardAction } from "#lib/services/app-quick-actions.svelte.js";
   import { tr, trn } from "#lib/i18n.svelte.js";
-  import {
-    brandDomainForTool,
-    localBrandLogoUrl,
-    logoLinkUrl,
-  } from "#lib/brand-logo.js";
+  import { canonicalServiceLogo } from "#lib/application-logo.js";
   import type {
     CanonicalService,
     ServicePlacementClass,
@@ -63,41 +58,10 @@
   const appState = $derived(applicationState(service, [...members]));
   const stacked = $derived(isStackedApp(members));
 
-  let logoTheme = $state<"light" | "dark">("dark");
-  $effect(() => {
-    if (typeof document === "undefined") return;
-    const sync = () => {
-      logoTheme =
-        document.documentElement.dataset.theme === "light" ? "light" : "dark";
-    };
-    sync();
-    const observer = new MutationObserver(sync);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  });
-  const logoDomain = $derived(
-    service.catalog?.brand_domain ||
-      brandDomainForTool(
-        service.application_key,
-        service.service_key,
-        service.application_display_name,
-        service.name,
-        service.runtime_identity?.image,
-        service.runtime_identity?.service,
-        service.runtime_identity?.project,
-      ),
-  );
-  const logoUrl = $derived(
-    localBrandLogoUrl(logoDomain) ||
-      logoLinkUrl(logoDomain, $clientBootstrap.contextDevLogolinkId, {
-        theme: logoTheme,
-        type: "icon",
-      }) ||
-      undefined,
-  );
+  // Viewer override, then the recognition's logo (theme variant), then the
+  // mirrored icon of the vendor domain; none lets Brand draw the monogram, and
+  // Brand's avatar falls back to it as well when the image fails to load.
+  const logoUrl = $derived(canonicalServiceLogo(service).src);
 
   /** Where the app opens, or how many components it has when it cannot. */
   const meta = $derived.by(() => {

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/internal/routes/trust"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -46,6 +47,9 @@ func (h wizardRunHandlers) runWizardFound(e *httpx.Event, run *wizardRunState) e
 	// handoff shape. The Architecture v2 projection in StackSpecV2 is the
 	// document the pinned CLI executes.
 	normalized.UserConfig["stackkit"] = run.request.Intent.KitAssignment.KitSlug
+	if strings.TrimSpace(run.request.Intent.Server.ExistingServerID) != "" {
+		return h.runWizardExistingServer(e, run, projection, normalized)
+	}
 	if homelabHandled := h.ensureWizardHomelab(e, run, run.request.Intent.Name); homelabHandled {
 		return nil
 	}
@@ -172,7 +176,7 @@ func (h wizardRunHandlers) finishWizardFound(e *httpx.Event, run *wizardRunState
 	pairingJobID := ""
 	operationID := ""
 	var appliance *jobs.CustomerGuestBinding
-	if wizardRunTransport(run.request) != specv2.TransportKombifyCloud {
+	if wizardRunTransport(run.request) != specv2.TransportKombifyCloud && strings.TrimSpace(run.request.Intent.Server.ExistingServerID) == "" {
 		if wizardRunTransport(run.request) == specv2.TransportConnectRemote {
 			if err := h.persistWizardRemoteConnectionBinding(e.Request.Context(), run, outcome.stack.Id); err != nil {
 				h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{
@@ -498,6 +502,10 @@ func (h wizardRunHandlers) dispatchWizardProvision(e *httpx.Event, run *wizardRu
 		PreparedManagedLease: preparedLease,
 	})
 	if err != nil {
+		if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+			_ = httpx.Error(e, refusal.Status, refusal.Code, refusal.Message, refusal.Details)
+			return "", false, true
+		}
 		h.crud.markStackProvisionStartFailed(e.Request.Context(), stack.Id, run.tenantID)
 		h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{StackID: stack.Id}, "provision_dispatch_failed")
 		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to start provisioning", map[string]any{

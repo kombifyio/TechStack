@@ -84,7 +84,7 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 		// Apply the same managed target transformation used by node INIT before
 		// controller rendering, retaining both snapshots outside that handoff.
 		var retryErr error
-		stackSpecPath, retryErr = managedRolloutRetryProjection(prep.persister, prep.retrySpecPath, job.ID)
+		stackSpecPath, retryErr = managedRolloutRetryProjectionForStack(ctx, managedRuntimeTenantID(job, prep.kombSpec), job.TargetID, prep.persister, prep.retrySpecPath, job.ID)
 		if retryErr != nil {
 			return nil, wrapProvisionCause(StepGenerateIaC, retryErr, "Could not prepare the exact retry configuration for Advanced Mode.")
 		}
@@ -145,7 +145,7 @@ func generateStackKitArtifacts(ctx context.Context, cfg *ProvisionConfig, job *J
 	}
 	generator := cfg.RuntimeActions.StackKitGenerator
 	if generator == nil {
-		release, err := configuredPinnedStackKitRelease()
+		release, err := PinnedStackKitReleaseForStack(ctx, tenantID, job.TargetID)
 		if err != nil {
 			return nil, err
 		}

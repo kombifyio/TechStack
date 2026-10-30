@@ -237,6 +237,8 @@ export const guardMessagesZhHans: Record<
   "guard.reach.reason.kombify_me_denied": "kombify.me 拒绝了这台服务器的注册。",
   "guard.reach.reason.connect_unavailable":
     "kombify Connect 不可用。请稍后再检查。",
+  "guard.reach.reason.connect_not_enabled":
+    "此账户尚未启用 kombify Connect。本地工作和服务器控制不受影响。",
   "guard.reach.reason.connect_denied": "kombify Connect 拒绝列出这台服务器。",
   "guard.reach.reason.reach_layout_unsupported":
     "这种安装布局暂时无法分配远程地址。",

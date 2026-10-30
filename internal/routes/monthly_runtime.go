@@ -383,6 +383,9 @@ func monthlyRuntimeDay2Details(reasonCode string, retryable bool, title, body, n
 }
 
 func monthlyRuntimeError(e *httpx.Event, err error) error {
+	if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+		return refusal
+	}
 	switch {
 	case errors.Is(err, monthlyruntime.ErrForbidden):
 		return httpx.Forbidden(e, "Forbidden")

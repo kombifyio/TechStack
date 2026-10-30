@@ -50,6 +50,8 @@
     returnTo?: string;
     /** Ephemeral creation intent selected by the caller, without profile storage. */
     initialConfig?: StackConfig;
+    /** Already enrolled canonical server selected for its first StackKit. */
+    existingServerId?: string;
     /** Voluntary answers a link handed over (the kombify Cloud capture surface). */
     selfDisclosure?: OperatorSelfDisclosure | null;
     /** Called once the handed-over answers were stored, discarded or given up on. */
@@ -59,8 +61,9 @@
   let {
     embedded = false,
     onNavigate,
-    returnTo = "/stacks/new",
+    returnTo,
     initialConfig,
+    existingServerId,
     selfDisclosure = null,
     onSelfDisclosureSettled,
   }: Props = $props();
@@ -106,7 +109,9 @@
       return initialConfig ?? savedConfig;
     const prefill = selfDisclosureWizardConfig(handedOver);
     // A profile import must not replace an explicit creation selection.
-    return initialConfig ? { ...prefill, goals: initialConfig.goals } : prefill;
+    return initialConfig
+      ? { ...prefill, ...initialConfig, household: prefill.household }
+      : prefill;
   });
 
   // Only a signed-in operator has a profile to store into. A signed-out
@@ -484,7 +489,7 @@
   // A blocked run may save desired decisions without dispatching a runtime.
   async function createViaWizardRun(config: StackConfig) {
     validationStage = tr("ui.configurationFlow.validatingWithStackkits");
-    const request = buildFoundRunRequest(config);
+    const request = buildFoundRunRequest(config, existingServerId);
     const idempotencyKey = creationIdempotencyKey();
     const run = await createWizardRun(request, idempotencyKey);
     captureStackCreationEvent(
@@ -657,7 +662,9 @@
         }
       } else if (parsed.status === 409 || (error as any)?.status === 409) {
         const conflictDetails = createErrorDetails(parsed.details);
-        if (conflictDetails.reasonCode === "wizard_desired_projection_blocked") {
+        if (
+          conflictDetails.reasonCode === "wizard_desired_projection_blocked"
+        ) {
           // The owner decisions are durably saved. A later edited decision is
           // a new request, while this saved request keeps its original key.
           sessionStorage.removeItem(creationIdempotencyStorageKey);
@@ -682,7 +689,9 @@
           conflictStackId = conflictDetails.stackId || null;
           conflictStackName = null;
           showCreateError({
-            title: tr("ui.configurationFlow.aPreviousSubmissionAlreadyCompleted"),
+            title: tr(
+              "ui.configurationFlow.aPreviousSubmissionAlreadyCompleted",
+            ),
             message: tr("ui.configurationFlow.anEarlierSubmissionFromThis"),
             technical: technicalLines(parsed, parsed.message),
             retryable: true,
@@ -692,7 +701,9 @@
           conflictStackId = conflict.stackId;
           conflictStackName = conflict.name || attemptedStackName;
           showCreateError({
-            title: tr("ui.configurationFlow.stackkitDeploymentNameAlreadyExists"),
+            title: tr(
+              "ui.configurationFlow.stackkitDeploymentNameAlreadyExists",
+            ),
             message: conflictStackName
               ? tr("ui.configFlow.deploymentNameExists", {
                   name: conflictStackName,
@@ -721,7 +732,8 @@
             validationDetails.guidanceTitle ||
             tr("wizard.error.validation.title"),
           message:
-            validationDetails.guidanceBody ?? tr("wizard.error.validation.body"),
+            validationDetails.guidanceBody ??
+            tr("wizard.error.validation.body"),
           steps: nextStepsOf(validationDetails),
           technical: technicalLines(
             parsed,
@@ -828,7 +840,11 @@
       oncreate={handleCreate}
       {isDeploying}
       initialConfig={wizardPrefill}
-      draftKey="stack-create"
+      inheritServer={Boolean(existingServerId)}
+      reuseExistingOwner={Boolean(existingServerId)}
+      draftKey={existingServerId
+        ? `stack-install-${existingServerId}`
+        : "stack-create"}
     >
       {#snippet footerNotice()}
         {#if isDeploying && validationStage}
@@ -867,7 +883,7 @@
             tabindex="-1"
             class="scroll-mt-6 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <SessionRenewalPanel {returnTo} />
+            <SessionRenewalPanel returnTo={returnTo ?? currentRoute()} />
           </div>
         {/if}
 
@@ -889,7 +905,10 @@
               {#if showLoginHint}
                 <Lock class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               {:else}
-                <CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <CircleAlert
+                  class="mt-0.5 size-4 shrink-0"
+                  aria-hidden="true"
+                />
               {/if}
               <div class="min-w-0 flex-1 space-y-2">
                 <p class="font-semibold text-foreground">{deployError}</p>
@@ -918,7 +937,9 @@
                     <div class="space-y-1 font-mono text-xs">
                       <p class="text-primary">admin@techstack.local</p>
                       <p class="text-muted-foreground">
-                        {tr("ui.configurationFlow.useTheAdminPasswordConfigured")}
+                        {tr(
+                          "ui.configurationFlow.useTheAdminPasswordConfigured",
+                        )}
                       </p>
                     </div>
                     <a

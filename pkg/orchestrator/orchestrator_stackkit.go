@@ -9,6 +9,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 var ErrStackKitLifecycleUnavailable = errors.New("typed StackKits lifecycle is unavailable")
@@ -124,6 +125,9 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	if o == nil {
 		return "", ErrStackKitLifecycleUnavailable
 	}
+	if id, replayed, err := o.replayWizardExtend(ctx, request); err != nil || replayed {
+		return id, err
+	}
 	if strings.ToLower(strings.TrimSpace(request.Operation)) == jobs.StackKitLifecycleBackupRestoreActivate && request.RestoreIdempotencyKeySHA256 == "" {
 		return "", fmt.Errorf("restore activation requires a scoped Idempotency-Key")
 	}
@@ -154,6 +158,9 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	}
 	if stack.tenantID != normalized.TenantID || stack.ownerID != normalized.OwnerID {
 		return "", controlplane.ErrNotFound
+	}
+	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
+		return "", releasechannel.ErrTenantNotOwned
 	}
 	normalized = jobs.ApplyStackKitRolloutDefaults(normalized, stackKitRolloutBinding(stack), stackKitCatalogRef(stack))
 	if normalized.Operation == jobs.StackKitLifecycleBackupRestoreActivate || normalized.Operation == jobs.StackKitLifecycleBackupRestoreRecover {
@@ -189,9 +196,15 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	// The node the admitted agent owns picks the Site and channel of a
 	// multi-node kit (Modern Homelab); an agent that owns none of its nodes is
 	// refused here, before a job exists.
-	normalized.NodeRef = binding.NodeRef
-	if err := jobs.RequireStackKitNode(normalized.StackKit, normalized.NodeRef); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrStackKitLifecycleUnavailable, err)
+	if normalized.WizardExtend != nil && normalized.WizardExtend.ExecutionBinding != nil {
+		if err := o.admitWizardExecutionNode(ctx, stack, normalized, binding); err != nil {
+			return "", err
+		}
+	} else {
+		normalized.NodeRef = binding.NodeRef
+		if err := jobs.RequireStackKitNode(normalized.StackKit, normalized.NodeRef); err != nil {
+			return "", fmt.Errorf("%w: %v", ErrStackKitLifecycleUnavailable, err)
+		}
 	}
 	var restoreAdmission map[string]interface{}
 	if normalized.Operation == jobs.StackKitLifecycleBackupRestoreRecover {
@@ -299,6 +312,9 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	}
 	if receipt := jobs.RILStackKitOperationReceipt(normalized); receipt != nil {
 		job.Result[jobs.RILOperationReceiptKey] = receipt
+	}
+	if receipt := jobs.WizardExtendReceipt(normalized); receipt != nil {
+		job.Result[jobs.WizardExtendReceiptKey] = receipt
 	}
 	if receipt := jobs.RestoreActivationRequestReceipt(normalized); receipt != nil {
 		job.Result[controlplane.RestoreActivationRequestResultKey] = receipt
@@ -483,6 +499,13 @@ func (o *Orchestrator) reserveStackKitLifecycleJob(
 		reservation.Result[jobs.RILOperationReceiptKey] = receipt
 		reservation.Payload = jobs.StackKitLifecyclePayload(request)
 	}
+	if receipt := jobs.WizardExtendReceipt(request); receipt != nil {
+		reservation.Result[jobs.WizardExtendReceiptKey] = receipt
+		prepared := &jobs.Job{ID: request.DurableJobID, Type: jobs.JobTypeStackKitLifecycle, TargetID: stack.id, Payload: jobs.StackKitLifecyclePayload(request)}
+		jobs.CopyEdgeFlagsFromContext(ctx, prepared.Payload)
+		jobs.CaptureRequestAuthority(ctx, prepared, stack.tenantID, stack.ownerID)
+		reservation.Payload = prepared.Payload
+	}
 	var created *controlplane.Job
 	var err error
 	if request.ServiceID != "" {
@@ -515,12 +538,18 @@ func (o *Orchestrator) reserveStackKitLifecycleJob(
 	if request.RILOperation != nil {
 		matches = jobs.MatchesRILStackKitOperationReceipt(existing.Result, request)
 	}
+	if request.WizardExtend != nil {
+		matches = jobs.MatchesWizardExtendReceipt(existing.Result, request)
+	}
 	if existing.StackID != stack.id || !strings.EqualFold(existing.Type, string(jobs.JobTypeStackKitLifecycle)) || !matches {
 		return "", false, fmt.Errorf("%w: service action idempotency key belongs to another request", controlplane.ErrConflict)
 	}
 	if request.Operation == jobs.StackKitLifecycleBackupRestoreActivate {
 		id, replayed, replayErr := o.ReplayRestoreActivationRequest(ctx, request)
 		return id, replayed, replayErr
+	}
+	if request.WizardExtend != nil {
+		return o.replayWizardExtend(ctx, request)
 	}
 	if strings.EqualFold(existing.State, persistentStatePending) {
 		if _, queued := o.queue.Get(existing.ID); !queued {

@@ -1,17 +1,21 @@
 {
   "schemaVersion": "stackkits-use-case-catalog/v1",
   "release": {
-    "tag": "v0.54.4",
-    "version": "0.54.4",
-    "sourceSha": "fa83fa6853ae5e2c5833990fcb26a20a6354d934",
-    "publicSourceSha": "9ac1e5d972181599722602257c2da1876a55d032",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.4"
+    "tag": "v0.54.12",
+    "version": "0.54.12",
+    "sourceSha": "06eead2a7c5d1a9886367f8abce675a2ec51c34b",
+    "publicSourceSha": "f7a5ee87aaec665829e3cb9fc2c251fa6646d395",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.12"
   },
-  "generatedAt": "2026-10-21T09:43:26Z",
-  "generatorVersion": "0.54.4",
+  "generatedAt": "2026-10-30T08:26:47Z",
+  "generatorVersion": "0.54.12",
   "catalog": {
+    "authoring": {
+      "retainedRemovalCandidates": true
+    },
     "useCases": [
       {
+        "workloadRef": "ai",
         "id": "ai",
         "title": "Private AI",
         "description": "Private AI workloads, local model serving, and user-facing AI workbench intent.",
@@ -50,6 +54,12 @@
           {
             "id": "open-webui",
             "name": "Open WebUI",
+            "role": "supporting",
+            "kind": "application"
+          },
+          {
+            "id": "qdrant",
+            "name": "Qdrant",
             "role": "supporting",
             "kind": "application"
           },
@@ -481,6 +491,26 @@
               "realization": "recorded",
               "pending": "needs its own PostgreSQL and ClickHouse stack"
             }
+          },
+          {
+            "id": "vectors",
+            "name": "Vector store",
+            "help": "Keeps the knowledge-base vectors of your chat module in Qdrant instead of its built-in store (Chroma in Open WebUI, LanceDB in AnythingLLM). Off by default.",
+            "required": false,
+            "enabledByDefault": false,
+            "requires": [
+              "inference",
+              "chat"
+            ],
+            "requiresAccelerator": false,
+            "default": {
+              "id": "qdrant",
+              "name": "Qdrant",
+              "note": "Open source from Berlin with its own MCP server; the API key comes from owner custody",
+              "realization": "install",
+              "workloadRef": "ai-vectors",
+              "alternativeRef": "qdrant"
+            }
           }
         ],
         "bundles": [
@@ -577,6 +607,13 @@
         "defaultAlternative": "private-ai",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "owner-password",
+                "session-key"
+              ]
+            },
             "id": "anythingllm",
             "name": "anythingllm",
             "modules": [
@@ -585,6 +622,10 @@
                 "computeProfiles": [
                   "high",
                   "standard"
+                ],
+                "acceleratorProfiles": [
+                  "amd",
+                  "nvidia"
                 ],
                 "computeProfileFacts": {
                   "high": {
@@ -679,6 +720,44 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [
+                {
+                  "key": "kombify-connector",
+                  "type": "boolean",
+                  "label": "kombify connector"
+                },
+                {
+                  "key": "model-pack-coding",
+                  "type": "boolean",
+                  "label": "Coding model pack"
+                },
+                {
+                  "key": "model-pack-general",
+                  "type": "boolean",
+                  "label": "General model pack"
+                },
+                {
+                  "key": "model-pack-vision",
+                  "type": "boolean",
+                  "label": "Vision model pack"
+                },
+                {
+                  "key": "model-size",
+                  "type": "string",
+                  "label": "Model size",
+                  "options": [
+                    "small",
+                    "medium",
+                    "large"
+                  ]
+                }
+              ],
+              "secretRefs": [
+                "owner-password",
+                "session-key"
+              ]
+            },
             "id": "private-ai",
             "name": "private-ai",
             "modules": [
@@ -687,6 +766,10 @@
                 "computeProfiles": [
                   "high",
                   "standard"
+                ],
+                "acceleratorProfiles": [
+                  "amd",
+                  "nvidia"
                 ],
                 "computeProfileFacts": {
                   "high": {
@@ -787,6 +870,13 @@
             "defaultAlternative": "hermes",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "dashboard-password",
+                    "dashboard-session-secret"
+                  ]
+                },
                 "id": "hermes",
                 "name": "hermes",
                 "modules": [
@@ -854,6 +944,13 @@
             "defaultAlternative": "paperclip",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "database-password",
+                    "session-secret"
+                  ]
+                },
                 "id": "paperclip",
                 "name": "paperclip",
                 "modules": [
@@ -939,6 +1036,10 @@
             "defaultAlternative": "tika",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "docling",
                 "name": "docling",
                 "modules": [
@@ -1000,6 +1101,10 @@
                 ]
               },
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "tika",
                 "name": "tika",
                 "modules": [
@@ -1067,6 +1172,12 @@
             "defaultAlternative": "litellm",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "master-key"
+                  ]
+                },
                 "id": "litellm",
                 "name": "litellm",
                 "modules": [
@@ -1134,6 +1245,10 @@
             "defaultAlternative": "openhands",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "openhands",
                 "name": "openhands",
                 "modules": [
@@ -1219,6 +1334,16 @@
             "defaultAlternative": "comfyui",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [
+                    {
+                      "key": "comfyui-api-nodes",
+                      "type": "boolean",
+                      "label": "ComfyUI API nodes"
+                    }
+                  ],
+                  "secretRefs": []
+                },
                 "id": "comfyui",
                 "name": "comfyui",
                 "modules": [
@@ -1227,6 +1352,9 @@
                     "computeProfiles": [
                       "high",
                       "standard"
+                    ],
+                    "acceleratorProfiles": [
+                      "nvidia"
                     ],
                     "computeProfileFacts": {
                       "high": {
@@ -1318,6 +1446,12 @@
             "defaultAlternative": "searxng",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "searxng-secret"
+                  ]
+                },
                 "id": "searxng",
                 "name": "searxng",
                 "modules": [
@@ -1385,6 +1519,12 @@
             "defaultAlternative": "speechkit",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "server-token"
+                  ]
+                },
                 "id": "speechkit",
                 "name": "speechkit",
                 "modules": [
@@ -1446,10 +1586,84 @@
                 ]
               }
             ]
+          },
+          {
+            "id": "ai-vectors",
+            "defaultAlternative": "qdrant",
+            "alternatives": [
+              {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "api-key"
+                  ]
+                },
+                "id": "qdrant",
+                "name": "qdrant",
+                "modules": [
+                  {
+                    "id": "stackkits-qdrant-runtime",
+                    "computeProfiles": [
+                      "high",
+                      "standard"
+                    ],
+                    "computeProfileFacts": {
+                      "high": {
+                        "maturity": "beta",
+                        "executable": true,
+                        "realization": "apply-ready",
+                        "hostFloor": {
+                          "minCpuCores": 2,
+                          "minRamGB": 4,
+                          "minStorageGB": 20
+                        },
+                        "reservation": {
+                          "ramGB": 0.25
+                        },
+                        "provenance": {
+                          "hostFloor": {
+                            "ref": "Kombify host floor support policy",
+                            "source": "policy"
+                          },
+                          "reservation": {
+                            "ref": "Sum of pinned Compose component memoryReservation limits in foundation/architecture_v2_catalog.cue",
+                            "source": "policy"
+                          }
+                        }
+                      },
+                      "standard": {
+                        "maturity": "beta",
+                        "executable": true,
+                        "realization": "apply-ready",
+                        "hostFloor": {
+                          "minCpuCores": 2,
+                          "minRamGB": 4,
+                          "minStorageGB": 20
+                        },
+                        "reservation": {
+                          "ramGB": 0.25
+                        },
+                        "provenance": {
+                          "hostFloor": {
+                            "ref": "Kombify host floor support policy",
+                            "source": "policy"
+                          },
+                          "reservation": {
+                            "ref": "Sum of pinned Compose component memoryReservation limits in foundation/architecture_v2_catalog.cue",
+                            "source": "policy"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
       {
+        "workloadRef": "automation",
         "id": "automation",
         "title": "Automation",
         "description": "Scheduled and event-driven automations on your own node through kombify Workpaths, a headless engine with a private owner-token API. Runs without a kombify plan.",
@@ -1522,6 +1736,13 @@
         "defaultAlternative": "workpaths",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "database-password",
+                "owner-token"
+              ]
+            },
             "id": "workpaths",
             "name": "workpaths",
             "modules": [
@@ -1613,6 +1834,10 @@
             "defaultAlternative": "ntfy-live",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "ntfy-live",
                 "name": "ntfy-live",
                 "modules": [
@@ -1654,6 +1879,7 @@
         ]
       },
       {
+        "workloadRef": "dev",
         "id": "dev",
         "title": "Developer Platform",
         "description": "Private source control, developer collaboration, and delivery-platform intent.",
@@ -1732,6 +1958,12 @@
         "defaultAlternative": "gitea",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "owner-password"
+              ]
+            },
             "id": "forgejo",
             "name": "forgejo",
             "modules": [
@@ -1793,6 +2025,12 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "owner-password"
+              ]
+            },
             "id": "gitea",
             "name": "gitea",
             "modules": [
@@ -1856,6 +2094,7 @@
         ]
       },
       {
+        "workloadRef": "documents",
         "id": "documents",
         "title": "Documents",
         "description": "Private document ingestion, OCR, indexing and search through Paperless-ngx.",
@@ -1917,6 +2156,14 @@
         "defaultAlternative": "paperless-ngx",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "database-password",
+                "owner-password",
+                "session-key"
+              ]
+            },
             "id": "paperless-ngx",
             "name": "paperless-ngx",
             "modules": [
@@ -1980,6 +2227,7 @@
         ]
       },
       {
+        "workloadRef": "files",
         "id": "files",
         "title": "File Storage and Documents",
         "description": "Private file storage and sharing: Cloudreve by default, Nextcloud or kombify Paperwork as alternatives, with optional office editing and a document archive.",
@@ -2131,6 +2379,10 @@
         "defaultAlternative": "cloudreve",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "cloudreve",
             "name": "cloudreve",
             "modules": [
@@ -2243,6 +2495,13 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "database-password",
+                "owner-password"
+              ]
+            },
             "id": "nextcloud",
             "name": "nextcloud",
             "modules": [
@@ -2304,6 +2563,12 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "owner-password"
+              ]
+            },
             "id": "opencloud",
             "name": "opencloud",
             "modules": [
@@ -2371,6 +2636,12 @@
             "defaultAlternative": "euro-office",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "jwt-secret"
+                  ]
+                },
                 "id": "euro-office",
                 "name": "euro-office",
                 "modules": [
@@ -2436,6 +2707,7 @@
         ]
       },
       {
+        "workloadRef": "game",
         "id": "game",
         "title": "Game Server",
         "description": "Self-hosted game servers for friends and family through Calagopus (or Pelican or Pterodactyl), with curated Minecraft Java, Paper and Bedrock, Terraria and Valheim profiles.",
@@ -2531,6 +2803,16 @@
         "defaultAlternative": "calagopus",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "application-api-key",
+                "client-api-key",
+                "database-password",
+                "encryption-key",
+                "owner-password"
+              ]
+            },
             "id": "calagopus",
             "name": "calagopus",
             "modules": [
@@ -2592,6 +2874,15 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "app-key",
+                "application-api-key",
+                "client-api-key",
+                "owner-password"
+              ]
+            },
             "id": "pelican",
             "name": "pelican",
             "modules": [
@@ -2653,6 +2944,18 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "app-key",
+                "application-api-key",
+                "client-api-key",
+                "database-password",
+                "database-root-password",
+                "hashids-salt",
+                "owner-password"
+              ]
+            },
             "id": "pterodactyl",
             "name": "pterodactyl",
             "modules": [
@@ -2716,6 +3019,7 @@
         ]
       },
       {
+        "workloadRef": "mail",
         "id": "mail",
         "title": "Private Mail",
         "description": "Private webmail through Roundcube for a mailbox you already have at an external provider. No mail server, DNS or MX record is created.",
@@ -2835,6 +3139,12 @@
         "defaultAlternative": "roundcube",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "session-key"
+              ]
+            },
             "id": "roundcube",
             "name": "roundcube",
             "modules": [
@@ -2922,6 +3232,7 @@
         ]
       },
       {
+        "workloadRef": "mail-server",
         "id": "mail-server",
         "title": "Own Mail Server",
         "description": "Your own mail server on a dedicated Cloud node through Stalwart: mailboxes for your domain with SMTP, IMAP and submission. StackKits prints the DNS records you publish; it never changes DNS.",
@@ -3004,6 +3315,12 @@
         "defaultAlternative": "stalwart",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "admin-password"
+              ]
+            },
             "id": "stalwart",
             "name": "stalwart",
             "modules": [
@@ -3091,6 +3408,7 @@
         ]
       },
       {
+        "workloadRef": "marketplace",
         "id": "marketplace",
         "title": "Marketplace",
         "description": "Your own app store for applications you run on your homelab, at home and in the cloud.",
@@ -3106,7 +3424,7 @@
             "name": "Runtipi",
             "role": "alternative",
             "kind": "application",
-            "realization": "recorded"
+            "realization": "install"
           }
         ],
         "mainUseCase": {
@@ -3131,6 +3449,10 @@
         "defaultAlternative": "coolify",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "coolify",
             "name": "coolify",
             "modules": [
@@ -3209,10 +3531,95 @@
               }
             ],
             "providesRuntimeAdapterRef": "coolify"
+          },
+          {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
+            "id": "runtipi",
+            "name": "runtipi",
+            "modules": [
+              {
+                "id": "stackkits-marketplace-runtipi-runtime",
+                "computeProfiles": [
+                  "high",
+                  "standard"
+                ],
+                "computeProfileFacts": {
+                  "high": {
+                    "maturity": "beta",
+                    "executable": true,
+                    "realization": "apply-ready",
+                    "hostFloor": {
+                      "minCpuCores": 2,
+                      "minRamGB": 4,
+                      "minStorageGB": 20
+                    },
+                    "reservation": {
+                      "cpuCores": 0.5,
+                      "ramGB": 2.25
+                    },
+                    "recommended": {
+                      "cpuCores": 2,
+                      "ramGB": 4
+                    },
+                    "provenance": {
+                      "hostFloor": {
+                        "ref": "Kombify host floor support policy",
+                        "source": "policy"
+                      },
+                      "recommended": {
+                        "ref": "Kombify recommended sizing policy",
+                        "source": "policy"
+                      },
+                      "reservation": {
+                        "ref": "Kombify reservation policy; declared, not a sum of component limits",
+                        "source": "policy"
+                      }
+                    }
+                  },
+                  "standard": {
+                    "maturity": "beta",
+                    "executable": true,
+                    "realization": "apply-ready",
+                    "hostFloor": {
+                      "minCpuCores": 2,
+                      "minRamGB": 4,
+                      "minStorageGB": 20
+                    },
+                    "reservation": {
+                      "cpuCores": 0.5,
+                      "ramGB": 2.25
+                    },
+                    "recommended": {
+                      "cpuCores": 2,
+                      "ramGB": 4
+                    },
+                    "provenance": {
+                      "hostFloor": {
+                        "ref": "Kombify host floor support policy",
+                        "source": "policy"
+                      },
+                      "recommended": {
+                        "ref": "Kombify recommended sizing policy",
+                        "source": "policy"
+                      },
+                      "reservation": {
+                        "ref": "Kombify reservation policy; declared, not a sum of component limits",
+                        "source": "policy"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "providesRuntimeAdapterRef": "runtipi"
           }
         ]
       },
       {
+        "workloadRef": "media",
         "id": "media",
         "title": "Media Library",
         "description": "Private media library and streaming intent for household media collections.",
@@ -3362,6 +3769,10 @@
         "defaultAlternative": "jellyfin",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "emby",
             "name": "emby",
             "modules": [
@@ -3423,6 +3834,10 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "jellyfin",
             "name": "jellyfin",
             "modules": [
@@ -3508,6 +3923,10 @@
             "defaultAlternative": "audiobookshelf",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "audiobookshelf",
                 "name": "audiobookshelf",
                 "modules": [
@@ -3575,6 +3994,10 @@
             "defaultAlternative": "navidrome",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "navidrome",
                 "name": "navidrome",
                 "modules": [
@@ -3640,6 +4063,7 @@
         ]
       },
       {
+        "workloadRef": "network",
         "id": "network",
         "title": "Network",
         "description": "Filter DNS for selected clients while preserving the existing local resolver and device DNS choices.",
@@ -3709,6 +4133,12 @@
         "defaultAlternative": "adguard-home",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "owner-password"
+              ]
+            },
             "id": "adguard-home",
             "name": "adguard-home",
             "modules": [
@@ -3847,6 +4277,7 @@
         ]
       },
       {
+        "workloadRef": "photos",
         "id": "photos",
         "title": "Photos and Memories",
         "description": "Family photo and video vault with mobile backup, search, and shared memories.",
@@ -4020,6 +4451,12 @@
         "defaultAlternative": "immich",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "database-password"
+              ]
+            },
             "id": "immich",
             "name": "immich",
             "modules": [
@@ -4050,7 +4487,7 @@
                     },
                     "provenance": {
                       "hostFloor": {
-                        "ref": "Immich v2.7.0 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor",
+                        "ref": "Immich v3.3.4 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor",
                         "source": "upstream"
                       },
                       "recommended": {
@@ -4083,7 +4520,7 @@
                     },
                     "provenance": {
                       "hostFloor": {
-                        "ref": "Immich v2.7.0 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor",
+                        "ref": "Immich v3.3.4 docs/install/requirements.md (CPU/RAM); storage is the Kombify platform floor",
                         "source": "upstream"
                       },
                       "recommended": {
@@ -4101,6 +4538,12 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "database-password"
+              ]
+            },
             "id": "immich-lite",
             "name": "immich-lite",
             "modules": [
@@ -4153,6 +4596,12 @@
             "defaultAlternative": "immich-kiosk",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "immich-api-key"
+                  ]
+                },
                 "id": "immich-kiosk",
                 "name": "immich-kiosk",
                 "modules": [
@@ -4220,6 +4669,10 @@
             "defaultAlternative": "immich-public-proxy",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "immich-public-proxy",
                 "name": "immich-public-proxy",
                 "modules": [
@@ -4287,6 +4740,13 @@
             "defaultAlternative": "immich-power-tools",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "database-password",
+                    "immich-api-key"
+                  ]
+                },
                 "id": "immich-power-tools",
                 "name": "immich-power-tools",
                 "modules": [
@@ -4352,6 +4812,7 @@
         ]
       },
       {
+        "workloadRef": "remote",
         "id": "remote",
         "title": "Remote Desktop",
         "description": "Private remote desktop and browser-accessible workspace intent.",
@@ -4421,6 +4882,12 @@
         "defaultAlternative": "guacamole",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "owner-password"
+              ]
+            },
             "id": "guacamole",
             "name": "guacamole",
             "modules": [
@@ -4559,6 +5026,7 @@
         ]
       },
       {
+        "workloadRef": "smart-home",
         "id": "smart-home",
         "title": "Smart Home",
         "description": "Home automation centered on Home Assistant, native product interfaces, and optional local device adjacency.",
@@ -4745,6 +5213,10 @@
         "defaultAlternative": "home-assistant",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "home-assistant",
             "name": "home-assistant",
             "modules": [
@@ -4857,6 +5329,10 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "home-assistant-existing",
             "name": "home-assistant-existing",
             "modules": [
@@ -4876,6 +5352,10 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "home-assistant-haos",
             "name": "home-assistant-haos",
             "modules": [
@@ -4895,6 +5375,10 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "home-assistant-imported",
             "name": "home-assistant-imported",
             "modules": [
@@ -4920,6 +5404,10 @@
             "defaultAlternative": "esphome",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": []
+                },
                 "id": "esphome",
                 "name": "esphome",
                 "modules": [
@@ -4987,6 +5475,18 @@
             "defaultAlternative": "mosquitto",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [
+                    {
+                      "key": "home-assistant-link",
+                      "type": "boolean",
+                      "label": "Home Assistant link"
+                    }
+                  ],
+                  "secretRefs": [
+                    "mqtt-password"
+                  ]
+                },
                 "id": "mosquitto",
                 "name": "mosquitto",
                 "modules": [
@@ -5105,6 +5605,12 @@
             "defaultAlternative": "zigbee2mqtt",
             "alternatives": [
               {
+                "configuration": {
+                  "settings": [],
+                  "secretRefs": [
+                    "mqtt-password"
+                  ]
+                },
                 "id": "zigbee2mqtt",
                 "name": "zigbee2mqtt",
                 "modules": [
@@ -5170,6 +5676,7 @@
         ]
       },
       {
+        "workloadRef": "vault",
         "id": "vault",
         "title": "Password Vault",
         "description": "Private password and secure-note vault with owner-controlled lifecycle and recovery.",
@@ -5258,6 +5765,13 @@
         "defaultAlternative": "vaultwarden",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "database-password",
+                "database-root-password"
+              ]
+            },
             "id": "passbolt",
             "name": "passbolt",
             "modules": [
@@ -5319,6 +5833,12 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": [
+                "admin-token"
+              ]
+            },
             "id": "vaultwarden",
             "name": "vaultwarden",
             "modules": [
@@ -5439,6 +5959,10 @@
         "defaultAlternative": "standalone-compose",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "standalone",
             "name": "standalone",
             "modules": [
@@ -5504,6 +6028,10 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "standalone-compose",
             "name": "standalone-compose",
             "modules": [
@@ -5595,6 +6123,10 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "standalone-lite",
             "name": "standalone-lite",
             "modules": [
@@ -5692,6 +6224,10 @@
         "defaultAlternative": "standalone-compose",
         "alternatives": [
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "standalone",
             "name": "standalone",
             "modules": [
@@ -5757,6 +6293,10 @@
             ]
           },
           {
+            "configuration": {
+              "settings": [],
+              "secretRefs": []
+            },
             "id": "standalone-compose",
             "name": "standalone-compose",
             "modules": [
@@ -5825,5 +6365,5 @@
       }
     ]
   },
-  "contentDigest": "sha256:58c7b37c7402141c4371264c1eb4a0361591021a0bb2589c006e76b3997ef8b2"
+  "contentDigest": "sha256:299a6ddd67fb59c0be1e4ca7f74d90b8d0e5a1e86685190ab1dee32f6a40bff3"
 }

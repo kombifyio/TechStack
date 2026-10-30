@@ -8,6 +8,9 @@
   aria-disabled; the visible reason sits right under the button, so nobody has
   to guess why it does nothing. Pressing it still reports to the wizard, which
   then highlights what is missing.
+
+  Steps the person already reached are buttons (`reachableSteps`), so any of
+  them is one click away; a step not reached yet names why it is locked.
 -->
 <script lang="ts">
   import type { WizardStep } from "#lib/wizard/types.js";
@@ -28,6 +31,9 @@
     onprev?: () => void;
     onnext?: () => void;
     ondeploy?: () => void;
+    /** Steps that open with a click on their indicator. */
+    reachableSteps?: number[];
+    onselect?: (stepId: number) => void;
     navigationOnly?: boolean;
   }
 
@@ -45,6 +51,8 @@
     onprev,
     onnext,
     ondeploy,
+    reachableSteps = [],
+    onselect,
     navigationOnly = false,
   }: Props = $props();
 
@@ -112,41 +120,34 @@
               : currentStep > step.id
                 ? "complete"
                 : "upcoming"}
+          {@const reachable =
+            Boolean(onselect) && !disabledReason && reachableSteps.includes(step.id)}
           <li
             class="flex shrink-0 items-center gap-1 sm:gap-2 {disabledReason
               ? 'opacity-45'
               : ''}"
             data-testid={`wizard-step-${step.id}`}
             data-state={state}
+            data-reachable={reachable}
             aria-current={state === "current" ? "step" : undefined}
-            title={disabledReason || undefined}
+            title={disabledReason ||
+              (state === "upcoming" && !reachable
+                ? tr("wizard.stepper.locked")
+                : undefined)}
           >
-            <span
-              class="flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold transition-colors sm:h-8 sm:w-8 {!disabledReason &&
-              currentStep >= step.id
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground'}"
-              aria-hidden="true"
-            >
-              {step.id}
-            </span>
-            <!-- Phones show the name of the current step and keep the others
-                 available to assistive technology; wider screens show all. -->
-            <span
-              class="text-sm {state === 'current'
-                ? 'max-w-[8rem] truncate font-medium sm:max-w-none'
-                : 'sr-only sm:not-sr-only'} {!disabledReason &&
-              currentStep >= step.id
-                ? 'text-foreground'
-                : 'text-muted-foreground'}"
-            >
-              {step.label}
-              {#if state === "complete"}
-                <span class="sr-only">, {tr("wizard.stepper.completed")}</span>
-              {:else if disabledReason}
-                <span class="sr-only">: {disabledReason}</span>
-              {/if}
-            </span>
+            {#if reachable}
+              <button
+                type="button"
+                class="flex items-center gap-1 rounded-full pe-1 outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring sm:gap-2"
+                aria-label={tr("wizard.stepper.goTo", { step: step.label })}
+                data-testid={`wizard-step-${step.id}-select`}
+                onclick={() => onselect?.(step.id)}
+              >
+                {@render indicator(step, disabledReason, state)}
+              </button>
+            {:else}
+              {@render indicator(step, disabledReason, state)}
+            {/if}
             {#if idx < steps.length - 1}
               <span
                 class="h-0.5 w-4 shrink-0 sm:w-8 {currentStep > step.id
@@ -167,6 +168,38 @@
       </p>
     </nav>
   {/if}
+
+  {#snippet indicator(
+    step: WizardStep,
+    disabledReason: string | undefined,
+    state: string,
+  )}
+    <span
+      class="flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold transition-colors sm:h-8 sm:w-8 {!disabledReason &&
+      currentStep >= step.id
+        ? 'bg-primary text-primary-foreground'
+        : 'bg-muted text-muted-foreground'}"
+      aria-hidden="true"
+    >
+      {step.id}
+    </span>
+    <!-- Phones show the name of the current step and keep the others
+         available to assistive technology; wider screens show all. -->
+    <span
+      class="text-sm {state === 'current'
+        ? 'max-w-[8rem] truncate font-medium sm:max-w-none'
+        : 'sr-only sm:not-sr-only'} {!disabledReason && currentStep >= step.id
+        ? 'text-foreground'
+        : 'text-muted-foreground'}"
+    >
+      {step.label}
+      {#if state === "complete"}
+        <span class="sr-only">, {tr("wizard.stepper.completed")}</span>
+      {:else if disabledReason}
+        <span class="sr-only">: {disabledReason}</span>
+      {/if}
+    </span>
+  {/snippet}
 
   <!-- Next/Deploy Button -->
   <div

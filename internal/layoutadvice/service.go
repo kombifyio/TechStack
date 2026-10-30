@@ -359,6 +359,9 @@ func (s *Service) settle(ctx context.Context, scope Scope, record actions.Recomm
 		return record
 	}
 	state := strings.ToLower(strings.TrimSpace(job.State))
+	if grouped, groupState := s.wizardExtendGroupState(ctx, scope, job); grouped {
+		state = groupState
+	}
 	if state != "completed" && state != "failed" && state != "cancelled" && state != "canceled" {
 		return record
 	}

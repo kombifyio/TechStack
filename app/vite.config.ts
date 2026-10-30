@@ -70,7 +70,28 @@ const devBackendProxy = {
   "/docs": devBackendTarget,
 } as const;
 
-export default async () =>
+// Public settings that differ between Preview and Stable are runtime values:
+// Go injects window.__TECHSTACK_PUBLIC_CONFIG__ into index.html from the
+// serving process environment (internal/frontend/frontend.go), so one image
+// serves every channel. A build maps each import.meta.env read to that object
+// and keeps a build-time value only as the fallback for a page Go did not serve.
+const publicRuntimeConfigNames = [
+  "VITE_GATEWAY_API_BASE",
+  "VITE_AUTH0_DOMAIN",
+  "VITE_AUTH0_SPA_CLIENT_ID",
+  "VITE_AUTH0_AUDIENCE",
+] as const;
+
+function publicRuntimeConfigDefine(): Record<string, string> {
+  return Object.fromEntries(
+    publicRuntimeConfigNames.map((name) => [
+      `import.meta.env.${name}`,
+      `(globalThis.__TECHSTACK_PUBLIC_CONFIG__?.${name} || ${JSON.stringify(process.env[name] || "")})`,
+    ]),
+  );
+}
+
+export default async ({ command }: { command: string }) =>
   defineConfig({
     plugins: [
       tailwindcss(),
@@ -124,6 +145,7 @@ export default async () =>
       __APP_COMMIT__: JSON.stringify(buildRevision),
       __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
       __SENTRY_RELEASE__: JSON.stringify(sentryRelease),
+      ...(command === "build" ? publicRuntimeConfigDefine() : {}),
     },
     server: {
       fs: {

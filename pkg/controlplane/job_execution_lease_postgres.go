@@ -169,6 +169,7 @@ func (s *PostgresStore) ReclaimExpiredJobExecution(
 		if scanErr != nil {
 			return scanErr
 		}
+		recordFailureOccurrenceTx(ctx, tx, job, failureOccurrenceForStoredJob(job, req.ReasonCode))
 		out = job
 		return nil
 	})

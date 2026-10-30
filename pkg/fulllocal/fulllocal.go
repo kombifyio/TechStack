@@ -6,23 +6,26 @@
 //
 // The profile is read once at boot and never fetched. An unreadable value
 // refuses the start; it is never treated as Standard. Under Full Local the
-// process refuses to start with settings that would send data out, and every
-// outbound connection of the shared HTTP transport is checked against the
-// homelab address ranges before it is dialed.
+// process refuses to start with settings that would send data out, and the
+// egress guard of kombify-go-common (dataprofile.EnforceEgress) binds the shared
+// HTTP transport and the default resolver to the homelab address ranges. Clients
+// with a transport or dialer of their own are bound where they are built.
 package fulllocal
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/dataprofile"
 	"github.com/kombifyio/techstack/internal/gocommon/edition"
@@ -31,7 +34,7 @@ import (
 )
 
 // ReasonCode names a Full Local refusal in logs, gates and denial envelopes.
-const ReasonCode = "data_profile_full_local"
+const ReasonCode = dataprofile.ReasonFullLocal
 
 var (
 	active  atomic.Bool
@@ -64,7 +67,7 @@ func Boot() (dataprofile.Profile, error) {
 		return dataprofile.Profile{}, fmt.Errorf("%s=%s: these settings send data outside the homelab, remove them: %s",
 			dataprofile.BootEnvVar, dataprofile.FullLocal, strings.Join(conflicts, ", "))
 	}
-	if err := guardDefaultTransport(); err != nil {
+	if err := p.EnforceEgress(); err != nil {
 		return dataprofile.Profile{}, err
 	}
 	active.Store(true)
@@ -109,7 +112,6 @@ var addressSettings = []string{
 	"SENTRY_DSN",
 	"SENTRY_DSN_FRONTEND",
 	"PUBLIC_SENTRY_DSN",
-	"OTEL_EXPORTER_OTLP_ENDPOINT",
 	"NOTIFICATIONS_ENGINE_URL",
 	"PUBLIC_POSTHOG_HOST",
 }
@@ -130,6 +132,9 @@ func Conflicts(getenv func(string) string) []string {
 			found = append(found, name)
 		}
 	}
+	if _, name, err := OTLPTraceEndpoint(getenv, true); err != nil {
+		found = append(found, name)
+	}
 	if strings.TrimSpace(getenv("PUBLIC_POSTHOG_KEY")) != "" && strings.TrimSpace(getenv("PUBLIC_POSTHOG_HOST")) == "" {
 		found = append(found, "PUBLIC_POSTHOG_KEY")
 	}
@@ -137,9 +142,45 @@ func Conflicts(getenv func(string) string) []string {
 	return found
 }
 
+// OTLPTraceEndpoint resolves the HTTP trace destination with the SDK's signal
+// precedence. Techstack deliberately validates both configured URLs more
+// strictly than the SDK, including overridden values: malformed input must not
+// be logged or replaced by SDK defaults, and credentials/queries are rejected.
+// Locality applies only to the effective destination. Boot and telemetry share
+// this admission; the SDK still owns paths and all remaining exporter settings.
+// Returned errors contain setting names only, never raw configuration values.
+func OTLPTraceEndpoint(getenv func(string) string, local bool) (string, string, error) {
+	var endpoint, setting string
+	for _, name := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"} {
+		raw := strings.TrimSpace(getenv(name))
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Opaque != "" || u.Hostname() == "" ||
+			(u.Scheme != "http" && u.Scheme != "https") || u.User != nil ||
+			u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || strings.HasSuffix(u.Host, ":") {
+			return "", name, fmt.Errorf("%s: invalid OTLP HTTP endpoint; use an http(s) URL without credentials, query or fragment", name)
+		}
+		if port := u.Port(); port != "" {
+			number, err := strconv.Atoi(port)
+			if err != nil || number < 1 || number > 65535 {
+				return "", name, fmt.Errorf("%s: invalid OTLP endpoint port", name)
+			}
+		}
+		endpoint, setting = raw, name
+	}
+	if local && endpoint != "" && !localAddressSetting(endpoint) {
+		return "", setting, fmt.Errorf("%s: %s is outside the homelab", ReasonCode, setting)
+	}
+	return endpoint, setting, nil
+}
+
 // localAddressSetting accepts a URL or host[:port] whose host is a literal
-// homelab address or a homelab-only name. Names that need public DNS are not
-// accepted at boot; the dial guard decides those per connection.
+// homelab address, a homelab-only name, or a name that the homelab resolver
+// resolves to homelab addresses only (a homelab chooses its own names). A name
+// that does not resolve to the homelab is not accepted at boot; the dial guard
+// still decides every connection.
 func localAddressSetting(value string) bool {
 	host := value
 	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
@@ -149,9 +190,25 @@ func localAddressSetting(value string) bool {
 	}
 	host = strings.Trim(host, "[]")
 	if addr, err := netip.ParseAddr(host); err == nil {
-		return LocalAddr(addr)
+		return dataprofile.LocalAddr(addr)
 	}
-	return localName(host)
+	return localName(host) || resolvesInHomelab(host)
+}
+
+// resolvesInHomelab asks only homelab nameservers (dataprofile.LocalResolver).
+func resolvesInHomelab(host string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	addrs, err := dataprofile.LocalResolver().LookupNetIP(ctx, "ip", host)
+	if err != nil || len(addrs) == 0 {
+		return false
+	}
+	for _, addr := range addrs {
+		if !dataprofile.LocalAddr(addr) {
+			return false
+		}
+	}
+	return true
 }
 
 // Homelab names that never resolve through public DNS (RFC 6762, RFC 8375).
@@ -170,90 +227,44 @@ func localName(host string) bool {
 	return false
 }
 
-// The shared address space of RFC 6598, used by homelab overlays such as
-// Tailscale and Headscale.
-var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
-
-// LocalAddr reports whether addr stays inside the homelab: loopback, private
-// (RFC 1918, RFC 4193), link-local or the shared overlay range. Cloud
-// metadata addresses are link-local and stay reachable only on the host
-// itself, so they count as local.
-func LocalAddr(addr netip.Addr) bool {
-	addr = addr.Unmap()
-	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || sharedAddressSpace.Contains(addr)
-}
-
-// DeniedError is the error of a connection Full Local refused.
-type DeniedError struct {
-	Host string
-}
-
-func (e *DeniedError) Error() string {
-	return fmt.Sprintf("%s: %s is outside the homelab (%s=%s)", ReasonCode, e.Host, dataprofile.BootEnvVar, dataprofile.FullLocal)
-}
-
-// IsDenied reports whether err is a Full Local refusal.
-func IsDenied(err error) bool {
-	var denied *DeniedError
-	return errors.As(err, &denied)
-}
-
-type dialFunc func(ctx context.Context, network, address string) (net.Conn, error)
-
-// GuardDial wraps a dial function so it only connects to homelab addresses.
-// Names are resolved first and every address must be local; the connection
-// goes to the checked address, so a second lookup cannot redirect it.
-func GuardDial(next dialFunc) dialFunc {
-	if next == nil {
-		next = (&net.Dialer{}).DialContext
+// Dial returns next unchanged outside Full Local. Under Full Local it returns
+// next bound to the homelab (dataprofile.GuardDial). Clients that build a
+// dialer or transport of their own call it where they create it, because
+// EnforceEgress only covers the shared HTTP transport and the default resolver.
+func Dial(next dataprofile.DialFunc) dataprofile.DialFunc {
+	if !Active() {
+		return next
 	}
-	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		if addr, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
-			if !LocalAddr(addr) {
-				return nil, &DeniedError{Host: host}
-			}
-			return next(ctx, network, address)
-		}
-		resolved, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-		if err != nil {
-			return nil, err
-		}
-		if len(resolved) == 0 {
-			return nil, &DeniedError{Host: host}
-		}
-		for _, addr := range resolved {
-			if !LocalAddr(addr) {
-				return nil, &DeniedError{Host: host}
-			}
-		}
-		var lastErr error
-		for _, addr := range resolved {
-			conn, dialErr := next(ctx, network, net.JoinHostPort(addr.Unmap().String(), port))
-			if dialErr == nil {
-				return conn, nil
-			}
-			lastErr = dialErr
-		}
-		return nil, lastErr
-	}
+	return dataprofile.GuardDial(next)
 }
 
-// guardDefaultTransport routes http.DefaultTransport, and every client and
-// clone built from it later, through GuardDial. Proxies are dropped: a proxy
-// would carry the request out of the homelab under a local dial address.
-func guardDefaultTransport() error {
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return fmt.Errorf("%s: the shared HTTP transport is %T, not *http.Transport, and cannot be guarded", ReasonCode, http.DefaultTransport)
+// AdmitIP pins a literal target before a subprocess can resolve or contact it.
+// Standard keeps its existing behavior; Full Local accepts only the shared
+// SDK's homelab addresses, with no second hostname lookup in the subprocess.
+func AdmitIP(host string) (string, error) {
+	if !Active() {
+		return host, nil
 	}
-	guarded := base.Clone()
-	guarded.Proxy = nil
-	guarded.DialContext = GuardDial(base.DialContext)
-	guarded.DialTLSContext = nil
-	http.DefaultTransport = guarded
-	return nil
+	addr, err := netip.ParseAddr(host)
+	if err != nil || !dataprofile.LocalAddr(addr) {
+		// Invalid input is never echoed into the metadata-only audit.
+		auditHost := ""
+		if err == nil {
+			auditHost = addr.Unmap().String()
+		}
+		slog.Warn("egress", "decision", "deny", "kind", "admission", "network", "ip", "host", auditHost, "outcome", "refused", "reason", ReasonCode)
+		return "", &dataprofile.DeniedError{Host: host}
+	}
+	literal := addr.Unmap().String()
+	slog.Info("egress", "decision", "allow", "kind", "admission", "network", "ip", "host", literal, "outcome", "admitted", "reason", "homelab")
+	return literal, nil
+}
+
+// Transport is Dial for a whole transport: outside Full Local it returns t
+// unchanged, under Full Local it is bound to the homelab.
+func Transport(t *http.Transport) *http.Transport {
+	if Active() {
+		dataprofile.GuardTransport(t)
+	}
+	return t
 }

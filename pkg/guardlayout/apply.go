@@ -372,6 +372,26 @@ func prepareExecutorDirectories(opts *Options) error {
 			return err
 		}
 	}
+	// The executor hides Guard custody with a mandatory InaccessiblePaths
+	// mount. Its namespace cannot start on a fresh host until that anchor
+	// exists. Create only a missing empty directory; an existing daemon's
+	// ownership, permissions and contents stay untouched until the verified
+	// executor and supervised custody transfer below take over.
+	anchor, err := os.OpenRoot(opts.path(stateRoot))
+	if err != nil {
+		return err
+	}
+	defer anchor.Close()
+	if err := anchor.Mkdir("guard", 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := anchor.Lstat("guard")
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: Guard namespace anchor must be a directory", privatefs.ErrUnsafeCustody)
+	}
 	root, err := privatefs.Open(opts.path(executorStateDir))
 	if err != nil {
 		return err

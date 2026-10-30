@@ -10,7 +10,7 @@ func (executor *StackKitExecutor) ApplicationCapabilities() []string {
 	if !executor.Available() {
 		return nil
 	}
-	release, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
+	release, err := executor.releaseCache().ResolvePin(executor.pinPath)
 	if err != nil {
 		return nil
 	}

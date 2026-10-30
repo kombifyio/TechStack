@@ -18,6 +18,7 @@ import (
 	"io"
 
 	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardrelease"
 )
 
 // ProtocolVersion is the wire version both sides must speak.
@@ -40,6 +41,8 @@ const (
 	OpStackKitCapabilities = "stackkit.capabilities"
 	// OpRuntimeDescribe reports the installed StackKits runtime.
 	OpRuntimeDescribe = "stackkit.runtime.describe"
+	// OpRuntimePreflight authenticates fixed runtime evidence before a body fetch.
+	OpRuntimePreflight = "stackkit.runtime.preflight"
 	// OpRuntimeInstall installs a downloaded StackKits runtime bundle.
 	OpRuntimeInstall = "stackkit.runtime.install"
 	// OpProbeDocker runs one of the fixed read-only container probes.
@@ -145,13 +148,25 @@ type RuntimeDescription struct {
 // RuntimeInstallParams hands a downloaded bundle to the executor. The path names
 // a file in the handoff directory; the executor copies it before it reads it.
 type RuntimeInstallParams struct {
-	BundleFile string `json:"bundle_file"`
-	SHA256     string `json:"sha256"`
+	CandidateIntent    *guardrelease.CandidateRuntimeIntent `json:"candidate_intent,omitempty"`
+	CandidateAdmission *guardbinding.Binding                `json:"candidate_admission,omitempty"`
+	BundleFile         string                               `json:"bundle_file"`
+	SHA256             string                               `json:"sha256"`
 	// ManifestFile and ManifestBundleFile are the signed release evidence. The
 	// executor installs the bundle only when its executables are the StackKits
 	// runtime the verified manifest names.
 	ManifestFile       string `json:"manifest_file,omitempty"`
 	ManifestBundleFile string `json:"manifest_bundle_file,omitempty"`
+}
+
+// RuntimeAdmission is root's authenticated immutable runtime selection. It grants
+// no installation: the same policy and candidate authority are checked again there.
+type RuntimeAdmission struct {
+	Signed           bool                              `json:"signed"`
+	Version          string                            `json:"version,omitempty"`
+	IdentitySHA256   string                            `json:"identity_sha256,omitempty"`
+	Runtime          guardrelease.StackKitsArchRuntime `json:"runtime"`
+	InstalledCurrent bool                              `json:"installed_current"`
 }
 
 // RuntimeEvidence is the exact StackKits artifact identity after installation.

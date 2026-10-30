@@ -174,19 +174,7 @@ func (s *PostgresStore) ClaimServerMaintenanceJob(ctx context.Context, tenantID,
 // lockNodeAdmissionTx takes the node's advisory locks for the rest of tx,
 // agent key first, then stack key, and waits at most 10 seconds for them.
 func lockNodeAdmissionTx(ctx context.Context, tx *sql.Tx, tenantID, agentID, stackID string) error {
-	keys := nodeAdmissionKeys(tenantID, agentID, stackID)
-	if len(keys) == 0 {
-		return nil
-	}
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('lock_timeout', '10s', true)`); err != nil {
-		return err
-	}
-	for _, key := range keys {
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key); err != nil {
-			return fmt.Errorf("controlplane: node admission lock: %w", err)
-		}
-	}
-	return nil
+	return lockExecutionTargetsTx(ctx, tx, tenantID, []ExecutionTarget{{StackID: stackID, AgentID: agentID}})
 }
 
 // refuseBusyNodeTx returns a *NodeBusyError when a pending or running stack
@@ -195,9 +183,16 @@ func refuseBusyNodeTx(ctx context.Context, tx *sql.Tx, tenantID, agentID, stackI
 	var busyID string
 	err := tx.QueryRowContext(ctx, `
 		SELECT id FROM jobs
-		WHERE tenant_id = $1 AND state IN ('pending', 'running', 'waiting')
-			AND (($2::text <> '' AND payload_json->>'agent_id' = $2::text)
-				OR ($3::text <> '' AND stack_id = $3::text AND COALESCE(payload_json->>'agent_id', '') = ''))
+        WHERE tenant_id=$1 AND (state IN ('pending','running','waiting') OR (type='workload_relocation' AND result_json->'workload_relocation'->>'state' IN ('transferring','destination_verification_required','transfer_receipt_incomplete')))
+        AND (
+          ($2::text<>'' AND payload_json->>'agent_id'=$2)
+          OR ($3::text<>'' AND stack_id=$3 AND COALESCE(payload_json->>'agent_id','')='')
+          OR (type='workload_relocation' AND (
+            EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload_json->'execution_targets')='array' THEN payload_json->'execution_targets' ELSE '[]'::jsonb END) target WHERE ($2::text<>'' AND target->>'agent_id'=$2) OR ($3::text<>'' AND target->>'stack_id'=$3 AND COALESCE(target->>'agent_id','')=''))
+            OR ($2::text<>'' AND (payload_json#>>'{workload_relocation,source,agent_id}'=$2 OR payload_json#>>'{workload_relocation,destination,agent_id}'=$2))
+            OR ($3::text<>'' AND ((payload_json#>>'{workload_relocation,source,stack_id}'=$3 AND COALESCE(payload_json#>>'{workload_relocation,source,agent_id}','')='') OR (payload_json#>>'{workload_relocation,destination,stack_id}'=$3 AND COALESCE(payload_json#>>'{workload_relocation,destination,agent_id}','')='')))
+          ))
+        )
 		ORDER BY created_at ASC
 		LIMIT 1
 	`, strings.TrimSpace(tenantID), strings.TrimSpace(agentID), strings.TrimSpace(stackID)).Scan(&busyID)

@@ -117,6 +117,16 @@ func composeBackupScanner(deps *routeDeps, encryptor *storageauth.SecretEncrypto
 		req.IncludeContent = schedule.IncludeContent
 		return jobs.AdmitBackup(ctx, admission, req)
 	})
+	owner := scheduledBackupOwner(deps.startup.cfg)
+	if log != nil && owner != backupOwnerNative {
+		log.Info("scheduled_backup_owner", "owner", owner)
+	}
+	if owner == backupOwnerPrivateWorker {
+		// The request-bound restore gate above keeps the caller's signed
+		// context. Scheduled work and backup execution belong to the private
+		// worker principal, which the HTTP process never receives.
+		return nil
+	}
 	scanner, err := backupjobs.NewScanner(backupjobs.ScannerConfig{
 		Store:     schedules,
 		Admission: admission,

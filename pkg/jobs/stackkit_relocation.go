@@ -48,6 +48,7 @@ var defaultRelocationTestDomainSuffixes = []string{".test", ".example", ".invali
 // WorkloadRelocationNode is one side of a move, bound at enqueue from the
 // stack's managed rollout and its admitted agent.
 type WorkloadRelocationNode struct {
+	OwnerRef           string `json:"owner_ref"`
 	StackID            string `json:"stack_id"`
 	StackKitInstanceID string `json:"stackkit_instance_id"`
 	AgentID            string `json:"agent_id"`
@@ -68,11 +69,17 @@ type WorkloadRelocationRequest struct {
 	Source           WorkloadRelocationNode `json:"source"`
 	Destination      WorkloadRelocationNode `json:"destination"`
 	Projects         []string               `json:"projects"`
+	ResourceUUIDs    []string               `json:"resource_uuids,omitempty"`
 	SourceAddress    string                 `json:"source_address"`
 	DomainSwitches   []string               `json:"domain_switches,omitempty"`
 	WalletItemID     string                 `json:"wallet_item_id"`
 	WalletItemRotate bool                   `json:"wallet_item_rotate,omitempty"`
 	OwnerApproved    bool                   `json:"owner_approved"`
+	TransferID       string                 `json:"transfer_id,omitempty"`
+}
+
+func ValidateWorkloadRelocationSelection(projects, uuids []string) error {
+	return stackkitcommand.ValidateRelocationSelection(projects, uuids)
 }
 
 // NormalizeWorkloadRelocationRequest admits a move: two different agents of
@@ -104,6 +111,15 @@ func NormalizeWorkloadRelocationRequest(req WorkloadRelocationRequest, testDomai
 		projects = append(projects, strings.TrimSpace(project))
 	}
 	req.Projects = projects
+	for i, uuid := range req.ResourceUUIDs {
+		req.ResourceUUIDs[i] = strings.TrimSpace(uuid)
+	}
+	if (len(req.Projects) == 0) == (len(req.ResourceUUIDs) == 0) {
+		return req, fmt.Errorf("select either whole projects or individual resource UUIDs")
+	}
+	if err := stackkitcommand.ValidateRelocationSelection(req.Projects, req.ResourceUUIDs); err != nil {
+		return req, err
+	}
 	address, err := stackkitcommand.NormalizeRelocationHost(req.SourceAddress)
 	if err != nil {
 		return req, err
@@ -147,7 +163,7 @@ func hasRelocationTestDomainSuffix(host string, suffixes []string) bool {
 func isRelocationStep(operation string) bool {
 	switch operation {
 	case stackKitStepRelocatePlan, stackKitStepRelocateCheck, stackKitStepRelocateDrain,
-		stackKitStepRelocateUndrain, stackKitStepRelocateSend, stackKitStepRelocateReceive:
+		stackKitStepRelocateUndrain, stackKitStepRelocateSend, stackKitStepRelocateReceive, stackKitStepRelocateStatus, stackKitStepRelocateAbort:
 		return true
 	default:
 		return false
@@ -164,7 +180,7 @@ func validateRelocationStepRequest(req *StackKitLifecycleRequest) error {
 	if req.DryRun || req.Offline || len(req.CandidateSpecJSON) != 0 || len(req.InventoryJSON) != 0 {
 		return fmt.Errorf("%s takes no dry run, offline mode, candidate or Inventory", req.Operation)
 	}
-	readOnly := req.Operation == stackKitStepRelocatePlan || req.Operation == stackKitStepRelocateCheck
+	readOnly := req.Operation == stackKitStepRelocatePlan || req.Operation == stackKitStepRelocateCheck || req.Operation == stackKitStepRelocateStatus
 	if !readOnly && !req.OwnerApproved {
 		return fmt.Errorf("%s requires explicit Owner approval", req.Operation)
 	}
@@ -173,10 +189,10 @@ func validateRelocationStepRequest(req *StackKitLifecycleRequest) error {
 	}
 	switch req.Operation {
 	case stackKitStepRelocatePlan, stackKitStepRelocateSend:
-		if len(req.RelocationProjects) == 0 {
-			return fmt.Errorf("%s requires the Coolify projects to move", req.Operation)
+		if (len(req.RelocationProjects) == 0) == (len(req.RelocationResourceUUIDs) == 0) {
+			return fmt.Errorf("%s requires either Coolify projects or resource UUIDs", req.Operation)
 		}
-	case stackKitStepRelocateCheck, stackKitStepRelocateDrain:
+	case stackKitStepRelocateCheck, stackKitStepRelocateDrain, stackKitStepRelocateReceive:
 		if err := stackkitcommand.ValidateRelocationPlan(req.RelocationPlanJSON); err != nil {
 			return err
 		}
@@ -197,14 +213,23 @@ func (req WorkloadRelocationRequest) step(node WorkloadRelocationNode, operation
 	switch operation {
 	case stackKitStepRelocatePlan:
 		step.RelocationProjects, step.OwnerApproved = append([]string(nil), req.Projects...), false
+		step.RelocationResourceUUIDs = append([]string(nil), req.ResourceUUIDs...)
 	case stackKitStepRelocateCheck:
 		step.OwnerApproved = false
 	case stackKitStepRelocateSend:
+		step.RelocationTransferID = req.TransferID
 		step.RelocationProjects = append([]string(nil), req.Projects...)
+		step.RelocationResourceUUIDs = append([]string(nil), req.ResourceUUIDs...)
 		step.RelocationSourceAddress, step.WalletItemID = req.SourceAddress, req.WalletItemID
 	case stackKitStepRelocateReceive:
+		step.RelocationTransferID = req.TransferID
 		step.RelocationSourceAddress, step.WalletItemID = req.SourceAddress, req.WalletItemID
 		step.RelocationSetDomains = append([]string(nil), req.DomainSwitches...)
+	case stackKitStepRelocateDrain, stackKitStepRelocateUndrain, stackKitStepRelocateAbort:
+		step.RelocationTransferID = req.TransferID
+	case stackKitStepRelocateStatus:
+		step.RelocationTransferID = req.TransferID
+		step.OwnerApproved = false
 	}
 	return step
 }
@@ -258,7 +283,7 @@ func WorkloadRelocationHandler(cfg StackKitLifecycleConfig) JobHandler {
 		}
 		resolveRelease := cfg.releaseResolver
 		if resolveRelease == nil {
-			resolveRelease = configuredTargetStackKitRelease
+			resolveRelease = func() (*stackkitrelease.Release, error) { return relocationCandidateRelease(ctx, req) }
 		}
 		release, err := resolveRelease()
 		if err != nil {
@@ -272,13 +297,15 @@ func WorkloadRelocationHandler(cfg StackKitLifecycleConfig) JobHandler {
 }
 
 func runWorkloadRelocation(ctx context.Context, cfg StackKitLifecycleConfig, job *Job, q *Queue, req WorkloadRelocationRequest, release stackkitrelease.Release) error {
+	req.TransferID = job.ID
 	outcome := map[string]interface{}{
-		"projects": req.Projects, "source_stack_id": req.Source.StackID, "destination_stack_id": req.Destination.StackID,
+		"projects": req.Projects, "resource_uuids": req.ResourceUUIDs, "source_stack_id": req.Source.StackID, "destination_stack_id": req.Destination.StackID,
 		"source_agent_id": req.Source.AgentID, "destination_agent_id": req.Destination.AgentID,
 		"domain_switches": req.DomainSwitches, "wallet_item_id": req.WalletItemID,
 	}
 	summary := map[string]interface{}{
 		"schema_version": "techstack.workload-relocation-result/v1", WorkloadRelocationResultField: outcome,
+		"relocation_request_sha256": job.Snapshot().Result["relocation_request_sha256"],
 	}
 	finish := func(err error) error {
 		summary["success"] = err == nil
@@ -303,6 +330,7 @@ func runWorkloadRelocation(ctx context.Context, cfg StackKitLifecycleConfig, job
 		node WorkloadRelocationNode
 	}{{"source", req.Source}, {"destination", req.Destination}} {
 		base := req.step(side.node, stackKitStepRelocateUndrain)
+		base.RelocationTransferID = "" // Delivery has its own operation-bound command vocabulary.
 		base.WalletItemID, base.WalletItemRotate = req.WalletItemID, req.WalletItemRotate
 		delivered := map[string]interface{}{}
 		target, version, err := deliverWalletItem(ctx, cfg, job, q, base, release, delivered)
@@ -331,6 +359,24 @@ func runWorkloadRelocation(ctx context.Context, cfg StackKitLifecycleConfig, job
 	}
 
 	// 3. Drain the source: from here on a failure starts it again.
+	outcome["state"] = "transferring"
+	outcome["transfer_id"] = job.ID
+	outcome["plan_sha256"] = check.PlanSHA256
+	outcome["plan_json"] = string(plan)
+	outcome["release_version"] = release.Receipt().Version
+	outcome["release_archive_sha256"] = release.Receipt().ArchiveSHA256
+	job.replaceResult(summary)
+	// Persist the existing job's two-node fence before the first drain. A
+	// process loss or uncertain receive keeps that fence after lease recovery.
+	syncer := q.executionSnapshotSyncer()
+	if syncer == nil {
+		outcome["state"] = "preflight_failed"
+		return finish(fmt.Errorf("durable relocation checkpoint is unavailable"))
+	}
+	if err := syncer(ctx, job.Snapshot()); err != nil {
+		outcome["state"] = "preflight_failed"
+		return finish(fmt.Errorf("persist relocation checkpoint: %w", err))
+	}
 	job.setStep("stackkit_" + stackKitStepRelocateDrain)
 	q.UpdateProgress(job.ID, 60, "Stopping the moving applications on the source server")
 	drain := req.step(req.Source, stackKitStepRelocateDrain)
@@ -351,24 +397,94 @@ func runWorkloadRelocation(ctx context.Context, cfg StackKitLifecycleConfig, job
 		}
 	}
 	if err != nil {
-		return finish(relocationRollback(ctx, cfg, job, q, req, release, outcome, err))
+		return finish(relocationRollback(ctx, cfg, job, q, req, release, plan, outcome, err))
 	}
 
 	// 4. Send and receive together: receive waits for the source's share.
 	job.setStep("stackkit_relocate_transfer")
 	q.UpdateProgress(job.ID, 70, "Moving the data from the source to the destination server")
-	sendErr, receiveErr := relocationTransfer(ctx, cfg, job, req, release)
+	sendErr, receiveErr := relocationTransfer(ctx, cfg, job, req, release, plan, outcome)
 	if sendErr != nil {
 		outcome["send_error"] = sendErr.Error()
 	}
-	if receiveErr != nil {
-		return finish(relocationRollback(ctx, cfg, job, q, req, release, outcome, receiveErr))
+	proof, proofErr := verifyWorkloadRelocation(ctx, cfg.Sender, req, release, job.ID, plan)
+	if proofErr == nil {
+		outcome["node_verification"] = proof
+		receiveErr, sendErr = nil, nil
+	} else {
+		outcome["verification_error"] = proofErr.Error()
+		if receiveErr == nil {
+			receiveErr = proofErr
+		}
 	}
+	if receiveErr != nil {
+		// A lost or failed receive can follow a committed destination restore.
+		// Starting the source blindly could create two writers. Both copies are
+		// retained until the destination's actual state is resolved.
+		outcome["state"] = "destination_verification_required"
+		outcome["source_retained"] = true
+		outcome["source_selected_writers_stopped"] = true
+		return finish(fmt.Errorf("destination restore is unconfirmed; source data is retained and source remains stopped: %w", receiveErr))
+	}
+
 	// The destination restored and started the move; the source stays
 	// stopped with nothing deleted until the owner removes it there.
 	outcome["state"] = "moved"
+	outcome["source_retained"] = true
+	outcome["source_selected_writers_stopped"] = true
 	q.UpdateProgress(job.ID, 100, "The workloads run on the destination server")
 	return finish(nil)
+}
+
+func verifyWorkloadRelocation(ctx context.Context, sender StackKitCommandSender, req WorkloadRelocationRequest, release stackkitrelease.Release, transferID string, plan []byte) (map[string]any, error) {
+	req.TransferID = transferID
+	proof := map[string]any{}
+	archive := ""
+	for _, side := range []struct {
+		name, phase string
+		node        WorkloadRelocationNode
+	}{{"source", "sent", req.Source}, {"destination", "received", req.Destination}} {
+		step := req.step(side.node, stackKitStepRelocateStatus)
+		step.RelocationPlanJSON = plan
+		var command *agentpb.StackKitCommand
+		result, _, err := dispatchManagedDelivery(ctx, sender, NewID()+"-"+side.name, step, release, &command)
+		if err != nil {
+			return proof, err
+		}
+		status, err := stackkitcommand.ParseRelocationStatus(command, result)
+		if err != nil {
+			return proof, err
+		}
+		if (status.Receipt.Phase != side.phase && !(side.name == "source" && status.Receipt.Phase == "prepared")) || side.node.OwnerRef == "" || status.Receipt.Signature.OwnerRef != side.node.OwnerRef || status.Receipt.Binding.NodeRef != side.node.NodeRef {
+			return proof, fmt.Errorf("%s relocation observation differs from admitted Owner custody", side.name)
+		}
+		var data struct {
+			ArchiveSHA256 string `json:"archive_sha256"`
+		}
+		if json.Unmarshal(status.Receipt.Data, &data) != nil {
+			return proof, fmt.Errorf("relocation archive observation unavailable")
+		}
+		if archive != "" && archive != data.ArchiveSHA256 {
+			return proof, fmt.Errorf("source and destination observed different encrypted archives")
+		}
+		archive = data.ArchiveSHA256
+		proof[side.name] = status
+	}
+	proof["archive_sha256"] = archive
+	return proof, nil
+}
+
+// ReadbackWorkloadRelocation reads existing node receipts without repeating
+// a drain, transfer, restore or start.
+func ReadbackWorkloadRelocation(ctx context.Context, sender StackKitCommandSender, request WorkloadRelocationRequest, id string, plan []byte, version, archive string) (map[string]any, error) {
+	release, err := relocationCandidateRelease(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if release == nil || release.Receipt().Version != version || release.Receipt().ArchiveSHA256 != archive {
+		return nil, fmt.Errorf("the move's original admitted StackKits artifact is unavailable")
+	}
+	return verifyWorkloadRelocation(ctx, sender, request, *release, id, plan)
 }
 
 func relocationPlan(ctx context.Context, cfg StackKitLifecycleConfig, job *Job, req WorkloadRelocationRequest, release stackkitrelease.Release) ([]byte, error) {
@@ -409,15 +525,26 @@ func relocationCheck(ctx context.Context, cfg StackKitLifecycleConfig, job *Job,
 
 // relocationTransfer runs send on the source and receive on the destination
 // at the same time and returns each side's error.
-func relocationTransfer(ctx context.Context, cfg StackKitLifecycleConfig, job *Job, req WorkloadRelocationRequest, release stackkitrelease.Release) (sendErr, receiveErr error) {
+func relocationTransfer(ctx context.Context, cfg StackKitLifecycleConfig, job *Job, req WorkloadRelocationRequest, release stackkitrelease.Release, plan []byte, outcome map[string]interface{}) (sendErr, receiveErr error) {
+	var verification json.RawMessage
 	run := func(node WorkloadRelocationNode, operation string) error {
 		var command *agentpb.StackKitCommand
-		result, commandID, err := dispatchManagedDelivery(ctx, cfg.Sender, job.ID, req.step(node, operation), release, &command)
+		step := req.step(node, operation)
+		if operation == stackKitStepRelocateReceive || operation == stackKitStepRelocateSend {
+			step.RelocationPlanJSON = plan
+		}
+		result, commandID, err := dispatchManagedDelivery(ctx, cfg.Sender, job.ID, step, release, &command)
 		if err != nil {
 			return err
 		}
 		if err := stackkitcommand.ValidateRelocationStep(command, result); err != nil {
 			return &typedStackKitOperationError{Operation: operation, CommandID: commandID, Err: err}
+		}
+		if operation == stackKitStepRelocateReceive {
+			verification, err = stackkitcommand.ParseRelocationRestore(command, result)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -426,26 +553,110 @@ func relocationTransfer(ctx context.Context, cfg StackKitLifecycleConfig, job *J
 	go func() { defer wg.Done(); sendErr = run(req.Source, stackKitStepRelocateSend) }()
 	go func() { defer wg.Done(); receiveErr = run(req.Destination, stackKitStepRelocateReceive) }()
 	wg.Wait()
+	if receiveErr == nil {
+		outcome["destination_verification"] = verification
+	}
 	return sendErr, receiveErr
 }
 
 // relocationRollback starts the drained workloads on the source again and
 // reports the failure that caused it, and a failed rollback with it.
-func relocationRollback(ctx context.Context, cfg StackKitLifecycleConfig, job *Job, q *Queue, req WorkloadRelocationRequest, release stackkitrelease.Release, outcome map[string]interface{}, cause error) error {
-	job.setStep("stackkit_" + stackKitStepRelocateUndrain)
-	q.UpdateProgress(job.ID, 90, "Starting the applications on the source server again")
-	var command *agentpb.StackKitCommand
-	result, commandID, err := dispatchManagedDelivery(ctx, cfg.Sender, job.ID, req.step(req.Source, stackKitStepRelocateUndrain), release, &command)
-	if err == nil {
-		err = stackkitcommand.ValidateRelocationStep(command, result)
-		if err != nil {
-			err = &typedStackKitOperationError{Operation: stackKitStepRelocateUndrain, CommandID: commandID, Err: err}
-		}
-	}
+func relocationRollback(ctx context.Context, cfg StackKitLifecycleConfig, job *Job, q *Queue, req WorkloadRelocationRequest, release stackkitrelease.Release, plan []byte, outcome map[string]interface{}, cause error) error {
+	q.UpdateProgress(job.ID, 90, "Verifying destination abort before resuming the source")
+	proof, err := AbortWorkloadRelocation(ctx, cfg.Sender, req, job.ID, plan, release.Receipt().Version, release.Receipt().ArchiveSHA256)
 	if err != nil {
-		outcome["state"] = "rollback_failed"
-		return fmt.Errorf("%w; starting the source again failed too, run `stackkit relocate drain --undo --owner-approve` there: %v", cause, err)
+		outcome["state"] = "destination_verification_required"
+		outcome["source_retained"] = true
+		return fmt.Errorf("%w; safe source recovery remains fenced: %v", cause, err)
 	}
-	outcome["state"] = "rolled_back"
-	return fmt.Errorf("%w; the source runs again", cause)
+	outcome["state"] = "aborted"
+	outcome["node_verification"] = proof
+	outcome["source_retained"] = true
+	outcome["source_selected_writers_stopped"] = false
+	return fmt.Errorf("%w; destination permanently rejected this transfer and source running state is verified restored", cause)
+}
+
+func relocationOriginalRelease(ctx context.Context, req WorkloadRelocationRequest, version, archive string) (*stackkitrelease.Release, error) {
+	release, err := relocationCandidateRelease(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if release == nil || release.Receipt().Version != version || release.Receipt().ArchiveSHA256 != archive {
+		return nil, fmt.Errorf("the move's original admitted StackKits artifact is unavailable")
+	}
+	return release, nil
+}
+func relocationNodeStatus(ctx context.Context, sender StackKitCommandSender, req WorkloadRelocationRequest, node WorkloadRelocationNode, release stackkitrelease.Release, plan []byte, operation string) (stackkitcommand.RelocationStatusEvidence, error) {
+	step := req.step(node, operation)
+	step.RelocationPlanJSON = plan
+	var command *agentpb.StackKitCommand
+	result, _, err := dispatchManagedDelivery(ctx, sender, NewID()+"-recovery", step, release, &command)
+	if err != nil {
+		return stackkitcommand.RelocationStatusEvidence{}, err
+	}
+	status, err := stackkitcommand.ParseRelocationStatus(command, result)
+	if err == nil && (status.Receipt.Signature.OwnerRef != node.OwnerRef || status.Signature.OwnerRef != node.OwnerRef || status.Receipt.Binding.NodeRef != node.NodeRef) {
+		err = fmt.Errorf("current relocation observation differs from admitted node custody")
+	}
+	return status, err
+}
+
+// AbortWorkloadRelocation releases a source only after the destination has
+// durably excluded this transfer before all restore effects. Unknown effects
+// remain fenced. The managed observation comes from typed authenticated Guard
+// delivery, never from an HTTP caller's detached proof.
+func AbortWorkloadRelocation(ctx context.Context, sender StackKitCommandSender, req WorkloadRelocationRequest, id string, plan []byte, version, archive string) (map[string]any, error) {
+	release, err := relocationOriginalRelease(ctx, req, version, archive)
+	if err != nil {
+		return nil, err
+	}
+	req.TransferID = id
+	destination, err := relocationNodeStatus(ctx, sender, req, req.Destination, *release, plan, stackKitStepRelocateAbort)
+	if err != nil {
+		return nil, err
+	}
+	authority := stackkitcommand.RelocationResumeAuthority{APIVersion: "stackkit.relocation-resume/v1", TransferID: id, PlanJSON: string(plan), Destination: destination, SourceOwnerRef: req.Source.OwnerRef, SourceNodeRef: req.Source.NodeRef, DestinationOwnerRef: req.Destination.OwnerRef, DestinationNodeRef: req.Destination.NodeRef, ExpiresAt: time.Now().UTC().Add(4 * time.Minute)}
+	if source, statusErr := relocationNodeStatus(ctx, sender, req, req.Source, *release, plan, stackKitStepRelocateStatus); statusErr == nil {
+		var v struct {
+			Archive string `json:"archive_sha256"`
+		}
+		if json.Unmarshal(source.Receipt.Data, &v) != nil {
+			return nil, fmt.Errorf("source archive observation is malformed")
+		}
+		authority.ArchiveSHA256 = v.Archive
+	}
+	envelope, err := json.Marshal(authority)
+	if err != nil {
+		return nil, err
+	}
+	source, err := relocationNodeStatus(ctx, sender, req, req.Source, *release, envelope, stackKitStepRelocateUndrain)
+	if err != nil {
+		return nil, err
+	}
+	if source.Receipt.Phase != "resumed" {
+		return nil, fmt.Errorf("source did not verify resumed runtime")
+	}
+	return map[string]any{"source": source, "destination": destination, "outcome": "aborted", "archive_sha256": authority.ArchiveSHA256}, nil
+}
+func ReadbackAbortedWorkloadRelocation(ctx context.Context, sender StackKitCommandSender, req WorkloadRelocationRequest, id string, plan []byte, version, archive string) (map[string]any, error) {
+	release, err := relocationOriginalRelease(ctx, req, version, archive)
+	if err != nil {
+		return nil, err
+	}
+	req.TransferID = id
+	proof := map[string]any{"outcome": "aborted"}
+	for _, side := range []struct {
+		name, phase string
+		node        WorkloadRelocationNode
+	}{{"source", "resumed", req.Source}, {"destination", "aborted", req.Destination}} {
+		v, err := relocationNodeStatus(ctx, sender, req, side.node, *release, plan, stackKitStepRelocateStatus)
+		if err != nil {
+			return nil, err
+		}
+		if v.Receipt.Phase != side.phase {
+			return nil, fmt.Errorf("aborted relocation runtime differs")
+		}
+		proof[side.name] = v
+	}
+	return proof, nil
 }

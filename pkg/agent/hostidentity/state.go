@@ -160,10 +160,30 @@ const ReasonDecommissioned = "decommissioned"
 // starting a new enrollment on its own. A new pairing capability starts over.
 // It is safe to repeat.
 func (m *Manager) Decommission(enrollmentPaths ...string) error {
+	return m.decommission(false, enrollmentPaths)
+}
+
+// DecommissionKeepingKey is Decommission for a server that still holds command
+// evidence of the revoked binding, or a handoff receipt for it: the identity
+// key stays, because it is the only proof the control plane can check that a
+// later pairing comes from this server. The control plane revoked the
+// identity, so the key authenticates nothing; the next pairing proves it, and
+// a pairing with another tenant is refused until that tenant's owner
+// confirmed a handoff for exactly this key (Guard G04). The credential, a
+// staged rotation key and the pairing capability are destroyed as usual.
+func (m *Manager) DecommissionKeepingKey(enrollmentPaths ...string) error {
+	return m.decommission(true, enrollmentPaths)
+}
+
+func (m *Manager) decommission(keepKey bool, enrollmentPaths []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var failure error
-	for _, name := range []string{keyFileName, nextKeyName, bootstrapFileName, EnrollmentFileName} {
+	secrets := []string{keyFileName, nextKeyName, bootstrapFileName, EnrollmentFileName}
+	if keepKey {
+		secrets = secrets[1:]
+	}
+	for _, name := range secrets {
 		if err := wipeRootedSecretFile(m.root, name); err != nil {
 			failure = errors.Join(failure, err)
 		}
@@ -182,9 +202,12 @@ func (m *Manager) Decommission(enrollmentPaths ...string) error {
 			failure = errors.Join(failure, err)
 		}
 	}
-	m.key = nil
 	m.rec.State, m.rec.Reason = StateRevoked, ReasonDecommissioned
-	m.rec.KeyThumbprint, m.rec.AttemptID, m.rec.EnrollmentAttemptID = "", "", ""
+	m.rec.AttemptID, m.rec.EnrollmentAttemptID = "", ""
+	if !keepKey {
+		m.key = nil
+		m.rec.KeyThumbprint = ""
+	}
 	return errors.Join(failure, m.saveLocked())
 }
 

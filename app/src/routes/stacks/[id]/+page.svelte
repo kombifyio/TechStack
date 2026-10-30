@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { configureUseCasesHref, removeUseCasesHref } from "#lib/server-links.js";
   import { tr, trn, stateLabel, formatDateTime } from "#lib/i18n.svelte.js";
   import { page } from '$app/state';
   import { onMount } from "svelte";
@@ -569,6 +570,17 @@
           {tr("ui.stacksId.manageCredentialsForThisStackkit")}
         </p>
       </div>
+      <div class="flex flex-wrap items-center gap-2">
+      {#if stack && stackId}
+        <a
+          href={configureUseCasesHref(stackId)}
+          data-testid="configure-use-cases-link"
+          data-kx="control"
+          data-variant="secondary"
+          class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-medium"
+        >{tr("configure.entry")}</a>
+        <a href={removeUseCasesHref(stackId)} data-testid="remove-use-cases-link" data-kx="control" data-variant="secondary" class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-medium">{tr("removeUseCase.entry")}</a>
+      {/if}
       {#if !useWallet}
       <button
         onclick={openAddCredential}
@@ -592,6 +604,7 @@
         {tr("ui.stacksId.addCredential")}
       </button>
       {/if}
+      </div>
     </div>
 
     {#if loading}

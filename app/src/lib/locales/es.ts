@@ -1119,20 +1119,6 @@ export const es: Record<string, string> = {
   "wizard.step.inherited": "Ya definido para tu Homelab",
   "wizard.step.existingOwner":
     "El propietario de tu Homelab sigue siendo el mismo",
-  "wizard.addApp.title": "Añadir aplicación",
-  "wizard.addApp.intro":
-    "Elige una aplicación y el servidor en el que se ejecuta. El acceso, las personas y el inicio de sesión siguen como los tiene tu Homelab.",
-  "wizard.addApp.catalogEmpty":
-    "El catálogo aún no ofrece ninguna aplicación para este Homelab.",
-  "wizard.addApp.recommended": "Recomendado",
-  "wizard.addApp.about": "Acerca de",
-  "wizard.addApp.nodeTitle": "¿Dónde debe ejecutarse {name}?",
-  "wizard.addApp.nodeUnsupported": "El StackKit de este servidor no ofrece {name}.",
-  "wizard.addApp.nodeNotReady": "Aún no está listo para despliegues",
-  "wizard.addApp.submit": "Añadir aplicación",
-  "wizard.addApp.result": "{name} se añadió a {node}.",
-  "wizard.addApp.resultStatus": "Estado: {status}",
-  "wizard.addApp.done": "Listo",
   "wizard.settings.title": "Ajustes del Homelab",
   "wizard.settings.intro":
     "Cambia quién usa tu Homelab y cómo inicias sesión. Cada paso actúa al instante sobre tu Homelab en ejecución.",
@@ -2161,6 +2147,8 @@ export const es: Record<string, string> = {
   "ui.people.householdListUnavailableTheHomelab": "La lista de personas no está disponible ahora mismo. Inténtalo de nuevo en un momento.",
   "ui.people.identityProviderNotReady": "Servicio de inicio de sesión no listo",
   "ui.people.identityStatusUnavailable": "Estado del inicio de sesión no disponible",
+  "ui.people.liveStatusNotReporting": "Tu homelab no está informando del estado de inicio de sesión ahora mismo, así que pueden faltar miembros invitados. Inténtalo de nuevo en un momento.",
+  "ui.people.liveStatusPending": "El estado de inicio de sesión y los miembros invitados aparecerán aquí cuando el servicio de inicio de sesión de tu homelab esté listo.",
   "ui.people.member": "Miembro",
   "ui.people.notInvitedYet": "Aún no invitado",
   "ui.people.ownerAndHouseholdAppearOnce": "Tú y las personas a las que invites aparecerán aquí cuando el servicio de inicio de sesión de tu homelab esté listo.",
@@ -2666,8 +2654,6 @@ export const es: Record<string, string> = {
   "ui.serviceSheet.notPlaced": "sin ubicar",
   "ui.serviceSheet.ownership": "Propiedad: {value}",
   "ui.serviceSheet.stackkit": "StackKit {version}",
-  "ui.services.aRegisteredNodeIsRequired":
-    "Se necesita un Node registrado antes de poder vincular servicios.",
   "ui.services.aboutToMove": "Vas a mover esta aplicación de {slot} a {slot}.",
   "ui.services.action.freeze": "Congelar",
   "ui.services.action.logs": "Registros",
@@ -2683,7 +2669,6 @@ export const es: Record<string, string> = {
     "Acción completada; el inventario se está actualizando.",
   "ui.services.actionTitle": "{action} {name}",
   "ui.services.addACatalogApplicationOr": "Añade una aplicación del catálogo o importa inventario de servidor no gestionado.",
-  "ui.services.addANewApplication": "Añadir una aplicación nueva",
   "ui.services.addService": "Añadir servicio",
   "ui.services.adoptIntoManagement": "Adoptar en la gestión…",
   "ui.services.all": "Todos",
@@ -2711,8 +2696,6 @@ export const es: Record<string, string> = {
   "ui.services.capacityTelemetryRefreshFailed":
     "Falló la actualización de la telemetría de capacidad",
   "ui.services.catalog": "Catálogo",
-  "ui.services.catalogServiceCouldNotBe":
-    "No se pudo añadir el servicio del catálogo.",
   "ui.services.clearTheFilterToShow":
     "Quita el filtro para mostrar todas las aplicaciones.",
   "ui.services.cloudVps": "VPS en la nube",
@@ -2759,7 +2742,6 @@ export const es: Record<string, string> = {
   "ui.services.moveToAnotherNode": "Mover a otro servidor…",
   "ui.services.mutationsRequireOwnerApprovalA":
     "Las modificaciones requieren la aprobación del propietario; se ejecuta una verificación de StackKits antes de que cambie el estado medido.",
-  "ui.services.newApplication": "Nueva aplicación",
   "ui.services.noApplicationsDeployed": "No hay aplicaciones desplegadas",
   "ui.services.noApplicationsMatching":
     "No hay aplicaciones con estado {status}",

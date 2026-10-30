@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"github.com/kombifyio/techstack/pkg/guardrelease"
 	"io"
 	"os"
 	"path/filepath"
@@ -62,6 +63,8 @@ type UseCaseProfileFacts struct {
 
 // UseCaseModule is one module an Architecture v2 alternative is built from.
 type UseCaseModule struct {
+	StorageProfiles         []string                           `json:"storageProfiles,omitempty"`
+	AcceleratorProfiles     []string                           `json:"acceleratorProfiles,omitempty"`
 	ID                      string                             `json:"id"`
 	ComputeProfiles         []string                           `json:"computeProfiles,omitempty"`
 	ComputeProfileFacts     map[string]UseCaseProfileFacts     `json:"computeProfileFacts,omitempty"`
@@ -69,10 +72,21 @@ type UseCaseModule struct {
 }
 
 // UseCaseAlternative is one Architecture v2 alternative of a workload.
+type UseCaseConfigurationSetting struct {
+	Key     string `json:"key"`
+	Type    string `json:"type"`
+	Label   string `json:"label"`
+	Options []any  `json:"options,omitempty"`
+}
+type UseCaseConfigurationInputs struct {
+	Settings   []UseCaseConfigurationSetting `json:"settings"`
+	SecretRefs []string                      `json:"secretRefs"`
+}
 type UseCaseAlternative struct {
-	ID                        string          `json:"id"`
-	Modules                   []UseCaseModule `json:"modules,omitempty"`
-	ProvidesRuntimeAdapterRef string          `json:"providesRuntimeAdapterRef,omitempty"`
+	Configuration             *UseCaseConfigurationInputs `json:"configuration,omitempty"`
+	ID                        string                      `json:"id"`
+	Modules                   []UseCaseModule             `json:"modules,omitempty"`
+	ProvidesRuntimeAdapterRef string                      `json:"providesRuntimeAdapterRef,omitempty"`
 }
 
 // UseCaseAddOn is an optional application workload of a use case. Its ID is
@@ -225,6 +239,7 @@ func (useCase UseCase) FindCapability(id string) (UseCaseCapability, bool) {
 // UseCase is one catalog entry. The ID is the use-case slug the Wizard already
 // speaks, so no translation table is needed on either side.
 type UseCase struct {
+	WorkloadRef  string                        `json:"workloadRef,omitempty"`
 	ID           string                        `json:"id"`
 	Title        string                        `json:"title"`
 	Description  string                        `json:"description"`
@@ -470,14 +485,19 @@ type UseCaseCatalogRelease struct {
 
 // UseCaseCatalog is the decoded release projection.
 type UseCaseCatalog struct {
-	Release  UseCaseCatalogRelease `json:"release"`
-	UseCases []UseCase             `json:"useCases"`
+	Candidate                 *guardrelease.PreviewCandidateProvenance `json:"candidate,omitempty"`
+	RetainedRemovalCandidates bool                                     `json:"retained_removal_candidates"`
+	Release                   UseCaseCatalogRelease                    `json:"release"`
+	UseCases                  []UseCase                                `json:"useCases"`
 }
 
 type useCaseCatalogDocument struct {
 	SchemaVersion string                `json:"schemaVersion"`
 	Release       UseCaseCatalogRelease `json:"release"`
 	Catalog       struct {
+		Authoring struct {
+			RetainedRemovalCandidates bool `json:"retainedRemovalCandidates"`
+		} `json:"authoring"`
 		UseCases []UseCase `json:"useCases"`
 	} `json:"catalog"`
 }
@@ -588,7 +608,11 @@ func DecodeUseCaseCatalog(data []byte) (UseCaseCatalog, error) {
 		return UseCaseCatalog{}, fmt.Errorf("stackkitrelease: unsupported StackKits use-case catalog schema %q", document.SchemaVersion)
 	}
 
-	catalog := UseCaseCatalog{Release: document.Release}
+	return projectUseCaseCatalog(document)
+}
+
+func projectUseCaseCatalog(document useCaseCatalogDocument) (UseCaseCatalog, error) {
+	catalog := UseCaseCatalog{Release: document.Release, RetainedRemovalCandidates: document.Catalog.Authoring.RetainedRemovalCandidates}
 	for _, useCase := range document.Catalog.UseCases {
 		id := strings.TrimSpace(useCase.ID)
 		if id == "" {
@@ -596,6 +620,7 @@ func DecodeUseCaseCatalog(data []byte) (UseCaseCatalog, error) {
 		}
 		entry := UseCase{
 			ID:          id,
+			WorkloadRef: strings.TrimSpace(useCase.WorkloadRef),
 			Title:       strings.TrimSpace(useCase.Title),
 			Description: strings.TrimSpace(useCase.Description),
 		}

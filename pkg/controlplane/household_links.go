@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Household identity references implement the link authority of Kombify
@@ -31,6 +33,7 @@ const (
 // HomelabIdentityRef is the HomelabIdentityRefV1 record with its cloud subject
 // and link state.
 type HomelabIdentityRef struct {
+	ReferenceID    string
 	TenantID       string
 	StackID        string
 	IdP            string
@@ -53,9 +56,10 @@ type HouseholdLinkStore interface {
 	// linked reference. A different cloud subject on the same username is a
 	// conflict: a Pocket ID username belongs to exactly one person.
 	UpsertHouseholdInvite(ctx context.Context, ref HomelabIdentityRef) (*HomelabIdentityRef, error)
-	// MarkHouseholdLinked moves the invited reference of one cloud subject to
-	// linked. It returns ErrNotFound when no such reference exists.
-	MarkHouseholdLinked(ctx context.Context, tenantID, stackID, cloudSubject string, at time.Time) (*HomelabIdentityRef, error)
+	// MarkHouseholdLinked compares the immutable incarnation and proof-bound
+	// identity atomically. A removed/recreated reference is never linked by
+	// an old callback; missing or changed expectations return ErrNotFound.
+	MarkHouseholdLinked(ctx context.Context, expected HomelabIdentityRef, at time.Time) (*HomelabIdentityRef, error)
 	// DeleteHouseholdRef removes the reference of one cloud subject and returns
 	// it, or ErrNotFound.
 	DeleteHouseholdRef(ctx context.Context, tenantID, stackID, cloudSubject string) (*HomelabIdentityRef, error)
@@ -135,18 +139,20 @@ func (s *MemoryHouseholdLinkStore) UpsertHouseholdInvite(_ context.Context, ref 
 		out := existing
 		return &out, nil
 	}
+	ref.ReferenceID = uuid.NewString()
 	ref.InvitedAt, ref.UpdatedAt = now, now
 	s.refs[key] = ref
 	out := ref
 	return &out, nil
 }
 
-func (s *MemoryHouseholdLinkStore) MarkHouseholdLinked(_ context.Context, tenantID, stackID, cloudSubject string, at time.Time) (*HomelabIdentityRef, error) {
+func (s *MemoryHouseholdLinkStore) MarkHouseholdLinked(_ context.Context, expected HomelabIdentityRef, at time.Time) (*HomelabIdentityRef, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := householdKey(strings.TrimSpace(tenantID), strings.TrimSpace(stackID), strings.TrimSpace(cloudSubject))
+	key := householdKey(expected.TenantID, expected.StackID, expected.CloudSubject)
 	ref, ok := s.refs[key]
-	if !ok {
+	if !ok || expected.ReferenceID == "" || ref.ReferenceID != expected.ReferenceID ||
+		ref.OwnerSubjectID != expected.OwnerSubjectID || ref.Username != expected.Username || ref.IdP != expected.IdP || ref.Email != expected.Email {
 		return nil, ErrNotFound
 	}
 	if ref.Status != HouseholdLinkLinked {

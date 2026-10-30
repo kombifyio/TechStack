@@ -43,6 +43,9 @@ type ScannerConfig struct {
 	Now       func() time.Time
 	OnError   func(error)
 	OnDenied  func(Due, jobs.BackupAdmissionDecision)
+	// DispatchDue is the private worker's atomic scheduler/job transaction.
+	// Nil keeps the existing native combined-mode scheduling lifecycle.
+	DispatchDue func(context.Context, Due, time.Time) error
 }
 
 // Scanner selects due stacks, resolves the entitlement and quota gate for each,
@@ -135,7 +138,11 @@ func (s *Scanner) ScanOnce(ctx context.Context) error {
 				continue
 			}
 			processed++
-			if err := s.handle(ctx, item, now); err != nil {
+			process := s.handle
+			if s.cfg.DispatchDue != nil {
+				process = s.cfg.DispatchDue
+			}
+			if err := process(ctx, item, now); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return err
 				}

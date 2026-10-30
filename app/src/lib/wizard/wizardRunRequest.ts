@@ -308,7 +308,10 @@ function buildRunSubstrateParams(
  * coerces to an expansion when one already operates deployments). The pinned
  * release authors the service graph from goals, settings and capabilities.
  */
-export function buildFoundRunRequest(config: StackConfig): WizardRunRequest {
+export function buildFoundRunRequest(
+  config: StackConfig,
+  existingServerId?: string,
+): WizardRunRequest {
   if (config.network.publicAccess) {
     throw new WizardInputError(tr("wizard.users.public.pending"));
   }
@@ -345,7 +348,9 @@ export function buildFoundRunRequest(config: StackConfig): WizardRunRequest {
               })),
     },
     goals: selectedCanonicalUseCasesFromGoals(config.goals),
-    server: runServer(config),
+    server: existingServerId
+      ? { existing_server_id: existingServerId }
+      : runServer(config),
     kit_assignment: {
       mode: "found",
       kit_slug: normalizeRunKitSlug(config),
@@ -360,6 +365,9 @@ export function buildFoundRunRequest(config: StackConfig): WizardRunRequest {
   const foundCapabilities = runUseCaseCapabilities(config, intent.goals ?? []);
   if (foundCapabilities) intent.use_case_capabilities = foundCapabilities;
   const request: WizardRunRequest = { intent };
+  // An enrolled target already has a governed Guard identity. Installation
+  // never provisions, reconnects, or bootstraps another server or owner.
+  if (existingServerId) return request;
   const owner = buildRunOwnerOptions(config);
   if (owner) request.owner = owner;
   const managed = buildRunManagedParams(config);

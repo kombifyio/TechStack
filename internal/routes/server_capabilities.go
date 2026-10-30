@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"slices"
 	"sort"
 	"strings"
@@ -210,7 +211,7 @@ func serverStackActions(server controlplane.ServerRuntime) []string {
 // Day-2 actions require the authenticated node transport and the exact runtime
 // release it has converged. The dispatcher still performs operation admission,
 // capability issuance, service-lock checks and owner approval before dispatch.
-func (h serverRuntimeHandlers) applyStackKitActions(item *serverRuntimeResponse, server controlplane.ServerRuntime) {
+func (h serverRuntimeHandlers) applyStackKitActions(ctx context.Context, item *serverRuntimeResponse, server controlplane.ServerRuntime) {
 	if item.Capabilities == nil || item.Capabilities.IdentityBinding != serverIdentityKeyBound ||
 		!slices.Contains(item.StackActions, serverStackActionApply) {
 		return
@@ -221,7 +222,7 @@ func (h serverRuntimeHandlers) applyStackKitActions(item *serverRuntimeResponse,
 			capabilities = current
 		}
 	}
-	configured, err := jobs.CachedTargetStackKitRelease()
+	configured, err := jobs.CachedTargetStackKitReleaseForStack(ctx, server.TenantID, server.StackID)
 	if err != nil || configured == nil {
 		return
 	}
