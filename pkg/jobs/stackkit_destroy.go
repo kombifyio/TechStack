@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func destroyStackKitWorkspace(ctx context.Context, workDir, workload string) error {
+func destroyStackKitWorkspace(ctx context.Context, workDir, workload string, scope ...StackKitLifecycleRequest) error {
 	workload = strings.TrimSpace(workload)
 	if workload == "" {
 		return fmt.Errorf("StackKits remove requires a workload reference")
@@ -28,7 +28,23 @@ func destroyStackKitWorkspace(ctx context.Context, workDir, workload string) err
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	binary, err := pinnedStackKitRemoveBinary()
+	resolve := pinnedStackKitRemoveBinary
+	if StageCandidateReleaseConfigured() {
+		resolve = func() (string, error) {
+			if len(scope) != 1 {
+				return "", fmt.Errorf("candidate stack removal needs actual tenant and Stack scope")
+			}
+			release, err := PinnedStackKitReleaseForStack(ctx, scope[0].TenantID, scope[0].StackID)
+			if err != nil {
+				return "", err
+			}
+			if release == nil {
+				return "", fmt.Errorf("candidate removal controller is unavailable")
+			}
+			return release.BinaryPath(), nil
+		}
+	}
+	binary, err := resolve()
 	if err != nil {
 		return err
 	}

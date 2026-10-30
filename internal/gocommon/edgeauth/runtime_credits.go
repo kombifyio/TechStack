@@ -13,7 +13,7 @@ const (
 	// decision delivered in the request-bound Edge decision envelope.
 	CloudRuntimeCreditsBudgetName = "cloud.runtime.credits" // #nosec G101 -- public product budget name, not credential material.
 
-	// ManagedServerCreditModeLimited carries a positive hard-accounting limit.
+	// ManagedServerCreditModeLimited carries a nonnegative hard-accounting limit; zero denies new capacity.
 	ManagedServerCreditModeLimited ManagedServerCreditMode = "limited"
 	// ManagedServerCreditModeUnlimited explicitly removes the managed-server
 	// ceiling. Absence or zero never implies unlimited.
@@ -31,7 +31,8 @@ var (
 type ManagedServerCreditMode string
 
 // ManagedServerCredit is the validated managed-server portion of
-// cloud.runtime.credits. Limit is zero only for explicit unlimited mode.
+// cloud.runtime.credits. Limited mode with Limit=0 denies new capacity; only
+// explicit unlimited mode removes the ceiling.
 type ManagedServerCredit struct {
 	Mode  ManagedServerCreditMode
 	Limit int
@@ -70,7 +71,7 @@ type managedServerCreditWire struct {
 // ParseCloudRuntimeCredits parses the only supported budget variants:
 // {"managed_servers":{"mode":"limited","limit":N}} or
 // {"managed_servers":{"mode":"unlimited"}}. Unknown fields, nulls,
-// fractional/zero limits, and a limit on unlimited mode fail closed.
+// fractional/negative limits, and a limit on unlimited mode fail closed.
 func ParseCloudRuntimeCredits(raw json.RawMessage) (CloudRuntimeCredits, error) {
 	var outer cloudRuntimeCreditsWire
 	if err := decodeClosedJSON(raw, &outer); err != nil {
@@ -98,8 +99,8 @@ func ParseCloudRuntimeCredits(raw json.RawMessage) (CloudRuntimeCredits, error) 
 			return CloudRuntimeCredits{}, fmt.Errorf("%w: limited managed_servers requires limit", ErrCloudRuntimeCreditsInvalid)
 		}
 		var limit int
-		if err := decodeClosedJSON(limitRaw, &limit); err != nil || limit <= 0 || limit > maxManagedServerCreditLimit {
-			return CloudRuntimeCredits{}, fmt.Errorf("%w: limited managed_servers requires a supported positive integer", ErrCloudRuntimeCreditsInvalid)
+		if err := decodeClosedJSON(limitRaw, &limit); err != nil || limit < 0 || limit > maxManagedServerCreditLimit {
+			return CloudRuntimeCredits{}, fmt.Errorf("%w: limited managed_servers requires a supported nonnegative integer", ErrCloudRuntimeCreditsInvalid)
 		}
 		return CloudRuntimeCredits{ManagedServers: ManagedServerCredit{Mode: mode, Limit: limit}}, nil
 	default:

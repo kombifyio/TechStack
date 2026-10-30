@@ -102,7 +102,10 @@ export const START_PAGE_HREF = "/dashboard";
 /** The one list of the homelab's servers. */
 export const SERVERS_HREF = "/servers";
 
-/** Where a new homelab is created (the creation wizard). */
+/**
+ * Where a new homelab is created (the creation wizard). An owner who already
+ * has servers first chooses between them and a new server.
+ */
 export const CREATE_HOMELAB_HREF = "/stacks/new";
 
 /** Product settings; the Homelab tool tab lives under it. */

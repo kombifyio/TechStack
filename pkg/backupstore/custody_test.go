@@ -35,7 +35,7 @@ func TestCustodyUpsertEncryptsAndVerifiesReturnedRow(t *testing.T) {
 	observedAt := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).
 		WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("INSERT INTO stack_backup_stores").
 		WithArgs("tenant-a", "stack-a", "skbk-stack-a", "https://acct.r2.cloudflarestorage.com",
@@ -79,7 +79,7 @@ func TestCustodyGetDecryptsTenantScopedRow(t *testing.T) {
 	secret, _ := encryptor.Encrypt("s3-secret")
 	password, _ := encryptor.Encrypt("repo-password")
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).
 		WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT tenant_id, stack_id, bucket").WithArgs("tenant-a", "stack-a").
 		WillReturnRows(custodyRows().AddRow("tenant-a", "stack-a", "skbk-stack-a", "https://acct.r2.cloudflarestorage.com", "token-a", "access-a", secret, password, time.Now(), nil, nil))
@@ -104,7 +104,7 @@ func TestCustodyRejectsPlaintextReturnedByDatabase(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT tenant_id, stack_id, bucket").WithArgs("tenant-a", "stack-a").
 		WillReturnRows(custodyRows().AddRow("tenant-a", "stack-a", "skbk-stack-a", "https://acct.r2.cloudflarestorage.com", "token-a", "access-a", "plaintext", "plaintext", time.Now(), nil, nil))
 	mock.ExpectCommit()
@@ -151,7 +151,7 @@ func TestCustodyRecordsAttestationOnlyForCurrentGeneration(t *testing.T) {
 	verified.ObservedAt = attestedAt
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT tenant_id, stack_id, bucket.*FOR UPDATE").WithArgs("tenant-a", "stack-a").
 		WillReturnRows(custodyRows().AddRow(row.TenantID, row.StackID, row.Bucket, row.Endpoint, row.TokenID, row.AccessKeyID, secret, password, updatedAt, nil, nil))
 	mock.ExpectQuery("UPDATE stack_backup_stores").WithArgs("tenant-a", "stack-a", string(verified.AttestationEvidence), attestedAt).

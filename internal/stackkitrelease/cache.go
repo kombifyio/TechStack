@@ -16,9 +16,12 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/guardrelease"
 )
 
 const (
+	CandidatePinSchemaVersion          = "techstack.stackkit-preview-candidate-pin/v1"
 	PinSchemaVersion                   = "techstack.stackkit-release-pin/v2"
 	legacyPinSchemaVersion             = "techstack.stackkit-release-pin/v1"
 	ReceiptSchemaVersion               = "stackkit.release-receipt/v1"
@@ -49,14 +52,15 @@ var (
 
 // Pin is Techstack's immutable deployment input.
 type Pin struct {
-	SchemaVersion string   `json:"schemaVersion"`
-	Kit           string   `json:"kit"`
-	Version       string   `json:"version"`
-	Platform      Platform `json:"platform"`
-	ArchiveSHA256 string   `json:"archiveSha256"`
-	IndexSHA256   string   `json:"indexSha256"`
-	BinarySHA256  string   `json:"binarySha256,omitempty"`
-	BinaryPath    string   `json:"binaryPath"`
+	Candidate     *guardrelease.PreviewCandidateProvenance `json:"candidate,omitempty"`
+	SchemaVersion string                                   `json:"schemaVersion"`
+	Kit           string                                   `json:"kit"`
+	Version       string                                   `json:"version"`
+	Platform      Platform                                 `json:"platform"`
+	ArchiveSHA256 string                                   `json:"archiveSha256"`
+	IndexSHA256   string                                   `json:"indexSha256"`
+	BinarySHA256  string                                   `json:"binarySha256,omitempty"`
+	BinaryPath    string                                   `json:"binaryPath"`
 }
 
 type Platform struct {
@@ -65,30 +69,33 @@ type Platform struct {
 }
 
 type Receipt struct {
-	SchemaVersion          string    `json:"schemaVersion"`
-	Kit                    string    `json:"kit"`
-	Version                string    `json:"version"`
-	Channel                string    `json:"channel"`
-	Platform               Platform  `json:"platform"`
-	ArchiveSHA256          string    `json:"archiveSha256"`
-	SBOMSHA256             string    `json:"sbomSha256"`
-	AttestationSHA256      string    `json:"attestationSha256"`
-	AttestationIssuer      string    `json:"attestationIssuer"`
-	AttestationSubject     string    `json:"attestationSubject"`
-	TrustedRootSHA256      string    `json:"trustedRootSha256"`
-	IndexSHA256            string    `json:"indexSha256"`
-	IndexAttestationSHA256 string    `json:"indexAttestationSha256"`
-	VerifiedAt             time.Time `json:"verifiedAt"`
-	InstallDir             string    `json:"installDir"`
+	Candidate              *guardrelease.PreviewCandidateProvenance `json:"candidate,omitempty"`
+	SchemaVersion          string                                   `json:"schemaVersion"`
+	Kit                    string                                   `json:"kit"`
+	Version                string                                   `json:"version"`
+	Channel                string                                   `json:"channel"`
+	Platform               Platform                                 `json:"platform"`
+	ArchiveSHA256          string                                   `json:"archiveSha256"`
+	SBOMSHA256             string                                   `json:"sbomSha256"`
+	AttestationSHA256      string                                   `json:"attestationSha256"`
+	AttestationIssuer      string                                   `json:"attestationIssuer"`
+	AttestationSubject     string                                   `json:"attestationSubject"`
+	TrustedRootSHA256      string                                   `json:"trustedRootSha256"`
+	IndexSHA256            string                                   `json:"indexSha256"`
+	IndexAttestationSHA256 string                                   `json:"indexAttestationSha256"`
+	VerifiedAt             time.Time                                `json:"verifiedAt"`
+	InstallDir             string                                   `json:"installDir"`
 }
 
 // Release is the runtime identity consumers need: an exact executable and its
 // published artifact identity. Legacy v1 pins retain their cached receipt.
 type Release struct {
-	binaryPath  string
-	installDir  string
-	receiptPath string
-	receipt     Receipt
+	stageCandidate *StageCandidateResolver
+	useCaseCatalog *UseCaseCatalog
+	binaryPath     string
+	installDir     string
+	receiptPath    string
+	receipt        Receipt
 	// advancedOperations is the stackkit.advanced-operations/v1 catalog the
 	// release shipped; nil when the release predates the catalog.
 	advancedOperations []byte
@@ -98,6 +105,10 @@ type Release struct {
 // StackKits-owned .stackkit/releases directory.
 type Cache struct {
 	Root string
+	// CandidateAdmission is supplied only by the privileged executor's root-only
+	// accepted-install receipt or by the typed native Stage factory. Nil keeps
+	// the normal public cache strict; an environment variable cannot enable it.
+	CandidateAdmission func(Pin) error
 }
 
 type releaseIndex struct {
@@ -160,6 +171,15 @@ func (cache Cache) ResolvePin(path string) (Release, error) {
 	if err != nil {
 		return Release{}, err
 	}
+	if pin.SchemaVersion == CandidatePinSchemaVersion {
+		if cache.CandidateAdmission == nil {
+			return Release{}, fmt.Errorf("internal StackKits candidate requires typed Stage/installed admission")
+		}
+		if err := cache.CandidateAdmission(pin); err != nil {
+			return Release{}, err
+		}
+		return resolveArtifactPin(pin, path)
+	}
 	if pin.SchemaVersion == PinSchemaVersion {
 		return resolveArtifactPin(pin, path)
 	}
@@ -171,6 +191,15 @@ func (cache Cache) ResolvePin(path string) (Release, error) {
 func (cache Cache) Resolve(pin Pin) (Release, error) {
 	if err := pin.validate(); err != nil {
 		return Release{}, err
+	}
+	if pin.SchemaVersion == CandidatePinSchemaVersion {
+		if cache.CandidateAdmission == nil {
+			return Release{}, fmt.Errorf("internal StackKits candidate requires typed Stage/installed admission")
+		}
+		if err := cache.CandidateAdmission(pin); err != nil {
+			return Release{}, err
+		}
+		return resolveArtifactPin(pin, "")
 	}
 	if pin.SchemaVersion == PinSchemaVersion {
 		return resolveArtifactPin(pin, "")
@@ -294,16 +323,21 @@ func resolveArtifactPin(pin Pin, pinPath string) (Release, error) {
 	if err != nil {
 		return Release{}, err
 	}
+	channel := channelForVersion(pin.Version)
+	if pin.Candidate != nil {
+		channel = "internal-preview"
+	}
 	return Release{
 		advancedOperations: catalog,
 		binaryPath:         binaryPath,
 		installDir:         filepath.Dir(binaryPath),
 		receiptPath:        pinPath,
 		receipt: Receipt{
-			SchemaVersion: PinSchemaVersion,
+			Candidate:     pin.Candidate,
+			SchemaVersion: pin.SchemaVersion,
 			Kit:           pin.Kit,
 			Version:       pin.Version,
-			Channel:       channelForVersion(pin.Version),
+			Channel:       channel,
 			Platform:      pin.Platform,
 			ArchiveSHA256: pin.ArchiveSHA256,
 			IndexSHA256:   pin.IndexSHA256,
@@ -316,8 +350,15 @@ func (pin Pin) validate() error {
 }
 
 func (pin Pin) validateForPlatform(expected Platform) error {
-	if pin.SchemaVersion != PinSchemaVersion && pin.SchemaVersion != legacyPinSchemaVersion {
+	if pin.SchemaVersion != PinSchemaVersion && pin.SchemaVersion != legacyPinSchemaVersion && pin.SchemaVersion != CandidatePinSchemaVersion {
 		return fmt.Errorf("unsupported StackKits release pin schema %q", pin.SchemaVersion)
+	}
+	if pin.SchemaVersion == CandidatePinSchemaVersion {
+		if pin.Candidate == nil || pin.Candidate.Validate() != nil || pin.Candidate.IndexSHA256 != pin.IndexSHA256 {
+			return fmt.Errorf("internal StackKits candidate pin has no matching provenance")
+		}
+	} else if pin.Candidate != nil {
+		return fmt.Errorf("public StackKits pin cannot carry candidate provenance")
 	}
 	if !safeKitPattern.MatchString(pin.Kit) {
 		return fmt.Errorf("invalid pinned StackKit %q", pin.Kit)
@@ -340,7 +381,7 @@ func (pin Pin) validateForPlatform(expected Platform) error {
 	if !sha256Pattern.MatchString(pin.IndexSHA256) {
 		return fmt.Errorf("pinned StackKits release-index SHA-256 is invalid")
 	}
-	if pin.SchemaVersion == PinSchemaVersion && !sha256Pattern.MatchString(pin.BinarySHA256) {
+	if (pin.SchemaVersion == PinSchemaVersion || pin.SchemaVersion == CandidatePinSchemaVersion) && !sha256Pattern.MatchString(pin.BinarySHA256) {
 		return fmt.Errorf("pinned StackKits binary SHA-256 is invalid")
 	}
 	if strings.TrimSpace(pin.BinaryPath) == "" {

@@ -31,6 +31,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/usernotice"
@@ -52,6 +53,9 @@ type ConnectorReconciler interface {
 }
 
 type WorkerRouteConfig struct {
+	// BindingSigner uses the existing per-worker Guard keys in native custody.
+	// Local/self-hosted composition retains the established local derivation.
+	BindingSigner        WorkerBindingSignerFactory
 	ConnectorReconciler  ConnectorReconciler
 	MetricWriter         WorkerMetricWriter
 	ManagedRuntimeLeases managedRuntimeLeaseLister
@@ -124,7 +128,10 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 	// The encryption key is the base secret each worker's binding key is
 	// derived from; GetEncryptor admits only a well-formed one.
 	var bindingKeyBase []byte
-	if auth.GetEncryptor() != nil {
+	if cfg.BindingSigner != nil {
+		// The native factory admits an exact worker and returns only public pins
+		// and signing operations; the HTTP process receives no base secret.
+	} else if auth.GetEncryptor() != nil {
 		bindingKeyBase = []byte(os.Getenv(auth.EncryptionKeyEnvVar))
 	} else if err := requireBindingKey(workerauth.Strict(), false); err != nil {
 		panic("RegisterWorkerRoutesWithStore: " + err.Error())
@@ -160,6 +167,7 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 		identityStore:        identityStore,
 		credentialSecret:     workerauth.SecretFromEnv(),
 		bindingKeyBase:       bindingKeyBase,
+		bindingSigner:        cfg.BindingSigner,
 		inventoryGate:        newInventoryProjectionGate(inventoryProjectionBudget),
 	}
 	r.GET("/api/v1/workers", h.list)
@@ -188,6 +196,8 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 	r.GET("/api/v1/workers/{id}/identity/upgrade", h.identityUpgradeStatus)
 	r.POST("/api/v1/workers/{id}/identity/upgrade/approve", h.identityUpgradeApprove).BindFunc(workerBodyBound(4 << 10))
 	r.POST("/api/v1/workers/{id}/identity/upgrade/reject", h.identityUpgradeReject).BindFunc(workerBodyBound(4 << 10))
+	r.POST("/api/v1/workers/{id}/tenant-handoff", h.confirmTenantHandoff).BindFunc(workerBodyBound(1 << 10))
+	r.POST("/api/v1/workers/tenant-handoffs/verify", h.verifyTenantHandoff).BindFunc(workerBodyBound(4 << 10))
 	r.POST("/api/v1/workers/{id}/reach", h.workerReach).BindFunc(h.workerAgentIngress(workerReachMaxBody))
 	r.POST("/api/v1/workers/{id}/posture", h.workerPosture).BindFunc(h.workerAgentIngress(workerPostureBodyLimit))
 	r.POST("/api/v1/workers/{id}/telemetry", h.workerTelemetry).BindFunc(h.workerAgentIngress(workerTelemetryBodyLimit))
@@ -233,6 +243,7 @@ type workerRouteHandlers struct {
 	// bindingKeyBase is the secret each worker's command-binding key is derived
 	// from. Empty leaves new Guards unpinned and bindings unsigned.
 	bindingKeyBase []byte
+	bindingSigner  WorkerBindingSignerFactory
 }
 
 func (h workerRouteHandlers) list(e *httpx.Event) error {
@@ -706,6 +717,9 @@ type workerRegistrationRequest struct {
 	// are optional for legacy installers and required together otherwise.
 	GuardPublicKey json.RawMessage `json:"guard_public_key,omitempty"`
 	AttemptID      string          `json:"attempt_id,omitempty"`
+	// PriorCustody is what the Guard still holds of earlier bindings and the
+	// handoffs it completed (Guard G04). Absent for a Guard that predates it.
+	PriorCustody *guardbinding.PriorCustody `json:"prior_custody,omitempty"`
 }
 
 const workerRegistrationMaxBodyBytes int64 = 64 << 10
@@ -745,6 +759,9 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 	if !guardOK {
 		return httpx.BadRequest(e, guardProblem, nil)
 	}
+	if releasechannel.StageRuntimePrepared() && guard == nil {
+		return tenantguard.ExecutionRefusal(releasechannel.ErrTenantNotOwned)
+	}
 	if guard != nil {
 		if h.identityStore == nil {
 			denyGuard(e, guardidentity.CodeIdentityUnavailable, "")
@@ -770,6 +787,16 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 	isSubstrate := nodehandoff.StringFromMap(resolved.Metadata, nodehandoff.KeyServerNodeRole) == "substrate"
 	if isSubstrate != (req.Type == "substrate") || (isSubstrate && (req.Provider != "proxmox" || req.OS != "linux" || runtimeLeaseIDFromMetadata(resolved.Metadata) != "")) {
 		return httpx.BadRequest(e, "The machine class does not match the approved Node connection", nil)
+	}
+	// A server that still holds another tenant's command evidence, or presents
+	// a handoff receipt, is checked before the owner's capability is consumed.
+	keyThumbprint := ""
+	if guard != nil {
+		keyThumbprint = guard.thumbprint
+	}
+	handoffReceipts, admitted := h.admitPriorCustody(e, req.PriorCustody, resolved.TenantID, keyThumbprint)
+	if !admitted {
+		return nil
 	}
 	token, tokenHash, tokErr := h.claimStorePairingToken(e, req.Token, now)
 	if tokErr != nil || token == nil {
@@ -823,14 +850,25 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create runtime agent credential", nil)
 	}
 
-	worker, err := h.enrollRegisteringWorker(e.Request.Context(), buildStoreWorker(*token, req, storeWorkerContext{
+	handoffDigests, consumed := h.consumeHandoffReceipts(e, handoffReceipts, token.TenantID, workerID, keyThumbprint, now)
+	if !consumed {
+		return nil
+	}
+	registering := buildStoreWorker(*token, req, storeWorkerContext{
 		workerID:  workerID,
 		serverID:  serverID,
 		tokenHash: tokenHash,
 		agentHash: workerauth.SHA256Hex(agentToken),
 		clientIP:  getClientIP(e),
 		now:       now,
-	}), serverID, leaseID, now)
+	})
+	if len(handoffDigests) > 0 {
+		if registering.Capabilities == nil {
+			registering.Capabilities = map[string]any{}
+		}
+		registering.Capabilities[workerFieldTenantHandoffReceipts] = handoffDigests
+	}
+	worker, err := h.enrollRegisteringWorker(e.Request.Context(), registering, serverID, leaseID, now)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
 	}
@@ -869,7 +907,7 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 	// complete and the single-use claim must never be released from here on.
 	enrollmentIssued = true
 	e.Response.Header().Set("Cache-Control", "no-store")
-	return httpx.Success(e, http.StatusOK, h.workerEnrollmentResponse(e, workerEnrollmentContext{
+	return h.writeWorkerEnrollmentResponse(e, workerEnrollmentContext{
 		WorkerID:       worker.ID,
 		GuardRole:      worker.Type,
 		ServerID:       serverID,
@@ -882,7 +920,7 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 		AgentToken:     agentToken,
 		GRPCIdentity:   issuedIdentity,
 		GuardIdentity:  guardIdentity,
-	}))
+	})
 }
 
 // repeatGuardRegistration answers a repeated redemption of a pairing capability
@@ -910,6 +948,13 @@ func (h workerRouteHandlers) repeatGuardRegistration(e *httpx.Event, req workerR
 		token.ExpiresAt != nil && token.ExpiresAt.Before(deadline) {
 		deadline = *token.ExpiresAt
 	}
+	worker, workerErr := h.wst.GetWorker(ctx, parsed.TenantID, identity.WorkerID)
+	if workerErr != nil || worker == nil {
+		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
+	}
+	if err := h.requireStageEnrolledLease(e, worker); err != nil {
+		return true, err
+	}
 	agentToken, tokenErr := h.issueRuntimeAgentToken()
 	if tokenErr != nil || strings.TrimSpace(agentToken) == "" {
 		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create runtime agent credential", nil)
@@ -927,12 +972,8 @@ func (h workerRouteHandlers) repeatGuardRegistration(e *httpx.Event, req workerR
 	case reissueErr != nil:
 		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
 	}
-	worker, workerErr := h.wst.GetWorker(ctx, parsed.TenantID, identity.WorkerID)
-	if workerErr != nil || worker == nil {
-		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
-	}
 	e.Response.Header().Set("Cache-Control", "no-store")
-	return true, httpx.Success(e, http.StatusOK, h.workerEnrollmentResponse(e, workerEnrollmentContext{
+	return true, h.writeWorkerEnrollmentResponse(e, workerEnrollmentContext{
 		WorkerID: worker.ID, GuardRole: worker.Type, ServerID: stringFromAny(worker.Capabilities[workerFieldServerID]),
 		RuntimeAgentID: worker.ID, TenantID: worker.TenantID, OwnerID: worker.OwnerSubjectID, StackID: worker.StackID,
 		LeaseID: runtimeLeaseIDFromMetadata(worker.Capabilities), Accepted: worker.Approved,
@@ -940,7 +981,7 @@ func (h workerRouteHandlers) repeatGuardRegistration(e *httpx.Event, req workerR
 		GuardIdentity: &guardEnrollmentIdentity{
 			State: reissued.State, AttemptID: reissued.AttemptID, Thumbprint: reissued.Thumbprint,
 		},
-	}))
+	})
 }
 
 // existingPairingWorkerID keeps a repeated owner-approved pairing bound to the
@@ -987,6 +1028,9 @@ func (h workerRouteHandlers) resolveStorePairingToken(e *httpx.Event, rawToken s
 	if token.OwnerSubjectID == "" {
 		return nil, "", httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Token missing user", nil)
 	}
+	if err := h.requireStagePairingLease(e, token); err != nil {
+		return nil, "", err
+	}
 	return token, parsed.TokenHash, nil
 }
 
@@ -997,6 +1041,11 @@ func (h workerRouteHandlers) claimStorePairingToken(e *httpx.Event, rawToken str
 	parsed, parseErr := pairingtoken.Parse(rawToken)
 	if parseErr != nil || parsed.Legacy {
 		return nil, "", httpx.Unauthorized(e, "Invalid or expired token")
+	}
+	if releasechannel.StageRuntimePrepared() {
+		if _, _, err := h.resolveStorePairingToken(e, rawToken); err != nil {
+			return nil, "", err
+		}
 	}
 	token, err := h.wst.ClaimPairingToken(e.Request.Context(), parsed.TenantID, parsed.TokenHash, claimedAt)
 	if errors.Is(err, controlplane.ErrNotFound) {

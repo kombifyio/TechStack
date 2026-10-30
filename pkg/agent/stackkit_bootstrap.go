@@ -122,6 +122,14 @@ func FetchStackKitRuntimeBundle(ctx context.Context, cfg StackKitRuntimeBootstra
 		if err != nil {
 			return StackKitRuntimeBundle{}, err
 		}
+		// A server-directed refusal belongs to the durable outer convergence
+		// schedule. Retrying here can consume a full body before Retry-After.
+		if retryAfter := ArtifactRetryAfter(response.Header.Get("Retry-After"), time.Now()); stackKitReleaseGatewayStatus(response.StatusCode) && retryAfter > 0 {
+			_ = response.Body.Close()
+			return StackKitRuntimeBundle{}, &ArtifactHTTPError{
+				Operation: "StackKits release download", StatusCode: response.StatusCode, RetryAfter: retryAfter,
+			}
+		}
 		if !stackKitReleaseGatewayStatus(response.StatusCode) || attempt >= stackKitReleaseDownloadAttempts {
 			break
 		}
@@ -142,7 +150,7 @@ func FetchStackKitRuntimeBundle(ctx context.Context, cfg StackKitRuntimeBootstra
 		return StackKitRuntimeBundle{NotModified: true}, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return StackKitRuntimeBundle{}, fmt.Errorf("StackKits release download returned HTTP %d", response.StatusCode)
+		return StackKitRuntimeBundle{}, &ArtifactHTTPError{Operation: "StackKits release download", StatusCode: response.StatusCode, RetryAfter: ArtifactRetryAfter(response.Header.Get("Retry-After"), time.Now())}
 	}
 	expected := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Kombify-Artifact-SHA256")))
 	if len(expected) != sha256.Size*2 {
@@ -284,7 +292,7 @@ func (executor *StackKitExecutor) retainInstalledRelease(ctx context.Context, st
 	if filepath.Clean(installed.BinaryPath) != filepath.Join(executor.RuntimeRoot(), "bin", "stackkit") {
 		return fmt.Errorf("installed StackKits pin points outside the runtime root")
 	}
-	release, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
+	release, err := executor.releaseCache().ResolvePin(executor.pinPath)
 	if err != nil {
 		return err
 	}
@@ -318,6 +326,13 @@ func (executor *StackKitExecutor) retainInstalledRelease(ctx context.Context, st
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultStackKitCommandTimeout)
 	defer cancel()
+	if installed.Candidate != nil {
+		material, err := executor.installedCandidateSource(installed)
+		if err != nil {
+			return err
+		}
+		return retainStackKitSourceCandidate(ctx, stagedCLI, cache, installed, cliDigest, material)
+	}
 	// Runtime bundles built before the pin named the kit of its own archive
 	// label the bootstrap archive with the image's catalog kit. The CLI binds
 	// archive, index and CLI digests exactly and verifies attestations, so the
@@ -541,7 +556,7 @@ func (executor *StackKitExecutor) lockRuntime(ctx context.Context, exclusive boo
 }
 
 func (executor *StackKitExecutor) currentStackKitRuntimeEvidence() (StackKitRuntimeConvergenceResult, error) {
-	release, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
+	release, err := executor.releaseCache().ResolvePin(executor.pinPath)
 	if err != nil {
 		return StackKitRuntimeConvergenceResult{}, err
 	}
@@ -652,6 +667,13 @@ func installStackKitRuntimeBundleChecked(bundlePath, targetRoot, bundleDigest st
 	}
 	_ = os.RemoveAll(backup)
 	return nil
+}
+
+// InstalledStackKitRuntimeBundleDigestAt reads the installer's existing
+// root-owned activation marker without acquiring another executor lock. The
+// privileged admission loader calls it while its caller holds that lock.
+func InstalledStackKitRuntimeBundleDigestAt(targetRoot string) (string, error) {
+	return readInstalledStackKitBundleDigest(targetRoot)
 }
 
 func readInstalledStackKitBundleDigest(targetRoot string) (string, error) {

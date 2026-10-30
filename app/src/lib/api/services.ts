@@ -1,3 +1,4 @@
+import { isAppIconUrl } from "../brand-logo";
 import { fetchApi } from "./client";
 import { parseManagementState, type RegistryManagementState } from "./registry";
 
@@ -63,6 +64,35 @@ export interface ServiceCatalogRef {
   vendor?: ServiceVendor;
   /** Official end-user clients (stores and installers), when the catalog lists any. */
   clients?: ServiceClient[];
+  /** The project website of the recognized application (https only). */
+  homepage_url?: string;
+  /** How the application was recognized, strongest evidence first. */
+  evidence?: ServiceCatalogEvidence;
+  /**
+   * The application's logo on our own asset host. Absent means no logo is
+   * known (or it was removed): draw a monogram, never a third-party image.
+   */
+  logo?: ServiceCatalogLogo;
+  /** The catalog removed this application's logo: draw the monogram. */
+  logo_removed?: boolean;
+}
+
+/** The layer that recognized an application (container labels beat image names). */
+export type ServiceCatalogEvidence =
+  "label" | "image" | "name" | "http_fingerprint" | "released_catalog";
+
+/** Where a mirrored logo comes from; every source is mirrored on our asset host. */
+export type ServiceCatalogLogoSource =
+  "dashboard-icons" | "simple-icons" | "kombify";
+
+export interface ServiceCatalogLogo {
+  /** The logo, an SVG when mirrored, otherwise a PNG. */
+  url: string;
+  /** Variant for a light UI theme, when the icon set ships one. */
+  light_url?: string;
+  /** Variant for a dark UI theme, when the icon set ships one. */
+  dark_url?: string;
+  source: ServiceCatalogLogoSource;
 }
 
 export interface ServiceSupport {
@@ -289,7 +319,52 @@ function normalizeCatalogRef(value: unknown): ServiceCatalogRef | undefined {
     guide_url: httpsUrl(record.guide_url),
     vendor: normalizeVendor(record.vendor),
     clients: normalizeClients(record.clients),
+    homepage_url: httpsUrl(record.homepage_url),
+    evidence: normalizeEvidence(record.evidence),
+    logo: normalizeLogo(record.logo),
+    logo_removed: record.logo_removed === true || undefined,
   };
+}
+
+const CATALOG_EVIDENCE: readonly ServiceCatalogEvidence[] = [
+  "label",
+  "image",
+  "name",
+  "http_fingerprint",
+  "released_catalog",
+];
+
+function normalizeEvidence(value: unknown): ServiceCatalogEvidence | undefined {
+  return CATALOG_EVIDENCE.find((evidence) => evidence === value);
+}
+
+const LOGO_SOURCES: readonly ServiceCatalogLogoSource[] = [
+  "dashboard-icons",
+  "simple-icons",
+  "kombify",
+];
+
+/**
+ * A logo is only ever drawn from our own asset host: a URL that points
+ * anywhere else is dropped, so the monogram shows instead of a hot-linked
+ * third-party image.
+ */
+function normalizeLogo(value: unknown): ServiceCatalogLogo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const url = appIconUrlField(record.url);
+  const source = LOGO_SOURCES.find((candidate) => candidate === record.source);
+  if (!url || !source) return undefined;
+  return {
+    url,
+    light_url: appIconUrlField(record.light_url),
+    dark_url: appIconUrlField(record.dark_url),
+    source,
+  };
+}
+
+function appIconUrlField(value: unknown): string | undefined {
+  return typeof value === "string" && isAppIconUrl(value) ? value : undefined;
 }
 
 function httpsUrl(value: unknown): string | undefined {

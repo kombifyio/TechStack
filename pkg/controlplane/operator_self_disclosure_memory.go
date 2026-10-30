@@ -1,7 +1,9 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -27,7 +29,7 @@ func (s *MemoryStore) GetOperatorSelfDisclosure(_ context.Context, tenantID, own
 	return cloneOperatorSelfDisclosure(disclosure), nil
 }
 
-func (s *MemoryStore) UpsertOperatorSelfDisclosure(_ context.Context, disclosure OperatorSelfDisclosure) (*OperatorSelfDisclosure, error) {
+func (s *MemoryStore) UpsertOperatorSelfDisclosure(_ context.Context, disclosure OperatorSelfDisclosure, ifUnchanged *OperatorSelfDisclosureValue) (*OperatorSelfDisclosure, error) {
 	normalized, err := normalizeOperatorSelfDisclosure(disclosure)
 	if err != nil {
 		return nil, err
@@ -37,6 +39,14 @@ func (s *MemoryStore) UpsertOperatorSelfDisclosure(_ context.Context, disclosure
 	defer s.mu.Unlock()
 
 	key := operatorSelfDisclosureKey(normalized.TenantID, normalized.OwnerSubjectID)
+	if ifUnchanged != nil {
+		existing, ok := s.selfDisclosures[key]
+		currentJSON, _ := json.Marshal(existing.Disclosure)
+		expectedJSON, _ := json.Marshal(ifUnchanged.Disclosure)
+		if !ok || existing.Source != ifUnchanged.Source || !bytes.Equal(currentJSON, expectedJSON) {
+			return nil, ErrConflict
+		}
+	}
 	now := s.now()
 	if existing, ok := s.selfDisclosures[key]; ok {
 		normalized.ID = existing.ID

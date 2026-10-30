@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 // ErrNoTenant is returned when a tenant-scoped operation is invoked without a
@@ -13,14 +15,14 @@ import (
 // cross-tenant leakage.
 var ErrNoTenant = errors.New("no tenant id")
 
-// TenantGUC is the Postgres GUC (custom session variable) that RLS policies
-// match against via current_setting('app.tenant_id', true).
+// TenantGUC remains the local/system compatibility scope. Hosted policies
+// additionally require the database-verified Gateway context.
 const TenantGUC = "app.tenant_id"
 
-// WithTenant runs fn inside a transaction with the per-session GUC
-// `app.tenant_id` set to tenantID. Any RLS policy that filters on
-// current_setting('app.tenant_id', true) will see the matching value for the
-// duration of the transaction.
+// WithTenant runs fn inside a transaction bound to the Gateway context when
+// present. Its database-verified tenant must equal tenantID before payload SQL.
+// Native local and separately authorized system work retain their own scope;
+// that scope alone never satisfies a hosted verified-context RLS policy.
 //
 // tenantID must be non-empty and is rejected if it contains characters that
 // could break out of the SET LOCAL statement (the value is passed via a
@@ -57,9 +59,9 @@ func BeginTenantTransaction(ctx context.Context, pool *sql.DB, tenantID string) 
 	if err != nil {
 		return nil, fmt.Errorf("begin tenant tx: %w", err)
 	}
-	if _, err = tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", TenantGUC, tenantID); err != nil {
+	if err = tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		_ = tx.Rollback()
-		return nil, fmt.Errorf("set tenant guc: %w", err)
+		return nil, err
 	}
 	return tx, nil
 }

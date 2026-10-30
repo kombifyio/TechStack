@@ -14,8 +14,9 @@
 //   backup    the native restore drill took its backup snapshot
 //   restore   the native restore drill restored and verified it
 // A phase without its proof is "failed", never "passed".
-// This compatibility receipt does not qualify the complete paid-beta B4/B5
-// journey (which additionally requires retry, upgrade and port admission).
+// The lifecycle evidence (upgrade, bounded retry, port claims) is carried
+// unchanged for scripts/paid-journey-receipt.mjs, which maps the complete
+// paid-beta B4/B5 journey; it does not change this compatibility status.
 
 import type { ManagedDay2Evidence } from "./managed-day2-evidence";
 
@@ -23,6 +24,37 @@ export const MANAGED_RECEIPT_SCHEMA = "techstack.depot-vm-run/v1";
 export const MANAGED_EVIDENCE_SCOPE = "managed-provider-lifecycle";
 
 type Json = Record<string, unknown>;
+
+/** Upgrade, bounded retry and port claims observed on the converged node. */
+export interface ManagedLifecycleEvidence {
+  upgrade?: {
+    job_id: string;
+    status: string;
+    success: boolean;
+    release: { version: string; archive_sha256: string };
+    verify_job_id: string;
+    verify_success: boolean;
+  };
+  bounded_retry?: {
+    http_status: number;
+    reason_code: string;
+    detail: string;
+    jobs_before: number;
+    jobs_after: number;
+    new_jobs: string[];
+    lease_id: string;
+    enrollment_status: string;
+  };
+  port_claims?: {
+    server_id: string;
+    server_generation: number;
+    inventory_revision: number;
+    listeners_complete: boolean;
+    allocations: number;
+    active_stack_claims: number;
+    claim_states: string[];
+  };
+}
 
 export interface ManagedLifecycleReceiptInput {
   attemptId: string;
@@ -36,6 +68,7 @@ export interface ManagedLifecycleReceiptInput {
   job?: Json;
   destroyJobId?: string;
   day2?: ManagedDay2Evidence;
+  lifecycle?: ManagedLifecycleEvidence;
   cleanupReadback?: Json;
   cleanupReadbackVerified: boolean;
 }
@@ -154,6 +187,7 @@ export function managedLifecycleReceipt(input: ManagedLifecycleReceiptInput) {
     restoreOperationId: restore.restore_operation_id,
     destroyJobId: input.destroyJobId,
     day2: input.day2,
+    lifecycle: input.lifecycle,
     producerCommit: input.testSourceCommit,
     producerCommitRole: "test-source",
     servedTechstackRevision: null,

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 func (s *PostgresStore) GetInventoryServer(ctx context.Context, scope InventoryReadScope, serverID string) (*ServerRuntime, error) {
@@ -298,7 +300,7 @@ func (s *PostgresStore) withTenantInventorySnapshot(ctx context.Context, tenantI
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", tenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant guc: %w", err)
 	}
 	if err := fn(tx); err != nil {

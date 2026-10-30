@@ -107,6 +107,9 @@ type offeredCommand struct {
 	// resolutions are operator resolution revisions for commands this Guard
 	// still holds as unsettled. They carry no command.
 	resolutions []guardbinding.OperatorResolutionNotice
+	// predecessor is a recovery statement for held outcomes of an earlier
+	// worker binding. It carries no command.
+	predecessor *guardbinding.PredecessorRecovery
 }
 
 type durableRequest struct {
@@ -114,6 +117,12 @@ type durableRequest struct {
 	CommandID     string                     `json:"command_id,omitempty"`
 	KnownCommands []string                   `json:"known_commands,omitempty"`
 	Report        *guardbinding.ResultReport `json:"report,omitempty"`
+	// HeldPredecessorCommands asks for a recovery statement for outcomes held
+	// from an earlier worker binding of the same tenant.
+	HeldPredecessorCommands []guardbinding.PredecessorCommand `json:"held_predecessor_commands,omitempty"`
+	// PredecessorWorkerID and PredecessorRecovery deliver one such outcome.
+	PredecessorWorkerID string                            `json:"predecessor_worker_id,omitempty"`
+	PredecessorRecovery *guardbinding.PredecessorRecovery `json:"predecessor_recovery,omitempty"`
 }
 
 type durableOps struct {
@@ -131,6 +140,11 @@ type durableOps struct {
 	backoff      map[string]*deliveryBackoff
 	wake         chan struct{}
 	lastCompact  time.Time
+	// predecessor is the verified recovery statement for outcomes held from an
+	// earlier worker binding; it lives in memory only and expires on its own.
+	predecessor      *guardbinding.PredecessorRecovery
+	lastPredecessor  time.Time
+	predecessorAsked map[string]time.Time
 }
 
 type deliveryBackoff struct {
@@ -291,7 +305,7 @@ func (c *Client) runDurableControlLoop(ctx context.Context) {
 	backoff := newRetryBackoff(time.Second, 30*time.Second)
 	for ctx.Err() == nil {
 		d.recoverInterrupted()
-		offered, err := c.pollDurable(ctx, d.knownCommands())
+		offered, err := c.pollDurable(ctx, d.knownCommands(), d.heldPredecessorCommands())
 		if err != nil {
 			delay := backoff.Next()
 			c.log.Warn("guard_control_poll_failed", "error", err.Error(), "retry_in", delay.String())
@@ -305,6 +319,7 @@ func (c *Client) runDurableControlLoop(ctx context.Context) {
 		}
 		if offered.command == nil {
 			d.applyOperatorResolutions(offered.resolutions)
+			d.acceptPredecessorRecovery(offered.predecessor)
 			continue
 		}
 		d.handleOffered(ctx, offered)
@@ -328,8 +343,8 @@ func (d *durableOps) knownCommands() []string {
 	return known
 }
 
-func (c *Client) pollDurable(ctx context.Context, known []string) (*offeredCommand, error) {
-	request := durableRequest{controlRequest: c.durableIdentity(), KnownCommands: known}
+func (c *Client) pollDurable(ctx context.Context, known []string, held []guardbinding.PredecessorCommand) (*offeredCommand, error) {
+	request := durableRequest{controlRequest: c.durableIdentity(), KnownCommands: known, HeldPredecessorCommands: held}
 	status, body, err := c.postJSONResponseLimit(ctx, c.cfg.CommandURL, request, maxCommandResponseBody)
 	if err != nil {
 		return nil, err
@@ -345,13 +360,14 @@ func (c *Client) pollDurable(ctx context.Context, known []string) (*offeredComma
 			Command     json.RawMessage                         `json:"command"`
 			Binding     *guardbinding.Binding                   `json:"binding"`
 			Resolutions []guardbinding.OperatorResolutionNotice `json:"resolutions"`
+			Predecessor *guardbinding.PredecessorRecovery       `json:"predecessor_recovery"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("decode typed command: %w", err)
 	}
-	if len(response.Data.Command) == 0 && len(response.Data.Resolutions) > 0 {
-		return &offeredCommand{resolutions: response.Data.Resolutions}, nil
+	if len(response.Data.Command) == 0 && (len(response.Data.Resolutions) > 0 || response.Data.Predecessor != nil) {
+		return &offeredCommand{resolutions: response.Data.Resolutions, predecessor: response.Data.Predecessor}, nil
 	}
 	command := &agentpb.StackKitCommand{}
 	if len(response.Data.Command) == 0 || json.Unmarshal(response.Data.Command, command) != nil || strings.TrimSpace(command.GetCommandId()) == "" {
@@ -702,7 +718,11 @@ func (d *durableOps) deliverEphemeral(ctx context.Context, id string, report gua
 // acknowledges exactly this revision and digest is an acknowledgement; client
 // errors that cannot change are permanent; everything else is retried.
 func (c *Client) postReport(ctx context.Context, id string, report guardbinding.ResultReport, result *agentpb.StackKitResult, legacy bool) deliveryOutcome {
-	request := durableRequest{controlRequest: c.durableIdentity(), CommandID: id}
+	return c.postReportRequest(ctx, durableRequest{controlRequest: c.durableIdentity(), CommandID: id}, report, result, legacy)
+}
+
+func (c *Client) postReportRequest(ctx context.Context, request durableRequest, report guardbinding.ResultReport, result *agentpb.StackKitResult, legacy bool) deliveryOutcome {
+	id := request.CommandID
 	if legacy {
 		request.controlRequest = c.controlIdentity()
 		if result == nil {
@@ -972,7 +992,7 @@ func (d *durableOps) redeliverDue(ctx context.Context) {
 	}
 	for _, e := range store.Entries(func(e journal.Entry) bool {
 		_, ok := e.NextUnacked()
-		return ok && d.c.ownsBinding(e.Intent)
+		return ok && (d.c.ownsBinding(e.Intent) || d.predecessorCovers(e.Intent))
 	}) {
 		if ctx.Err() != nil {
 			return
@@ -1047,6 +1067,9 @@ func (d *durableOps) deliver(ctx context.Context, e journal.Entry, record journa
 		// stays in the local journal and in the heartbeat.
 		_ = store.Ack(id, record.Revision, false)
 		return deliveryAcked
+	}
+	if !d.c.ownsBinding(e.Intent) {
+		return d.deliverPredecessor(ctx, store, e, report, result)
 	}
 	outcome := d.c.postReport(ctx, id, report, result, legacy)
 	switch outcome {

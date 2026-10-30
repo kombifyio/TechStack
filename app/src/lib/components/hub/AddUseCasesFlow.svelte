@@ -9,6 +9,7 @@
   is shown to be confirmed again.
 -->
 <script lang="ts">
+  import UseCaseRunProgress from "./UseCaseRunProgress.svelte";
   import { onMount, untrack } from "svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
@@ -42,11 +43,18 @@
     stackId: string;
     /** Use cases to start with, from a deep link; canonical ids only. */
     initialGoals?: string[];
+    /** Preserve the guided answers handed over with the selected use case. */
+    initialConfig?: StackConfig;
     /** Remove page-owned chrome and spacing when mounted by a host. */
     embedded?: boolean;
   }
 
-  let { stackId, embedded = false, initialGoals = [] }: Props = $props();
+  let {
+    stackId,
+    embedded = false,
+    initialGoals = [],
+    initialConfig,
+  }: Props = $props();
 
   interface Notice {
     tone: "warning" | "error" | "info";
@@ -57,7 +65,18 @@
 
   // The deep link seeds the first selection only; later edits are the owner's.
   let config = $state<StackConfig>(
-    createExpansionConfig(untrack(() => initialGoals)),
+    untrack(() => {
+      const expansion = createExpansionConfig(initialGoals);
+      return initialConfig
+        ? {
+            ...expansion,
+            goals: initialConfig.goals,
+            useCaseSetupAnswers: initialConfig.useCaseSetupAnswers,
+            useCaseSettings: initialConfig.useCaseSettings,
+            useCaseCapabilities: initialConfig.useCaseCapabilities,
+          }
+        : expansion;
+    }),
   );
   let homelabName = $state("");
   let loading = $state(true);
@@ -160,6 +179,9 @@
   }
 
   const progressHref = $derived.by(() => {
+    // The inline group view follows every incremental node operation.
+    // The creation page follows one provisioning job only.
+    if (result?.job_ids?.length) return "";
     if (!result?.job_id) return "";
     const query = [
       `stack_id=${encodeURIComponent(stackId)}`,
@@ -197,12 +219,18 @@
           ? tr("layout.addUseCases.provisioning.body")
           : tr("layout.addUseCases.accepted.body")}
       </p>
+      {#if result.state === "provisioning"}
+        <UseCaseRunProgress
+          {stackId}
+          jobIds={result.job_ids ?? (result.job_id ? [result.job_id] : [])}
+        />
+      {/if}
       <div class="mt-4 flex flex-wrap gap-2">
         {#if result.state === "provisioning" && progressHref}
           <a
             href={progressHref}
             data-kx="control"
-            data-variant="primary"
+            data-variant="secondary"
             class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-medium"
             data-testid="add-use-cases-progress"
           >

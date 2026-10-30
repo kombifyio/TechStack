@@ -574,29 +574,9 @@ export interface ServiceRegistryPayload {
   migration_unavailable_reason?: string;
 }
 
-export interface RegistryServiceMutationRequest {
-  kit_deployment_id: string;
-  server_id: string;
-  service_id?: string;
-  name?: string;
-  display_name?: string;
-  type?: string;
-  port?: number;
-  url?: string;
-}
-
 type ServiceRegistryWirePayload = Omit<ServiceRegistryPayload, "services"> & {
   services: RegistryServiceWire[];
 };
-
-function registryServiceMutationWire(
-  request: RegistryServiceMutationRequest,
-): Omit<RegistryServiceMutationRequest, "kit_deployment_id"> & {
-  stack_id: string;
-} {
-  const { kit_deployment_id, ...rest } = request;
-  return { stack_id: kit_deployment_id, ...rest };
-}
 
 /** List canonical Nodes, optionally scoped to one StackKit deployment. */
 export async function listCanonicalServers(
@@ -658,19 +638,6 @@ export async function listServiceRegistry(): Promise<ServiceRegistryPayload> {
       normalizeRegistryService(service, `services[${index}]`),
     ),
   };
-}
-
-export async function attachCatalogService(
-  request: RegistryServiceMutationRequest,
-): Promise<RegistryService> {
-  const res = await fetchApi<{ service: RegistryServiceWire }>(
-    "/api/v1/registry/services/attach",
-    {
-      method: "POST",
-      body: JSON.stringify(registryServiceMutationWire(request)),
-    },
-  );
-  return normalizeRegistryService(res.data.service, "attach.service");
 }
 
 export async function migrateRegistryService(

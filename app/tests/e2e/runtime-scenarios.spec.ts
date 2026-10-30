@@ -15,7 +15,14 @@ import {
   runManagedDay2Evidence,
   type ManagedDay2Evidence,
 } from "./managed-day2-evidence";
-import { managedLifecycleReceipt } from "./managed-lifecycle-receipt";
+import {
+  managedLifecycleReceipt,
+  type ManagedLifecycleEvidence,
+} from "./managed-lifecycle-receipt";
+import { assertExistingTargetExtension } from "./existing-target-assertion";
+import { assertConfigureInstalledWorkload } from "./configure-usecase-assertion";
+import { assertRemoveInstalledUseCase, assertRemoveSupersededCheckpointRetry, decodeSupersededRemovalFixture } from "./remove-usecase-assertion";
+import { removalDataSentinelsFromEnv } from "./removal-data-sentinel";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
@@ -42,6 +49,34 @@ import {
   type RuntimeBearer,
 } from "./runtime-auth";
 
+import { previewChannelOverlay } from "../../../scripts/render-environment-contract.mjs";
+
+const EXISTING_STACK_ID = String(
+  process.env.TECHSTACK_RUNTIME_E2E_EXISTING_STACK_ID ?? "",
+).trim();
+if (
+  process.env.TECHSTACK_RUNTIME_E2E_EXISTING_STACK_ID !== undefined &&
+  !EXISTING_STACK_ID
+) {
+  throw new Error("existing_target_stack_id_required");
+}
+const EXISTING_TARGET_SCENARIO =
+  "stack-lifecycle deploys a stack on an owner server, then monitors, backs up, updates and removes it";
+const previewTarget = previewChannelOverlay();
+const REQUIRE_NATIVE_HOST_PREP =
+  process.env.TECHSTACK_RUNTIME_E2E_REQUIRE_NATIVE_HOST_PREP === "1";
+if (REQUIRE_NATIVE_HOST_PREP && (
+  EXISTING_STACK_ID ||
+  String(process.env.TECHSTACK_RUNTIME_E2E_RECOVERY_STACK_ID ?? "").trim() ||
+  process.env.TECHSTACK_E2E_EXPECTED_CHANNEL !== "preview" ||
+  !/^[a-f0-9]{40}$/.test(process.env.TECHSTACK_E2E_EXPECTED_REVISION ?? "") ||
+  normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_PRODUCT_URL) !== previewTarget.TECHSTACK_PUBLIC_ORIGIN ||
+  normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_API_URL) !== previewTarget.VITE_GATEWAY_API_BASE
+)) {
+  throw new Error("native_host_preparation_journey_requires_exact_preview_source_and_fresh_foundation");
+}
+
+
 const execFileAsync = promisify(execFile);
 
 async function testSourceCommit(): Promise<string> {
@@ -53,17 +88,31 @@ const PRODUCT_BASE = requireLiveProductURL(
   firstProductURL(
     process.env.TECHSTACK_RUNTIME_E2E_PRODUCT_URL,
     process.env.TECHSTACK_E2E_PRODUCT_URL,
-    process.env.PLAYWRIGHT_BASE_URL,
-  ) || "https://techstack.kombify.io",
+    EXISTING_STACK_ID ? "" : process.env.PLAYWRIGHT_BASE_URL,
+  ) ||
+    (EXISTING_STACK_ID
+      ? previewTarget.TECHSTACK_PUBLIC_ORIGIN
+      : "https://techstack.kombify.io"),
 );
 const API_BASE = requireLiveProductURL(
   "TechStack API",
   firstProductURL(
     process.env.TECHSTACK_RUNTIME_E2E_API_URL,
-    process.env.TECHSTACK_API_URL,
+    EXISTING_STACK_ID
+      ? previewTarget.VITE_GATEWAY_API_BASE
+      : process.env.TECHSTACK_API_URL,
     PRODUCT_BASE,
   ) || PRODUCT_BASE,
 );
+if (
+  EXISTING_STACK_ID &&
+  (PRODUCT_BASE !== previewTarget.TECHSTACK_PUBLIC_ORIGIN ||
+    API_BASE !== previewTarget.VITE_GATEWAY_API_BASE)
+) {
+  throw new Error(
+    "existing_target_requires_canonical_preview_product_and_gateway",
+  );
+}
 // Agents talk to the stable control plane: on the Preview channel the owner
 // server enrolls against the stable origin, not the Preview one.
 const AGENT_ORIGIN =
@@ -561,7 +610,8 @@ async function createManagedRuntimeStackViaWizard(
   stackName: string;
   api: { token: string; apiBase: string };
 }> {
-  await page.goto("/stacks/new", { waitUntil: "domcontentloaded" });
+  // A new managed server: the creation wizard without the choice of targets.
+  await page.goto("/stacks/new?target=new", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("easy-wizard")).toBeVisible({
     timeout: 30_000,
   });
@@ -1396,7 +1446,8 @@ async function waitForWorkerByHostname(
       token,
       API_BASE,
     )) as RuntimeWorkerRecord[];
-    const worker = lastWorkers.find((item) => item.hostname === hostname);
+    // A host that was connected and detached before keeps its revoked row.
+    const worker = lastWorkers.find((item) => item.hostname === hostname && item.status !== "revoked");
     if (worker?.id) return worker;
     await delay(2_000);
   }
@@ -1880,19 +1931,33 @@ async function provisionDroplet(
   }
 }
 
-function sshArgs(host: string, privateKeyPath: string, remoteCommand?: string) {
+// A disposable server is reached as root with any host key. A declared
+// existing server (PinnedSSHTarget) is reached as its own user, only through
+// its pinned host key.
+interface PinnedSSHTarget {
+  user: string;
+  knownHostsPath: string;
+}
+
+function sshArgs(
+  host: string,
+  privateKeyPath: string,
+  remoteCommand?: string,
+  pinned?: PinnedSSHTarget,
+) {
   const args = [
     "-i",
     privateKeyPath,
     "-o",
     "BatchMode=yes",
     "-o",
-    "StrictHostKeyChecking=no",
+    pinned ? "StrictHostKeyChecking=yes" : "StrictHostKeyChecking=no",
     "-o",
-    `UserKnownHostsFile=${SSH_USER_KNOWN_HOSTS}`,
+    `UserKnownHostsFile=${pinned ? pinned.knownHostsPath : SSH_USER_KNOWN_HOSTS}`,
+    ...(pinned ? ["-o", "IdentitiesOnly=yes", "-F", "/dev/null"] : []),
     "-o",
     "ConnectTimeout=10",
-    `root@${host}`,
+    `${pinned ? pinned.user : "root"}@${host}`,
   ];
   if (remoteCommand) args.push(remoteCommand);
   return args;
@@ -1931,9 +1996,10 @@ async function runSSH(
   privateKeyPath: string,
   command: string,
   timeout = 120_000,
+  pinned?: PinnedSSHTarget,
 ) {
   try {
-    return await execFileAsync("ssh", sshArgs(host, privateKeyPath, command), {
+    return await execFileAsync("ssh", sshArgs(host, privateKeyPath, command, pinned), {
       timeout,
       maxBuffer: 1024 * 1024,
     });
@@ -1968,9 +2034,87 @@ async function cleanupDropletResource(
 interface OwnerServer {
   ip: string;
   keyPair: Awaited<ReturnType<typeof createSSHKeyPair>>;
+  // A declared existing server: its own user and pinned host key.
+  ssh?: PinnedSSHTarget;
   release: () => Promise<void>;
   // Reads the supplier: true once no machine of this server remains.
   isAbsent?: () => Promise<boolean>;
+}
+
+// B3: one declared protected local server, reached through its governed SSH
+// custody (the workflow resolves it from the lab device inventory). The host
+// key is pinned before the first login; the run never deletes the server.
+const LOCAL_ANCHOR_TARGET_ID = String(process.env.TECHSTACK_E2E_LOCAL_TARGET_ID ?? "").trim();
+
+interface LocalAnchorIdentity {
+  hostname: string;
+  machine_id_sha256: string;
+  boot_id: string;
+}
+
+interface LocalLifecycleReceipt {
+  schemaVersion: "techstack.local-lifecycle-receipt/v1";
+  targetId: string;
+  kit: string;
+  testSourceCommit: string;
+  startedAt: string;
+  finishedAt: string;
+  custody: {
+    hostKeyPinned: boolean;
+    hostKeyFingerprint: string;
+    before: LocalAnchorIdentity | null;
+    after: LocalAnchorIdentity | null;
+  };
+  steps: Record<string, Record<string, unknown>>;
+}
+
+async function localAnchorFromEnv() {
+  const host = String(process.env.TECHSTACK_E2E_LOCAL_TARGET_HOST ?? "").trim();
+  const user = String(process.env.TECHSTACK_E2E_LOCAL_TARGET_SSH_USER ?? "").trim();
+  const keyFile = String(process.env.TECHSTACK_E2E_LOCAL_TARGET_SSH_KEY_FILE ?? "").trim();
+  const rawPin = String(process.env.TECHSTACK_E2E_LOCAL_TARGET_HOSTKEY_SHA256 ?? "").trim().replace(/=+$/, "");
+  const pin = rawPin.startsWith("SHA256:") ? rawPin : `SHA256:${rawPin}`;
+  if (!host || !user || !keyFile || !/^SHA256:[A-Za-z0-9+/]{43}$/.test(pin)) {
+    throw new Error(
+      "local_anchor_custody_missing: TECHSTACK_E2E_LOCAL_TARGET_HOST, _SSH_USER, _SSH_KEY_FILE and _HOSTKEY_SHA256 are required",
+    );
+  }
+  const dir = await mkdtemp(path.join(tmpdir(), "techstack-local-anchor-"));
+  const knownHostsPath = path.join(dir, "known_hosts");
+  const scanned = (await execFileAsync("ssh-keyscan", ["-T", "10", "-t", "ed25519", host], { timeout: 30_000 })).stdout
+    .split("\n")
+    .find((line) => line && !line.startsWith("#"));
+  if (!scanned) throw new Error("local_anchor_unreachable");
+  await writeFile(knownHostsPath, `${scanned}\n`, { mode: 0o600 });
+  const fingerprint = (await execFileAsync("ssh-keygen", ["-lf", knownHostsPath])).stdout.split(/\s+/)[1] ?? "";
+  if (fingerprint !== pin) throw new Error("local_anchor_host_key_mismatch");
+  const ssh: PinnedSSHTarget = { user, knownHostsPath };
+  const server: OwnerServer = {
+    ip: host,
+    keyPair: { dir, privateKeyPath: keyFile, publicKey: "" },
+    ssh,
+    // The declared server is never deleted: releasing it drops only the
+    // run's own known_hosts copy.
+    release: async () => undefined,
+  };
+  const identity = async (): Promise<LocalAnchorIdentity> => {
+    const out = (
+      await runSSH(
+        host,
+        keyFile,
+        "hostname; sha256sum /etc/machine-id | cut -d' ' -f1; cat /proc/sys/kernel/random/boot_id",
+        30_000,
+        ssh,
+      )
+    ).stdout.trim().split("\n");
+    return { hostname: out[0] ?? "", machine_id_sha256: out[1] ?? "", boot_id: out[2] ?? "" };
+  };
+  return {
+    server,
+    fingerprint,
+    identity,
+    release: () => rm(dir, { recursive: true, force: true }).catch(() => undefined),
+  };
 }
 
 function ownerServerSupplierFromEnv(): {
@@ -2440,6 +2584,17 @@ function selectedMonthlyRuntimeLeaseProviders() {
 }
 
 test.describe.serial("Runtime E2E scenarios", () => {
+  test.use({ baseURL: PRODUCT_BASE });
+  test.beforeEach(() => {
+    if (EXISTING_STACK_ID && test.info().title !== EXISTING_TARGET_SCENARIO) {
+      throw new Error(
+        "existing_target_select_only_stack_lifecycle_add_scenario",
+      );
+    }
+    if (REQUIRE_NATIVE_HOST_PREP && !/^kombify-cloud creates a monthly runtime lease via (?:ionos|centron) and exposes runtime actions$/.test(test.info().title)) {
+      throw new Error("native_host_preparation_select_fresh_managed_runtime_scenario");
+    }
+  });
   test("managed-capacity-cleanup releases stale Runtime E2E leases", async ({
     page,
   }) => {
@@ -2740,6 +2895,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       let advertisedStackkitsRelease = "";
       let laneStartedAt = "";
       let day2Evidence: ManagedDay2Evidence | undefined;
+      let lifecycleEvidence: ManagedLifecycleEvidence | undefined;
       const attemptId = randomUUID();
       test.afterEach(async () => {
         test.setTimeout(MANAGED_RUNTIME_BUDGETS.cleanupMs);
@@ -2815,6 +2971,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
               destroyJobId:
                 typeof cleanupJob?.id === "string" ? cleanupJob.id : undefined,
               day2: day2Evidence,
+              lifecycle: lifecycleEvidence,
               cleanupReadback: cleanupReadback as
                 Record<string, unknown> | undefined,
               cleanupReadbackVerified,
@@ -3020,6 +3177,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
           MANAGED_RUNTIME_BUDGETS.preparationMs + 30_000,
         );
         let provisionFailure: unknown;
+        const nativePreparationTimes = new Map<string, string>();
         const job = await waitForProvisionJob(
           session,
           "kombify-cloud",
@@ -3032,6 +3190,18 @@ test.describe.serial("Runtime E2E scenarios", () => {
             if (isTerminalJobState(observed.state)) provisionJob = observed;
             const result = observed.result as
               Record<string, unknown> | undefined;
+            if (REQUIRE_NATIVE_HOST_PREP && result) {
+              for (const key of ["auto_deploy_guard_verified_at", "managed_runtime_target_verified_at", "managed_runtime_host_preparation_started_at"]) {
+                const value = String(result[key] ?? "");
+                if (!value) continue;
+                const first = nativePreparationTimes.get(key);
+                if (first !== undefined) {
+                  expect(value, `resuming host preparation preserves ${key}`).toBe(first);
+                } else {
+                  nativePreparationTimes.set(key, value);
+                }
+              }
+            }
             const guardStarted = Date.parse(
               String(result?.auto_deploy_guard_wait_started_at ?? ""),
             );
@@ -3097,6 +3267,32 @@ test.describe.serial("Runtime E2E scenarios", () => {
             provisionFailure ??
             new Error("Managed provision job ended without a result")
           );
+        }
+        if (REQUIRE_NATIVE_HOST_PREP) {
+          await test.step("native host preparation is observed for the fresh Foundation", async () => {
+            const result = lifecycleRecord(job.result);
+            const proof = lifecycleRecord(result.target_bootstrap);
+            expect(proof.status, "Guard connectivity alone is not host readiness").toBe("ready");
+            expect(proof.reason_code).toBe("target_bootstrap_ready");
+            const output = String(proof.output_snippet ?? "");
+            for (const line of [
+              "host_prep_record=/var/lib/kombify/host-prep/v2.status",
+              "host_prep_status=ready",
+              "baseline=verified",
+              "execution_channel=pinned",
+            ]) {
+              expect(output.split("\n")).toContain(line);
+            }
+            const observedAt = Date.parse(String(proof.observed_at ?? ""));
+            expect(Number.isFinite(observedAt), "the real readiness observation has a timestamp").toBe(true);
+            expect(observedAt).toBeLessThanOrEqual(Date.now() + 60_000);
+            expect(observedAt, "host preparation belongs to this fresh managed run").toBeGreaterThanOrEqual(Date.parse(laneStartedAt));
+            expect(result.managed_runtime_host_preparation_started_at).toBeUndefined();
+            for (const key of ["auto_deploy_guard_verified_at", "managed_runtime_target_verified_at"]) {
+              const first = nativePreparationTimes.get(key);
+              if (first !== undefined) expect(String(result[key] ?? "")).toBe(first);
+            }
+          });
         }
         managedObservationPhase(
           "verification",
@@ -3187,6 +3383,21 @@ test.describe.serial("Runtime E2E scenarios", () => {
           leaseId,
           inventory: inventoryEvidence,
         });
+        // Upgrade, bounded retry and the port-claim readback run last on the
+        // converged node: the upgrade changes the inventory revision the
+        // service actions above bind to. Each part is recorded even when a
+        // later one fails.
+        managedObservationPhase("lifecycle", MANAGED_LIFECYCLE_BUDGET_MS);
+        lifecycleEvidence = {};
+        await runManagedLifecycleEvidence({
+          session,
+          stackId: stack.stack_id,
+          leaseId,
+          provisionJobId: String(job.id ?? ""),
+          server: inventoryEvidence.stack_operations.matched_server,
+          evidence: lifecycleEvidence,
+        });
+        await attachJson("kombify-cloud-lifecycle.json", lifecycleEvidence);
         assertNoProviderSecrets(managed);
         await attachJson("kombify-cloud-artifacts.json", {
           stack_id: stack.stack_id,
@@ -3212,6 +3423,9 @@ test.describe.serial("Runtime E2E scenarios", () => {
             "stack dashboard",
             "monitoring dashboard",
             "managed Day-2 stop, start, reconnect and SSH grant",
+            "StackKit upgrade with verification",
+            "exact rollout retry bounded to failed rollouts",
+            "active port-claim generation readback",
           ],
         });
       });
@@ -3386,6 +3600,150 @@ test.describe.serial("Runtime E2E scenarios", () => {
     }
   });
 
+  // Guard disconnect and UI demotion (kombify-Techstack-c4kv): one disposable
+  // owner server enrolls its Guard; then the host itself drops its HTTPS
+  // traffic, so the Guard loses the control plane while the server and its
+  // workload keep running. The persisted read model must turn stale within
+  // 90 s and offline within 5 min, the server page must show that state after
+  // a reload, and after the rule is removed the same Guard (same server, same
+  // worker, no second enrollment) must be connected again within 60 s.
+  test("guard-disconnect demotes an unreachable Guard and reconnects it without a second enrollment", async ({
+    page,
+  }) => {
+    test.setTimeout(45 * 60_000);
+    const supplier = ownerServerSupplierFromEnv();
+    const auth = await authenticateRuntimeUser(
+      "oneliner",
+      page,
+      RUNTIME_AUTH_OPTIONS,
+    );
+    await page.goto("about:blank");
+    let resource: OwnerServer | undefined;
+    let stackId = "";
+    const cutRule =
+      "nft add table inet guard_disconnect && nft add chain inet guard_disconnect out '{ type filter hook output priority 0; policy accept; }' && nft add rule inet guard_disconnect out tcp dport 443 drop";
+    try {
+      const created = await createLifecycleWizardRun(
+        auth.token,
+        {
+          intent: {
+            schema: "techstack.wizard-intent/v1",
+            run_kind: "first-run",
+            name: `guard-disconnect-${runtimeRunId()}`,
+            goals: [],
+            server: { transport: "install-command", environment_class: "cloud" },
+            kit_assignment: { mode: "found", kit_slug: "basement-kit" },
+          },
+        },
+        (id) => {
+          stackId = id;
+        },
+      );
+      stackId = String(created.run.stack_id ?? created.run.kit_deployment_id);
+      expect(stackId).not.toBe("");
+      const registrationToken = await mintRegistrationToken(
+        auth.token,
+        stackId,
+        String(created.run.pairing_job_id ?? ""),
+      );
+      resource = await supplier.provision(1);
+      await enrollOwnerServer(auth.token, resource, registrationToken);
+      const before = await waitForConnectedOwnerServer(auth.token, stackId);
+      const serverId = String(before.id);
+      const ssh = (command: string, timeout = 60_000) =>
+        runSSH(resource!.ip, resource!.keyPair.privateKeyPath, command, timeout);
+      await ssh("command -v nft >/dev/null || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables)", 300_000);
+      await ssh("systemd-run --unit=guard-disconnect-workload sleep infinity");
+      const invocation = async (unit: string) =>
+        (await ssh(`systemctl show -p InvocationID --value ${unit}`)).stdout.trim();
+      const workload = await invocation("guard-disconnect-workload");
+      const guardBefore = await invocation("techstack-agent.service");
+
+      const servers = async () => {
+        const data = await retryTransient("server list", () =>
+          fetchRuntimeApi<LifecycleRecord[] | { servers?: LifecycleRecord[] }>(
+            auth.token,
+            "/api/v1/servers",
+          ),
+        );
+        return (Array.isArray(data) ? data : (data.servers ?? [])).filter(
+          (server) => server.kit_deployment_id === stackId,
+        );
+      };
+      const waitForState = async (
+        want: string,
+        from: number,
+        limitMs: number,
+      ) => {
+        let last = "";
+        while (Date.now() - from < limitMs) {
+          const row = (await servers()).find((server) => String(server.id) === serverId);
+          last = String(row?.connection?.state ?? "");
+          if (last === want) return (Date.now() - from) / 1000;
+          await delay(5_000);
+        }
+        throw new Error(`The server did not reach ${want} within ${limitMs / 1000}s; last=${last}`);
+      };
+      const guardFact = () =>
+        page.locator('[data-testid="guard-fact"][data-fact="connected"]');
+      const serverPage = `/stacks/${encodeURIComponent(stackId)}/servers/${encodeURIComponent(serverId)}`;
+
+      await ssh(cutRule);
+      const cut = Date.now();
+      const staleSeconds = await waitForState("stale", cut, 90_000);
+      const offlineSeconds = await waitForState("offline", cut, 300_000);
+      await page.goto(serverPage, { waitUntil: "domcontentloaded" });
+      await expect(guardFact()).toHaveAttribute("data-state", "attention", { timeout: 60_000 });
+      await attachScreenshot(page, "guard-disconnect-offline.png");
+
+      await ssh("nft delete table inet guard_disconnect");
+      const restored = Date.now();
+      const reconnectSeconds = await waitForState("connected", restored, 60_000);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      // ok needs the persisted round trip, not only a fresh heartbeat.
+      await expect(guardFact()).toHaveAttribute("data-state", "ok", { timeout: 120_000 });
+      await attachScreenshot(page, "guard-disconnect-reconnected.png");
+
+      const after = await servers();
+      const row = after.find((server) => String(server.id) === serverId);
+      expect(after, "no second server or enrollment for the stack").toHaveLength(1);
+      expect(String(before.worker_id ?? ""), "the enrolled server names its Guard").not.toBe("");
+      expect(row?.worker_id, "the same Guard identity").toBe(before.worker_id);
+      expect(await invocation("guard-disconnect-workload"), "the workload ran through the outage").toBe(workload);
+      expect(await invocation("techstack-agent.service"), "the Guard reconnected without a restart").toBe(guardBefore);
+
+      const receipt = {
+        schemaVersion: "techstack.guard-disconnect/v1",
+        stackId,
+        serverId,
+        workerId: String(before.worker_id),
+        testSourceCommit: process.env.GITHUB_SHA ?? (await testSourceCommit().catch(() => "")),
+        cut: "host nftables drop of outbound tcp/443 (the Guard's HTTPS transport)",
+        measured: { staleSeconds, offlineSeconds, reconnectSeconds },
+        bounds: { staleSeconds: 90, offlineSeconds: 300, reconnectSeconds: 60 },
+        ui: { offline: "attention", reconnected: "ok", source: "server page after reload" },
+        workloadUnchanged: true,
+        guardRestarted: false,
+        servers: after.length,
+        status: "passed",
+      };
+      await mkdir(ARTIFACTS_DIR, { recursive: true });
+      await writeFile(
+        path.join(ARTIFACTS_DIR, "guard-disconnect-receipt.json"),
+        `${JSON.stringify(receipt, null, 2)}\n`,
+      );
+      await attachJson("guard-disconnect-receipt.json", receipt);
+    } finally {
+      if (resource) {
+        await runSSH(resource.ip, resource.keyPair.privateKeyPath, "nft delete table inet guard_disconnect", 30_000).catch(() => undefined);
+      }
+      if (stackId) {
+        await destroyRuntimeStackViaApi(auth.token, stackId).catch(() => undefined);
+      }
+      await resource?.release();
+    }
+  });
+
   // Stack lifecycle on one owner server (Beads platform-37px0.1): the journey
   // that stands in for the retired unit tests of the stack, job and
   // StackKits-lifecycle control plane. One owner server enrolls through the
@@ -3398,6 +3756,77 @@ test.describe.serial("Runtime E2E scenarios", () => {
     // Provision, rollout, backup, upgrade and destroy exceed the 15-minute
     // default; the window lane's cleanup step covers a timeout.
     test.setTimeout(90 * 60_000);
+    if (EXISTING_STACK_ID) {
+      test.setTimeout(30 * 60_000);
+      await authenticateRuntimeUser("cloud", page, RUNTIME_AUTH_OPTIONS);
+      const session = await captureGatewayApiSession(page);
+      expect(
+        session.apiBase,
+        "existing_target_gateway_session_origin_mismatch",
+      ).toBe(API_BASE);
+      const token = createGatewaySessionKeeper(page, session);
+      const supersededFixture = process.env.TECHSTACK_RUNTIME_E2E_REMOVE_SUPERSEDED_CHECKPOINT_JSON;
+      if (supersededFixture) {
+        await test.step("Reject the original removal checkpoint after a later product change", () =>
+          assertRemoveSupersededCheckpointRetry({
+            token, stackId: EXISTING_STACK_ID, ...decodeSupersededRemovalFixture(supersededFixture),
+            url: (path) => runtimeApiUrl(API_BASE, path),
+          }));
+        return;
+      }
+      const evidence =
+        await test.step("Add use case to the qualified existing foundation; retain server and lease custody", () =>
+          assertExistingTargetExtension({
+            token,
+            stackId: EXISTING_STACK_ID,
+            expectedRevision: String(
+              process.env.TECHSTACK_E2E_EXPECTED_REVISION ?? "",
+            ).trim(),
+            previewOnly: true,
+            url: (path) => runtimeApiUrl(API_BASE, path),
+            waitForJob: (id) => waitForJobTerminal(token, id, 1_200_000),
+          }));
+      await attachJson(
+        "stack-lifecycle-existing-foundation-add.json",
+        evidence,
+      );
+      const configurationWorkload = String(
+        process.env.TECHSTACK_RUNTIME_E2E_CONFIGURE_WORKLOAD ?? "",
+      ).trim();
+      const configurationChanges = String(
+        process.env.TECHSTACK_RUNTIME_E2E_CONFIGURE_CHANGES_JSON ?? "",
+      ).trim();
+      if (configurationWorkload || configurationChanges) {
+        expect(configurationWorkload, "Configure needs an actual installed workload fixture").not.toBe("");
+        expect(configurationChanges, "Configure needs explicit typed fixture changes").not.toBe("");
+        await test.step("Configure the selected installed workload and preserve the foundation", () =>
+          assertConfigureInstalledWorkload({
+            page,
+            token,
+            stackId: EXISTING_STACK_ID,
+            workloadRef: configurationWorkload,
+            changes: JSON.parse(configurationChanges),
+            url: (path) => runtimeApiUrl(API_BASE, path),
+            waitForJob: (id) => waitForJobTerminal(token, id, 1_200_000),
+          }));
+      }
+
+      const removalKind = String(process.env.TECHSTACK_RUNTIME_E2E_REMOVE_KIND ?? "").trim();
+      const removalRef = String(process.env.TECHSTACK_RUNTIME_E2E_REMOVE_REF ?? "").trim();
+      if (removalKind || removalRef) {
+        if (removalKind !== "workload" && removalKind !== "use_case") throw new Error("Remove needs an explicit workload or use_case fixture scope");
+        expect(removalRef, "Remove needs an actual installed catalog selection").not.toBe("");
+        await test.step("Remove selected installed applications and retain the Foundation and servers", () =>
+          assertRemoveInstalledUseCase({
+            page, token, stackId: EXISTING_STACK_ID,
+            selection: { selector_kind: removalKind, selector_ref: removalRef },
+            verifyRetainedData: removalDataSentinelsFromEnv(),
+            url: (path) => runtimeApiUrl(API_BASE, path),
+            waitForJob: (id) => waitForJobTerminal(token, id, 1_200_000),
+          }));
+      }
+      return;
+    }
     const supplier = ownerServerSupplierFromEnv();
     const auth = await authenticateRuntimeUser(
       "oneliner",
@@ -3476,6 +3905,19 @@ test.describe.serial("Runtime E2E scenarios", () => {
         command_round_trip: aggregate.capabilities?.command_round_trip,
         lifecycle: aggregate.lifecycle,
       });
+
+      const extensionRevision =
+        String(process.env.TECHSTACK_E2E_EXPECTED_REVISION ?? "").trim() ||
+        (await testSourceCommit());
+      await test.step("Add use case before full lifecycle backup, update and removal", () =>
+        assertExistingTargetExtension({
+          token: auth.token,
+          stackId,
+          serverId,
+          expectedRevision: extensionRevision,
+          url: (path) => runtimeApiUrl(API_BASE, path),
+          waitForJob: (id) => waitForJobTerminal(auth.token, id, 1_200_000),
+        }));
 
       // Back up: the node admits the backup operations once it has converged
       // on the pinned StackKits release; configure, run, then read the
@@ -3587,6 +4029,183 @@ test.describe.serial("Runtime E2E scenarios", () => {
         );
       }
       await resource?.release();
+    }
+  });
+
+  // B3 (paid-beta journey, PUBLIC-BETA-PLAN "Existing local server"): the
+  // owner connects one declared protected local server through the regular
+  // Creation Wizard local-server path (the install command, run over the
+  // owner's own SSH), and the stack-lifecycle coverage runs on it: Basement
+  // apply and verify, backup, the restore drill read-back, upgrade and
+  // verify, then removal of the product state. The server stays intact: it is
+  // reached only through its pinned host key, never reinstalled, rebooted on
+  // purpose or deleted, and its identity is read back at the end. Every step
+  // lands in local-lifecycle-receipt.json, which
+  // scripts/paid-journey-receipt.mjs maps onto the journey contract.
+  test("local-anchor connects the declared local server through the Wizard and runs its lifecycle with the server intact", async ({
+    page,
+  }) => {
+    test.skip(!LOCAL_ANCHOR_TARGET_ID, "TECHSTACK_E2E_LOCAL_TARGET_ID names the declared local server");
+    test.setTimeout(150 * 60_000);
+    const anchor = await localAnchorFromEnv();
+    const receipt: LocalLifecycleReceipt = {
+      schemaVersion: "techstack.local-lifecycle-receipt/v1",
+      targetId: LOCAL_ANCHOR_TARGET_ID,
+      kit: "basement-kit",
+      testSourceCommit: process.env.GITHUB_SHA ?? (await testSourceCommit().catch(() => "")),
+      startedAt: new Date().toISOString(),
+      finishedAt: "",
+      custody: { hostKeyPinned: true, hostKeyFingerprint: anchor.fingerprint, before: null, after: null },
+      steps: {},
+    };
+    const auth = await authenticateRuntimeUser("cloud", page, RUNTIME_AUTH_OPTIONS);
+    let stackId = "";
+    let serverId = "";
+    let destroyed = false;
+    let detached = false;
+    try {
+      receipt.custody.before = await anchor.identity();
+      let pairingJobId = "";
+      const enrolled = await enrollAndDeployLifecycleStack(
+        page,
+        auth.token,
+        { provider: "local-anchor", provision: async () => anchor.server },
+        {
+          onStack: (id) => {
+            stackId = id;
+          },
+          onResource: () => undefined,
+          onServer: (id) => {
+            serverId = id;
+          },
+          onPairingJob: (id) => {
+            pairingJobId = id;
+          },
+        },
+        { name: `b3-local-anchor-${runtimeRunId()}`, environmentClass: "local" },
+      );
+      const deployed = await waitForDeployedStack(auth.token, stackId);
+      const agentId = String(deployed.server.agent_id ?? "");
+      expect(agentId, "the connected server names its agent").not.toBe("");
+      const aggregate = await readServerAggregate(auth.token, serverId);
+      expect(aggregate.connection?.state).toBe("connected");
+      receipt.steps.connect = {
+        status: "passed",
+        stack_id: stackId,
+        server_id: serverId,
+        agent_id: agentId,
+        pairing_job_id: pairingJobId,
+        hostname: receipt.custody.before.hostname,
+        connection: String(aggregate.connection?.state ?? ""),
+      };
+      receipt.steps.apply = {
+        status: "passed",
+        job_id: String(enrolled.deploy.job_id ?? ""),
+        stackkit: deployed.server.stackkit ?? null,
+        running_services: deployed.runningServices,
+        service_count: deployed.serviceCount,
+      };
+
+      await waitForServerStackActions(auth.token, serverId, [
+        "backup_configure",
+        "backup_run",
+        "backup_status",
+        "restore_drill",
+        "upgrade",
+        "verify",
+      ]);
+      const verify = await runStackKitLifecycleOperation(auth.token, stackId, agentId, "verify");
+      receipt.steps.verify = { status: "passed", job_id: String(verify.job.id ?? ""), success: verify.result.success === true };
+
+      const configure = await runStackKitLifecycleOperation(auth.token, stackId, agentId, "backup_configure", { owner_approved: true });
+      const backup = await runStackKitLifecycleOperation(auth.token, stackId, agentId, "backup_run", { owner_approved: true });
+      const snapshotAnchor = String(backup.result.backup?.snapshot_anchor_id ?? "");
+      expect(snapshotAnchor).toMatch(/^sha256:[a-f0-9]{64}$/);
+      const backupStatus = await runStackKitLifecycleOperation(auth.token, stackId, agentId, "backup_status");
+      const recoveryPoints = recoveryPointsOf(backupStatus.result);
+      expect(recoveryPoints.length).toBeGreaterThan(0);
+      expect(recoveryPoints.every((point) => point.state === "recorded")).toBe(true);
+      receipt.steps.backup = {
+        status: "passed",
+        configure_job_id: String(configure.job.id ?? ""),
+        job_id: String(backup.job.id ?? ""),
+        snapshot_anchor_id: snapshotAnchor,
+        status_job_id: String(backupStatus.job.id ?? ""),
+        recovery_points: recoveryPoints.length,
+      };
+
+      // Read-back: the restore drill restores that snapshot apart from the
+      // running stack and verifies it; the live services are not replaced.
+      const drill = await runStackKitLifecycleOperation(auth.token, stackId, agentId, "restore_drill", {
+        owner_approved: true,
+        snapshot_anchor_id: snapshotAnchor,
+      });
+      const restoredAnchor = String(
+        drill.result.advanced_result?.report?.anchorId ?? drill.result.snapshot_anchor_id ?? "",
+      );
+      receipt.steps.restore = {
+        status: "passed",
+        job_id: String(drill.job.id ?? ""),
+        requested_anchor_id: snapshotAnchor,
+        restored_anchor_id: restoredAnchor,
+        drill_id: String(drill.result.advanced_result?.report?.drillId ?? ""),
+        success: drill.result.success === true,
+      };
+      expect(restoredAnchor, "the drill restored the backup's own snapshot").toBe(snapshotAnchor);
+
+      const upgrade = await runStackKitLifecycleOperation(auth.token, stackId, agentId, "upgrade", {
+        owner_approved: true,
+        target_release: MANAGED_UPGRADE_TARGET_RELEASE,
+      });
+      const afterUpgrade = await runStackKitLifecycleOperation(auth.token, stackId, agentId, "verify");
+      receipt.steps.upgrade = {
+        status: "passed",
+        job_id: String(upgrade.job.id ?? ""),
+        release: releaseOf(upgrade.result),
+        verify_job_id: String(afterUpgrade.job.id ?? ""),
+        verify_success: afterUpgrade.result.success === true,
+      };
+
+      // Remove the product state: the stack, then the server binding.
+      const destroy = await destroyRuntimeStackViaApi(auth.token, stackId);
+      expect(destroy?.state).toBe("completed");
+      await waitForStackAbsent(auth.token, stackId);
+      destroyed = true;
+      await detachOwnerServer(auth.token, serverId);
+      detached = true;
+      receipt.steps.remove = {
+        status: "passed",
+        destroy_job_id: String(destroy?.id ?? ""),
+        stack_absent_for_owner: true,
+        server_detached: true,
+        // Detach revokes the server's credentials without touching the host:
+        // the Guard service (now revoked), Docker and StackKits stay installed.
+        node_software_left: true,
+      };
+
+      const after = await anchor.identity();
+      receipt.custody.after = after;
+      const before = receipt.custody.before;
+      expect(after.hostname, "the server keeps its hostname").toBe(before.hostname);
+      expect(after.machine_id_sha256, "the server keeps its installation").toBe(before.machine_id_sha256);
+      receipt.steps.preserved = { status: "passed", same_host_key: true, same_hostname: true, same_installation: true, rebooted: after.boot_id !== before.boot_id };
+    } finally {
+      const cleanupFailed = (step: string) => (error: unknown) =>
+        logRuntimeE2E(`local-anchor cleanup ${step} failed`, {
+          message: redactText(String(error)).slice(0, 600),
+        });
+      // Product state only; the server itself is never touched here.
+      if (stackId && !destroyed) {
+        await destroyRuntimeStackViaApi(auth.token, stackId).catch(cleanupFailed("destroy"));
+      }
+      if (serverId && !detached) {
+        await detachOwnerServer(auth.token, serverId).catch(cleanupFailed("detach"));
+      }
+      receipt.finishedAt = new Date().toISOString();
+      await mkdir(ARTIFACTS_DIR, { recursive: true });
+      await writeFile(path.join(ARTIFACTS_DIR, "local-lifecycle-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
+      await attachJson("local-lifecycle-receipt.json", receipt);
+      await anchor.release();
     }
   });
 
@@ -3757,6 +4376,163 @@ async function waitForManagedDay2Enrollment(
 // Stop and start each wait up to 12 minutes for provider convergence; the
 // reconnect and SSH steps are bounded by the product's own timeouts.
 const MANAGED_DAY2_BUDGET_MS = 1_800_000;
+
+// Upgrade, bounded retry and port claims on the converged managed node
+// (paid-beta B4/B5, scripts/paid-journey-receipt.mjs). Each part is written
+// into `evidence` as soon as it is observed, so the lifecycle receipt keeps
+// what passed when a later part throws.
+//   upgrade        the owner upgrades the deployed StackKit to the release
+//                  the control plane pins (TECHSTACK_RUNTIME_E2E_UPGRADE_TARGET_RELEASE,
+//                  as the product's own upgrade action does), then verification passes
+//   bounded_retry  the exact rollout retry is bounded to a failed rollout on
+//                  its active lease: on the converged stack it is refused
+//                  because the stack is not a failed rollout (409
+//                  rollout_retry_conflict), creates no job and leaves the
+//                  lease in place
+//   port_claims    the server's current port-claim generation holds active
+//                  claims of this stack with complete listener evidence
+//                  (polled: the Guard reports listeners after the rollout)
+const MANAGED_LIFECYCLE_BUDGET_MS = 65 * 60_000;
+const MANAGED_UPGRADE_TARGET_RELEASE =
+  String(process.env.TECHSTACK_RUNTIME_E2E_UPGRADE_TARGET_RELEASE ?? "").trim() || "latest";
+
+async function runManagedLifecycleEvidence(args: {
+  session: GatewaySessionKeeper;
+  stackId: string;
+  leaseId: string;
+  provisionJobId: string;
+  server: RuntimeStackOperationServer;
+  evidence: ManagedLifecycleEvidence;
+}) {
+  const { session, stackId, leaseId, evidence } = args;
+  const apiBase = session.apiBase;
+  const serverRow = args.server as unknown as Record<string, unknown>;
+  // Canonical rows carry server_id; id is the legacy projection's key.
+  const serverId = String(serverRow.server_id ?? args.server.id ?? "").trim();
+  const agentId = String(serverRow.agent_id ?? "").trim();
+  expect(serverId, "the managed stack names its server").not.toBe("");
+  expect(agentId, "the managed server names its agent").not.toBe("");
+
+  await test.step("Managed upgrade: upgrade the StackKit and verify", async () => {
+    const deadline = Date.now() + 900_000;
+    let actions: string[] = [];
+    while (Date.now() < deadline) {
+      const aggregate = await fetchRuntimeApi<LifecycleRecord>(
+        session,
+        `/api/v1/servers/${encodeURIComponent(serverId)}`,
+        apiBase,
+      );
+      actions = ((aggregate.stack_actions ?? []) as unknown[]).map(String);
+      if (actions.includes("upgrade") && actions.includes("verify")) break;
+      await delay(10_000);
+    }
+    expect(actions, "the managed server admits upgrade and verify").toEqual(
+      expect.arrayContaining(["upgrade", "verify"]),
+    );
+    const upgrade = await runStackKitLifecycleOperation(
+      session,
+      stackId,
+      agentId,
+      "upgrade",
+      { owner_approved: true, target_release: MANAGED_UPGRADE_TARGET_RELEASE },
+      1_200_000,
+      apiBase,
+    );
+    const verify = await runStackKitLifecycleOperation(
+      session,
+      stackId,
+      agentId,
+      "verify",
+      {},
+      1_200_000,
+      apiBase,
+    );
+    evidence.upgrade = {
+      job_id: String(upgrade.job.id ?? ""),
+      status: String(upgrade.result.status ?? ""),
+      success: upgrade.result.success === true,
+      release: releaseOf(upgrade.result),
+      verify_job_id: String(verify.job.id ?? ""),
+      verify_success: verify.result.success === true,
+    };
+  });
+
+  await test.step("Managed bounded retry: a converged rollout is not retried", async () => {
+    expect(args.provisionJobId, "the provision job is known").not.toBe("");
+    const jobsPath = `/api/v1/jobs?stack_id=${encodeURIComponent(stackId)}&per_page=100`;
+    const before = await fetchRuntimeApi<RuntimeJobListPayload>(session, jobsPath, apiBase);
+    const response = await authorizedFetch(
+      session,
+      runtimeApiUrl(apiBase, `/api/v1/stacks/${encodeURIComponent(stackId)}/retry-rollout`),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": `managed-bounded-retry-${randomUUID()}`,
+        },
+        body: JSON.stringify({ source_job_id: args.provisionJobId, lease_id: leaseId }),
+      },
+    );
+    const text = await response.text();
+    const body = lifecycleRecord(text);
+    const details = lifecycleRecord(lifecycleRecord(body.error).details ?? body.details);
+    const reasonCode = String(details.reason_code ?? "");
+    const after = await fetchRuntimeApi<RuntimeJobListPayload>(session, jobsPath, apiBase);
+    const ids = (payload: RuntimeJobListPayload) =>
+      (payload.items ?? []).map((item) => String(item.id ?? "")).sort();
+    const status = await monthlyRuntimeRequest(session, leaseId, "", apiBase);
+    evidence.bounded_retry = {
+      http_status: response.status,
+      reason_code: reasonCode,
+      detail: redactText(String(details.detail ?? "")).slice(0, 200),
+      jobs_before: ids(before).length,
+      jobs_after: ids(after).length,
+      new_jobs: ids(after).filter((id) => !ids(before).includes(id)),
+      lease_id: String(status.lease_id ?? leaseId),
+      enrollment_status: String(status.enrollment_status ?? ""),
+    };
+    expect(response.status, redactText(text)).toBe(409);
+    expect(reasonCode).toBe("rollout_retry_conflict");
+    // Every invariant refuses with the same code; only this one proves the
+    // retry was bounded by the stack state and not by a wrong job or lease.
+    expect(evidence.bounded_retry.detail).toMatch(/not a failed rollout/);
+    expect(evidence.bounded_retry.new_jobs, "a refused retry creates no job").toEqual([]);
+    expect(evidence.bounded_retry.enrollment_status).toBe("enrolled");
+  });
+
+  await test.step("Managed port claims: the active generation is read back", async () => {
+    const deadline = Date.now() + 300_000;
+    let ports: LifecycleRecord = {};
+    let allocations: LifecycleRecord[] = [];
+    let ownActive: LifecycleRecord[] = [];
+    for (;;) {
+      ports = await fetchRuntimeApi<LifecycleRecord>(
+        session,
+        `/api/v1/servers/${encodeURIComponent(serverId)}/ports`,
+        apiBase,
+      );
+      allocations = (Array.isArray(ports.allocations) ? ports.allocations : []) as LifecycleRecord[];
+      ownActive = allocations.filter(
+        (item) => item.kit_deployment_id === stackId && item.claim_state === "active" && item.desired === true,
+      );
+      if ((ports.listeners_complete === true && ownActive.length > 0) || Date.now() > deadline) break;
+      await delay(15_000);
+    }
+    evidence.port_claims = {
+      server_id: String(ports.server_id ?? ""),
+      server_generation: Number(ports.server_generation ?? 0),
+      inventory_revision: Number(ports.inventory_revision ?? 0),
+      listeners_complete: ports.listeners_complete === true,
+      allocations: allocations.length,
+      active_stack_claims: ownActive.length,
+      claim_states: [...new Set(allocations.map((item) => String(item.claim_state ?? "")))].sort(),
+    };
+    expect(evidence.port_claims.server_id).toBe(serverId);
+    expect(evidence.port_claims.server_generation).toBeGreaterThan(0);
+    expect(evidence.port_claims.listeners_complete, "listener evidence is complete").toBe(true);
+    expect(ownActive.length, "the stack holds active port claims").toBeGreaterThan(0);
+  });
+}
 
 async function managedDay2Evidence(
   api: GatewaySessionKeeper,
@@ -3981,6 +4757,7 @@ interface LifecycleHooks {
   onStack: (stackId: string) => void;
   onResource: (resource: OwnerServer) => void;
   onServer: (serverId: string) => void;
+  onPairingJob?: (pairingJobId: string) => void;
 }
 
 // The owner brings one server, runs the install command with the registration
@@ -3994,8 +4771,9 @@ async function enrollAndDeployLifecycleStack(
   token: string,
   supplier: ReturnType<typeof ownerServerSupplierFromEnv>,
   hooks: LifecycleHooks,
+  run: { name?: string; environmentClass?: "cloud" | "local" } = {},
 ) {
-  const name = `stack-lifecycle-${runtimeRunId()}`;
+  const name = run.name ?? `stack-lifecycle-${runtimeRunId()}`;
   const created = await createLifecycleWizardRun(
     token,
     {
@@ -4004,11 +4782,11 @@ async function enrollAndDeployLifecycleStack(
         run_kind: "first-run",
         name,
         goals: [],
-        // The owner server is a rented VPS: explicit placement evidence
-        // lets the product classify it as a customer-operated cloud server.
+        // Explicit placement evidence lets the product classify the owner
+        // server: a rented VPS is cloud, a server at home is local.
         server: {
           transport: "install-command",
-          environment_class: "cloud",
+          environment_class: run.environmentClass ?? "cloud",
         },
         kit_assignment: { mode: "found", kit_slug: "basement-kit" },
       },
@@ -4028,6 +4806,7 @@ async function enrollAndDeployLifecycleStack(
     stackId,
     pairingJobId,
   );
+  hooks.onPairingJob?.(pairingJobId);
   const resource = await supplier.provision(1);
   hooks.onResource(resource);
   await enrollOwnerServer(token, resource, registrationToken);
@@ -4069,6 +4848,7 @@ async function enrollAndDeployLifecycleStack(
   expect(deployJob.state, runtimeJobFailureSummary(deployJob)).toBe(
     "completed",
   );
+
   return { stackId, serverId, deploy };
 }
 
@@ -4193,7 +4973,7 @@ async function mintRegistrationToken(
 
 async function enrollOwnerServer(
   token: string,
-  resource: { ip: string; keyPair: { privateKeyPath: string } },
+  resource: { ip: string; keyPair: { privateKeyPath: string }; ssh?: PinnedSSHTarget },
   registrationToken: string,
 ) {
   const hostname = (
@@ -4202,11 +4982,14 @@ async function enrollOwnerServer(
       resource.keyPair.privateKeyPath,
       "hostname",
       30_000,
+      resource.ssh,
     )
   ).stdout.trim();
+  // An owner who is not root runs the same command through sudo.
+  const asRoot = resource.ssh && resource.ssh.user !== "root" ? "sudo -n env " : "";
   const installCommand = [
     `curl -fsSL ${shellQuote(`${AGENT_ORIGIN}/install.sh`)} |`,
-    `KOMBI_SERVER=${shellQuote(AGENT_ORIGIN)}`,
+    `${asRoot}KOMBI_SERVER=${shellQuote(AGENT_ORIGIN)}`,
     `KOMBI_TOKEN=${shellQuote(registrationToken)}`,
     "TECHSTACK_AS_SERVICE=1 sh",
   ].join(" ");
@@ -4217,6 +5000,7 @@ async function enrollOwnerServer(
       resource.keyPair.privateKeyPath,
       installCommand,
       300_000,
+      resource.ssh,
     );
   } catch (err) {
     // The ssh command line carries the registration token; never surface it.
@@ -4447,17 +5231,18 @@ async function waitForServerStackActions(
 }
 
 async function runStackKitLifecycleOperation(
-  token: string,
+  token: RuntimeBearer,
   stackId: string,
   agentId: string,
   operation: string,
   extra: Record<string, unknown> = {},
   timeoutMs = 1_200_000,
+  apiBase = API_BASE,
 ) {
   const response = await authorizedFetch(
     token,
     runtimeApiUrl(
-      API_BASE,
+      apiBase,
       `/api/v1/stacks/${encodeURIComponent(stackId)}/stackkit/operations`,
     ),
     {
@@ -4473,7 +5258,7 @@ async function runStackKitLifecycleOperation(
   expect(accepted.kit_deployment_id).toBe(stackId);
   const jobId = String(accepted.job_id ?? "");
   expect(jobId, `${operation} is accepted as a job`).not.toBe("");
-  const job = await waitForJobTerminal(token, jobId, timeoutMs);
+  const job = await waitForJobTerminal(token, jobId, timeoutMs, apiBase);
   const result = lifecycleRecord(job.result);
   await attachJson(
     `stack-lifecycle-${operation}.json`,

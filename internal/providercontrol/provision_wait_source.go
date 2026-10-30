@@ -100,3 +100,40 @@ func splitProviderProvisionWaitCursor(cursor string) (string, string, error) {
 }
 
 var _ ProviderProvisionWaitSource = (*PostgresLedger)(nil)
+
+// ListProviderProvisionWaitsForTenant narrows the existing secret-free
+// recovery directory before any operation coordinate leaves native custody.
+// It retains the existing tenant-NUL-operation cursor contract.
+func (l *PostgresLedger) ListProviderProvisionWaitsForTenant(ctx context.Context, tenant, cursor string, limit int) (ProviderProvisionWaitPage, error) {
+	if l == nil || l.db == nil || tenant == "" || strings.TrimSpace(tenant) != tenant || strings.ContainsRune(tenant, 0) || limit < 1 || limit > 100 {
+		return ProviderProvisionWaitPage{}, fmt.Errorf("%w: tenant recovery coordinates are invalid", ErrInvalidRequest)
+	}
+	afterTenant, afterOperation, err := splitProviderProvisionWaitCursor(cursor)
+	if err != nil || (cursor != "" && afterTenant != tenant) || strings.ContainsRune(afterOperation, 0) {
+		return ProviderProvisionWaitPage{}, fmt.Errorf("%w: recovery cursor belongs to another tenant or is invalid", ErrInvalidRequest)
+	}
+	rows, err := l.db.QueryContext(ctx, `SELECT tenant_id,operation_id FROM provider_control_list_provider_provision_waits($1,$2,$3) WHERE tenant_id=$1`, tenant, afterOperation, limit+1)
+	if err != nil {
+		return ProviderProvisionWaitPage{}, err
+	}
+	defer rows.Close()
+	page := ProviderProvisionWaitPage{Operations: []OperationRef{}}
+	for rows.Next() {
+		var operation OperationRef
+		if err := rows.Scan(&operation.TenantID, &operation.OperationID); err != nil {
+			return ProviderProvisionWaitPage{}, err
+		}
+		if operation.TenantID != tenant || operation.OperationID == "" {
+			return ProviderProvisionWaitPage{}, ErrInvalidRequest
+		}
+		page.Operations = append(page.Operations, operation)
+	}
+	if err := rows.Err(); err != nil {
+		return ProviderProvisionWaitPage{}, err
+	}
+	if len(page.Operations) > limit {
+		page.Operations = page.Operations[:limit]
+		page.NextCursor = providerProvisionWaitCursor(page.Operations[len(page.Operations)-1])
+	}
+	return page, nil
+}

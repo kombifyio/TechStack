@@ -82,7 +82,7 @@ func (h workerRouteHandlers) workerPosture(e *httpx.Event) error {
 // leaves it observe-only. Without a binding signing key no grant is issued,
 // because a Guard never admits an unsigned one.
 func (h workerRouteHandlers) localRepairGrant(ctx context.Context, authCtx runtimeAgentAuthContext, identity guardposture.Identity) *guardbinding.LocalRepairGrant {
-	signer, err := h.bindingSignerFor(identity.TenantID, identity.WorkerID)
+	signer, err := h.bindingSignerFor(ctx, identity.TenantID, identity.WorkerID)
 	if err != nil || signer == nil {
 		return nil
 	}

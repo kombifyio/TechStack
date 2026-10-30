@@ -60,6 +60,12 @@ type ReportRequest struct {
 	Report     guardbinding.ResultReport
 	// Result is required for a terminal report and ignored otherwise.
 	Result *agentpb.StackKitResult
+	// PredecessorAgentID, when set, delivers the held outcome of a command the
+	// control plane offered to that earlier worker of the same tenant and
+	// server. The caller has verified the predecessor recovery statement and
+	// the shared server. The revision is committed under the command's own
+	// dispatch generation and never counts as this worker's round trip.
+	PredecessorAgentID string
 }
 
 // inMemoryAuthority is how long a command offered by the in-memory hub may
@@ -326,7 +332,12 @@ func (h *Hub) reofferUnknownDispatched(ctx context.Context, tx *sql.Tx, opts Pol
 // a different record for the same revision is refused.
 func (h *Hub) SubmitReportForTenant(ctx context.Context, req ReportRequest) (guardbinding.Acknowledgement, error) {
 	req.TenantID, req.AgentID, req.CommandID = strings.TrimSpace(req.TenantID), strings.TrimSpace(req.AgentID), strings.TrimSpace(req.CommandID)
-	if h == nil || req.TenantID == "" || req.AgentID == "" || req.CommandID == "" {
+	req.PredecessorAgentID = strings.TrimSpace(req.PredecessorAgentID)
+	if h == nil || req.TenantID == "" || req.AgentID == "" || req.CommandID == "" || req.PredecessorAgentID == req.AgentID {
+		return guardbinding.Acknowledgement{}, ErrResultRejected
+	}
+	if req.PredecessorAgentID != "" && h.db == nil {
+		// Predecessor recovery needs the durable command record.
 		return guardbinding.Acknowledgement{}, ErrResultRejected
 	}
 	req.Report.Reason = truncateText(req.Report.Reason, guardbinding.MaxReasonBytes)
@@ -373,12 +384,16 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	var dispatchGeneration sql.NullInt64
 	var authority sql.NullTime
 	var currentRevision int
+	commandAgent := req.AgentID
+	if req.PredecessorAgentID != "" {
+		commandAgent = req.PredecessorAgentID
+	}
 	err = tx.QueryRowContext(ctx, `
 		SELECT command_json, state, contract_version, worker_generation, authority_expires_at, result_revision, result_digest
 		FROM typed_agent_commands
 		WHERE tenant_id = $1 AND agent_id = $2 AND command_id = $3 AND command_family = 'stackkit'
 		FOR UPDATE
-	`, req.TenantID, req.AgentID, commandID).Scan(&payload, &state, &contract, &dispatchGeneration, &authority, &currentRevision, &priorDigest)
+	`, req.TenantID, commandAgent, commandID).Scan(&payload, &state, &contract, &dispatchGeneration, &authority, &currentRevision, &priorDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return guardbinding.Acknowledgement{}, ErrCommandNotPending
 	}
@@ -402,6 +417,16 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	if authority.Valid {
 		stored.AuthorityExpiresAt = authority.Time
 	}
+	if req.PredecessorAgentID != "" {
+		// The outcome was produced under the earlier worker's credential, whose
+		// generation the current worker cannot vouch for. It is committed under
+		// the command's own dispatch generation, and only an open outcome can be
+		// recovered this way.
+		if !dispatchGeneration.Valid {
+			return guardbinding.Acknowledgement{}, ErrCommandNotPending
+		}
+		req.Generation = dispatchGeneration.Int64
+	}
 	submission := guardbinding.Submission{Report: report, Generation: req.Generation}
 	if started := req.Result.GetStartedAtUnix(); report.State == guardbinding.ReportTerminal && started > 0 {
 		submission.StartedAt = time.Unix(started, 0)
@@ -409,7 +434,13 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	duplicate, denial := guardbinding.AcceptRevision(stored, submission)
 	switch {
 	case duplicate:
+		// An identical repeat is acknowledged again before any state check: a
+		// recovered predecessor result whose acknowledgement was lost settles the
+		// command, and refusing the retry would leave the Guard holding it forever.
 		return guardbinding.Acknowledgement{CommandID: commandID, Revision: report.Revision, Digest: report.Digest, Accepted: true, Acknowledged: true, Duplicate: true}, nil
+	case req.PredecessorAgentID != "" && state != "dispatched" && state != "outcome_unknown":
+		// Only an open outcome can be recovered with a new revision.
+		return guardbinding.Acknowledgement{}, ErrCommandNotPending
 	case denial != nil && denial.Code == guardbinding.CodeCommandNotPending:
 		return guardbinding.Acknowledgement{}, ErrCommandNotPending
 	case denial != nil:
@@ -425,7 +456,7 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	if report.State == guardbinding.ReportTerminal {
 		if validateErr := stackkitcommand.ValidateResult(result, command); validateErr != nil {
 			rejectedResult = "typed StackKits result rejected: " + validateErr.Error()
-		} else if resultPayload, err = protojson.Marshal(result); err != nil {
+		} else if resultPayload, err = protojson.Marshal(durableStackKitResult(result)); err != nil {
 			return guardbinding.Acknowledgement{}, err
 		}
 	}
@@ -448,7 +479,9 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	`, commandID, next, nullableText(nextError), nullableJSON(resultPayload), report.Revision, report.Digest, req.Generation, next == "outcome_unknown"); err != nil {
 		return guardbinding.Acknowledgement{}, err
 	}
-	if next == "completed" {
+	if next == "completed" && req.PredecessorAgentID == "" {
+		// A recovered predecessor outcome is not evidence that the current
+		// worker completed a round trip.
 		if err := recordRoundTrip(ctx, tx, req); err != nil {
 			return guardbinding.Acknowledgement{}, err
 		}
@@ -458,6 +491,12 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	}
 	if rejectedResult != "" {
 		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeResultRejected, "%s", rejectedResult)
+	}
+	// The original bearer result reaches only the still-waiting exact sender,
+	// after its public outcome and binding revision have committed. Duplicate
+	// reports return above and cannot re-deliver a consumed capability.
+	if req.PredecessorAgentID == "" {
+		h.deliverTransientIdentity(req.TenantID, req.AgentID, command, result)
 	}
 	return guardbinding.Acknowledgement{CommandID: commandID, Revision: report.Revision, Digest: report.Digest, Accepted: true, Acknowledged: true}, nil
 }

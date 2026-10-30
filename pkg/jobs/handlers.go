@@ -191,11 +191,12 @@ type ManagedStackKitInventoryBuilder interface {
 // AutoDeployAdmissionRequest is the immutable identity envelope checked before
 // a provision job can invoke rollout side effects.
 type AutoDeployAdmissionRequest struct {
-	StackID     string
-	TenantID    string
-	OwnerID     string
-	LeaseID     string
-	OperationID string
+	ExistingServerID string
+	StackID          string
+	TenantID         string
+	OwnerID          string
+	LeaseID          string
+	OperationID      string
 }
 
 // AutoDeployAdmission proves that a prepared managed runtime is currently safe
@@ -811,7 +812,7 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 		workload := firstNonEmpty(job.TargetName, job.TargetID)
 		_, typedLocalRemoval := job.Snapshot().Result[LocalStackKitRemovalEvidenceResultField]
 		if !typedLocalRemoval {
-			if err := destroyStackKitWorkspace(ctx, workDir, workload); err != nil {
+			if err := destroyStackKitWorkspace(ctx, workDir, workload, StackKitLifecycleRequest{TenantID: payloadString(job.Payload, tenantIDField), StackID: job.TargetID}); err != nil {
 				return wrapProvisionCause(StepProvision, err,
 					"Could not remove the stack with the pinned StackKits CLI.")
 			}

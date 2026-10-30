@@ -54,7 +54,8 @@ func TestGuardAgentEnrollmentSurvivesLostResponseAndSignsRequests(t *testing.T) 
 	}))
 	defer server.Close()
 
-	stateDir, enrollmentPath := t.TempDir(), filepath.Join(t.TempDir(), "agent-enrollment.json")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	enrollmentPath := filepath.Join(stateDir, "agent-enrollment.json")
 	manager, err := hostidentity.Open(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +160,7 @@ func TestGuardAgentResumesAtConfirmationWithoutRedeemingAgain(t *testing.T) {
 	}))
 	defer server.Close()
 
-	manager, err := hostidentity.Open(t.TempDir())
+	manager, err := hostidentity.Open(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +218,7 @@ func TestGuardAgentKeyRotationKeepsTheWorkerAuthenticated(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	manager, err := hostidentity.Open(t.TempDir())
+	manager, err := hostidentity.Open(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}

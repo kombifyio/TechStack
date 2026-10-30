@@ -11,6 +11,28 @@ import (
 // managed backup target. It is tied to a successful generation inspection,
 // never an arbitrary artifact or an operator-supplied plan.
 func ManagedBackupPlan(result *agentpb.StackKitResult, instance string) ([]byte, string, error) {
+	plan, hash, err := managedInspectedPlan(result, instance)
+	if err != nil {
+		return nil, "", err
+	}
+	projection := map[string]json.RawMessage{}
+	for _, key := range []string{"apiVersion", "kind", "stackId", "planHash", "backupTargetRequirements", "externalBackupTargetBindings", "backupPolicy"} {
+		if raw, ok := plan[key]; ok {
+			projection[key] = raw
+		}
+	}
+	raw, err := json.Marshal(projection)
+	return raw, hash, err
+}
+
+// managedInspectedPlan admits only the projection attached by Guard to an
+// authenticated typed PLAN result. Its metadata alone is not a verification
+// API for a caller-supplied ResolvedPlan.
+func managedInspectedPlan(result *agentpb.StackKitResult, instance string) (map[string]json.RawMessage, string, error) {
+	return readManagedInspectedPlan(result, instance, false)
+}
+
+func readManagedInspectedPlan(result *agentpb.StackKitResult, instance string, allowAbsentProjection bool) (map[string]json.RawMessage, string, error) {
 	var envelope struct {
 		SchemaVersion string `json:"schemaVersion"`
 		Command       string `json:"command"`
@@ -41,6 +63,14 @@ func ManagedBackupPlan(result *agentpb.StackKitResult, instance string) ([]byte,
 	if json.Unmarshal([]byte(envelope.Data.Output), &inspection) != nil || inspection.APIVersion != "stackkit.plan-inspection/v1" || inspection.Kind != "PlanInspection" || inspection.VerifiedPhase != "generation" || inspection.ExecutorInvoked || inspection.Readiness.Generation.Status != "ready" || len(inspection.Readiness.Generation.Blockers) != 0 {
 		return nil, "", fmt.Errorf("managed backup plan inspection is not ready")
 	}
+	if instance == "" || !specHashPattern.MatchString(inspection.Binding.PlanHash) {
+		return nil, "", fmt.Errorf("managed plan inspection identity is invalid")
+	}
+	// Older Guard versions attach this optional projection only for cloud.
+	// Absence is distinct from malformed or mismatched supplied evidence.
+	if allowAbsentProjection && len(envelope.Data.Plan) == 0 {
+		return nil, inspection.Binding.PlanHash, nil
+	}
 	var plan map[string]json.RawMessage
 	if len(envelope.Data.Plan) == 0 || len(envelope.Data.Plan) > 2<<20 || json.Unmarshal(envelope.Data.Plan, &plan) != nil {
 		return nil, "", fmt.Errorf("managed backup plan is unavailable")
@@ -49,12 +79,5 @@ func ManagedBackupPlan(result *agentpb.StackKitResult, instance string) ([]byte,
 	if value("apiVersion") != "stackkit.resolved-plan/v1" || value("kind") != "ResolvedPlan" || instance == "" || value("stackId") != instance || value("planHash") != inspection.Binding.PlanHash || !specHashPattern.MatchString(value("planHash")) {
 		return nil, "", fmt.Errorf("managed backup plan identity does not match the inspected instance")
 	}
-	projection := map[string]json.RawMessage{}
-	for _, key := range []string{"apiVersion", "kind", "stackId", "planHash", "backupTargetRequirements", "externalBackupTargetBindings", "backupPolicy"} {
-		if raw, ok := plan[key]; ok {
-			projection[key] = raw
-		}
-	}
-	raw, err := json.Marshal(projection)
-	return raw, value("planHash"), err
+	return plan, value("planHash"), nil
 }

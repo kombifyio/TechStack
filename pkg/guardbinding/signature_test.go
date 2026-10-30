@@ -46,3 +46,31 @@ func TestSignedBindingVerifiesOnlyUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// Enrollment pins the HKDF-derived key for this tenant and worker. A binding
+// signed for a different recipient cannot cross that root-owned key boundary.
+func TestDerivedWorkerBindingCannotCrossPinnedWorkerOrTenant(t *testing.T) {
+	base := bytes.Repeat([]byte{3}, ed25519.SeedSize)
+	sender, err := DeriveWorkerSigner(base, "tenant-one", "worker-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := Binding{CommandID: "candidate-install-one", TenantID: "tenant-one", WorkerID: "worker-one", ServerID: "server-one",
+		Operation: "stackkit.runtime.install", PayloadDigest: "synthetic-crypto-boundary-payload", WorkerGeneration: 2, CurrentGeneration: 2,
+		AuthorityExpiresAt: time.Date(2026, 10, 24, 1, 0, 0, 0, time.UTC), ContractVersion: ContractVersion}
+	if err := sender.Sign(&binding); err != nil {
+		t.Fatal(err)
+	}
+	if denial := binding.VerifySignature(sender.PublicKeys()); denial != nil {
+		t.Fatal(denial)
+	}
+	for _, recipient := range [][2]string{{"tenant-one", "worker-two"}, {"tenant-two", "worker-one"}} {
+		other, err := DeriveWorkerSigner(base, recipient[0], recipient[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if denial := binding.VerifySignature(other.PublicKeys()); denial == nil {
+			t.Fatalf("binding crossed the root-pinned recipient boundary: %v", recipient)
+		}
+	}
+}

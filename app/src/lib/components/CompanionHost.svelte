@@ -31,6 +31,7 @@
   import { TRANSIENT_PANEL_DISMISS_EVENT } from "@kombiverselabs/ui/shell";
   import {
     companionMountOptions,
+    companionPageContext,
     resolveCompanionAppearance,
     resolveCompanionFinish,
   } from "#lib/companion/options.js";
@@ -44,6 +45,10 @@
   import { theme } from "#lib/stores/theme.js";
   import { tr } from "#lib/i18n.svelte.js";
   import { get } from "svelte/store";
+  import {
+    currentViewContext,
+    subscribeViewContext,
+  } from "#lib/stores/viewContext.svelte.js";
 
   let {
     onOpenChange,
@@ -66,6 +71,11 @@
   onMount(() => {
     if (!mount) return;
 
+    const pageContext = (view = currentViewContext()) =>
+      companionPageContext(view, document.documentElement.lang || "en");
+    // Initial context covers a synchronous open notification during mount.
+    let syncContext = (_view = currentViewContext()) => {};
+
     const controller: CompanionController = mountCompanion(mount, {
       ...companionMountOptions({
         getToken: getGatewayToken,
@@ -81,9 +91,18 @@
         },
         stackIdentity: companionStackIdentityFromAccount(get(stackIdentity)),
       }),
-      onOpenChange: (open) => onOpenChange?.(open),
+      initialContext: pageContext(),
+      onOpenChange: (open) => {
+        if (open) syncContext();
+        onOpenChange?.(open);
+      },
       onLayoutChange: (layout) => onLayoutChange?.(layout),
     });
+    syncContext = (view = currentViewContext()) => {
+      const context = pageContext(view);
+      controller.setContext(context, context.page?.title);
+    };
+    const unsubscribeContext = subscribeViewContext(syncContext);
 
     const syncStackIdentity = (identity: StackIdentity | null) => {
       const launcherIdentity = companionStackIdentityFromAccount(identity);
@@ -117,6 +136,7 @@
       unsubscribeTheme();
       unsubscribeFinish();
       unsubscribeIdentity();
+      unsubscribeContext();
       unregisterCompanion();
       window.removeEventListener(TRANSIENT_PANEL_DISMISS_EVENT, closeOnDismiss);
       controller.destroy();
@@ -131,7 +151,11 @@
   restyle the SDK's own nodes with `!important`, which is what makes their
   companion chrome unshareable.
 -->
-<div bind:this={mount} class="companion-mount" data-testid="companion-mount"></div>
+<div
+  bind:this={mount}
+  class="companion-mount"
+  data-testid="companion-mount"
+></div>
 
 <style>
   .companion-mount {

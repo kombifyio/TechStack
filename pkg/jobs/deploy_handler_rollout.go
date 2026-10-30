@@ -387,6 +387,9 @@ func (r *deployRollout) runRollout(ctx context.Context) error {
 				"Techstack could not bind this rollout to its reserved host listeners. No host mutation was started.")
 		}
 		if err := r.bootstrapManagedRuntimeTarget(ctx); err != nil {
+			if isJobWaitError(err) || ctx.Err() == context.Canceled {
+				return err
+			}
 			captureJobError(ctx, err, map[string]interface{}{stepField: StepStackKitPrepare, stackIDField: r.job.TargetID, "stack_kit": r.unifiedSpec.StackKit})
 			return wrapProvisionCause(StepStackKitPrepare, fmt.Errorf("managed runtime target bootstrap failed: %w", err),
 				"TechStack could not prepare the managed VPS for the StackKits rollout.")
@@ -558,6 +561,14 @@ func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, a
 	}
 	if len(r.runtimeProof) > 0 {
 		result["runtime_proof"] = r.runtimeProof
+		if proof, exists := r.runtimeProof["target_bootstrap"]; exists {
+			result["target_bootstrap"] = proof
+		}
+	}
+	for _, key := range []string{autoDeployGuardWaitStartedAtField, "auto_deploy_guard_verified_at", "managed_runtime_target_verified_at", "guard_admission_reason", "guard_admission_elapsed_ms", "guard_admission_phase", "guard_admission_deadline_at"} {
+		if value, exists := jobSnapshot.Result[key]; exists {
+			result[key] = value
+		}
 	}
 	if len(r.stackKitOutputs) > 0 {
 		result[metadataKeyStackKitOutputs] = r.stackKitOutputs

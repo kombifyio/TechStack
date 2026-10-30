@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"io"
 	"os"
 	"os/exec"
@@ -62,7 +64,10 @@ func NewHost(cfg HostConfig) (*Host, error) {
 	if cfg.StackKit == nil || cfg.Updater == nil || cfg.StateDir == "" || cfg.HandoffDir == "" {
 		return nil, errors.New("the privileged backend needs a StackKits executor, an updater and its directories")
 	}
-	return &Host{cfg: cfg, observer: NewObserver(cfg.StackKit)}, nil
+	host := &Host{cfg: cfg}
+	host.cfg.StackKit = cfg.StackKit.WithInternalCandidateAdmission(host.admitInstalledCandidate)
+	host.observer = NewObserver(host.cfg.StackKit)
+	return host, nil
 }
 
 // Execute runs one typed command. The observer reports the started process group.
@@ -102,12 +107,43 @@ func (h *Host) RuntimeDescribe(context.Context) (RuntimeDescription, error) {
 	if !description.Available {
 		return description, nil
 	}
-	description.InstalledDigest, _ = h.cfg.StackKit.InstalledRuntimeBundleDigest()
+	var markerErr error
+	description.InstalledDigest, markerErr = h.cfg.StackKit.InstalledRuntimeBundleDigest()
+	if markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
+		return description, markerErr
+	}
 	if evidence, err := h.cfg.StackKit.ConfirmInstalledRuntime(); err == nil {
 		description.Valid = true
 		description.Version, description.ArchiveSHA256 = evidence.Version, evidence.SHA256
 	}
 	return description, nil
+}
+
+// RuntimePreflight checks only configured root-owned policy and runtime paths.
+// It never executes a downloaded candidate or bypasses the install boundary.
+func (h *Host) RuntimePreflight(ctx context.Context, params RuntimeInstallParams) (RuntimeAdmission, error) {
+	manifest, err := h.runtimeManifest(params)
+	if err != nil {
+		return RuntimeAdmission{}, err
+	}
+	if manifest == nil {
+		return RuntimeAdmission{}, nil
+	}
+	identity, _ := manifest.StackKits.ForArch(h.cfg.Updater.cfg.GOARCH)
+	raw, _ := json.Marshal(struct {
+		Version string
+		Runtime *guardrelease.StackKitsRuntime
+	}{manifest.Version, manifest.StackKits})
+	result := RuntimeAdmission{Signed: true, Version: manifest.StackKits.Version, IdentitySHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Runtime: identity}
+	if err := ctx.Err(); err != nil {
+		return RuntimeAdmission{}, err
+	}
+	if description, err := h.RuntimeDescribe(ctx); err != nil {
+		return RuntimeAdmission{}, err
+	} else if description.Valid {
+		result.InstalledCurrent = stackKitsInstalledCheck(manifest.StackKits.Version, identity, h.cfg.StackKit.RuntimeRoot())(h.cfg.StackKit.RuntimeRoot()) == nil
+	}
+	return result, nil
 }
 
 // RuntimeInstall copies the handed-over bundle into a file only root can reach,
@@ -149,7 +185,7 @@ func (h *Host) RuntimeInstall(ctx context.Context, params RuntimeInstallParams) 
 // daemon and its `stackkit` and `stackkit-server` will run as root, so their
 // digests must be the ones a verified, signed release manifest names. A host
 // explicitly configured for unsigned local builds skips the check.
-func (h *Host) runtimeCheck(params RuntimeInstallParams) (func(stageDir string) error, error) {
+func (h *Host) runtimeManifest(params RuntimeInstallParams) (*guardrelease.Manifest, error) {
 	if params.ManifestFile == "" && params.ManifestBundleFile == "" {
 		if h.cfg.Updater.AllowsUnsigned() {
 			return nil, nil
@@ -171,7 +207,58 @@ func (h *Host) runtimeCheck(params RuntimeInstallParams) (func(stageDir string) 
 	if identity.BundleSHA256 == "" {
 		return nil, deny(guardrelease.CodeEvidenceMissing, "the signed release names no digest for the whole StackKits runtime bundle")
 	}
-	return stackKitsStageCheck(want.Version, identity, h.cfg.StackKit.RuntimeRoot()), nil
+	h.cfg.Updater.floorMu.Lock()
+	floor, floorErr := h.cfg.Updater.loadFloor()
+	var policy *guardrelease.Denial
+	if floorErr == nil {
+		policy = h.cfg.Updater.platformDenial(manifest, floor)
+	}
+	h.cfg.Updater.floorMu.Unlock()
+	if floorErr != nil {
+		return nil, floorErr
+	}
+	if policy != nil {
+		return nil, asDenial(policy)
+	}
+	if want.Candidate == nil {
+		if params.CandidateIntent != nil || params.CandidateAdmission != nil {
+			return nil, deny(CodeBindingMismatch, "public runtime cannot carry internal candidate admission")
+		}
+		return manifest, nil
+	}
+	if params.CandidateIntent == nil || params.CandidateAdmission == nil {
+		return nil, deny(CodeBindingMismatch, "internal candidate runtime needs signed worker install admission")
+	}
+	pins, err := guardbinding.ReadPins(filepath.Join(h.cfg.StateDir, guardbinding.PinFile))
+	if err != nil {
+		return nil, err
+	}
+	if d := candidateInstallBinding(params, pins, time.Now().UTC()); d != nil {
+		return nil, d
+	}
+	expected, err := manifest.CandidateIntent(h.cfg.Updater.cfg.GOARCH, params.SHA256)
+	if err != nil || *params.CandidateIntent != expected {
+		return nil, deny(CodeBindingMismatch, "candidate intent differs from authenticated runtime")
+	}
+	return manifest, nil
+}
+
+func (h *Host) runtimeCheck(params RuntimeInstallParams) (func(string) error, error) {
+	manifest, err := h.runtimeManifest(params)
+	if err != nil || manifest == nil {
+		return nil, err
+	}
+	identity, _ := manifest.StackKits.ForArch(h.cfg.Updater.cfg.GOARCH)
+	check := stackKitsStageCheck(manifest.StackKits.Version, identity, h.cfg.StackKit.RuntimeRoot())
+	if manifest.StackKits.Candidate == nil {
+		return check, nil
+	}
+	return func(stage string) error {
+		if err := check(stage); err != nil {
+			return err
+		}
+		return h.rememberCandidate(params, manifest, stage)
+	}, nil
 }
 
 // stackKitsStageCheck approves an extracted StackKits runtime only when the
@@ -181,8 +268,16 @@ func (h *Host) runtimeCheck(params RuntimeInstallParams) (func(stageDir string) 
 // the signed tree digest. The pin must also point into the root-owned runtime
 // root.
 func stackKitsStageCheck(version string, want guardrelease.StackKitsArchRuntime, runtimeRoot string) func(stageDir string) error {
+	return stackKitsTreeCheck(version, want, runtimeRoot, guardrelease.TreeDigest)
+}
+
+func stackKitsInstalledCheck(version string, want guardrelease.StackKitsArchRuntime, runtimeRoot string) func(stageDir string) error {
+	return stackKitsTreeCheck(version, want, runtimeRoot, guardrelease.InstalledTreeDigest)
+}
+
+func stackKitsTreeCheck(version string, want guardrelease.StackKitsArchRuntime, runtimeRoot string, treeDigest func(string) (string, error)) func(stageDir string) error {
 	return func(stage string) error {
-		tree, err := guardrelease.TreeDigest(stage)
+		tree, err := treeDigest(stage)
 		if err != nil || tree != want.BundleSHA256 {
 			return deny(CodeBindingMismatch, "the StackKits runtime bundle is not the tree the signed release names")
 		}

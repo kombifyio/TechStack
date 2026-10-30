@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/kombifyio/techstack/pkg/drivehealth"
 )
 
@@ -250,7 +251,7 @@ func (p *PostgresCursors) withTenant(ctx context.Context, tenantID string, fn fu
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {

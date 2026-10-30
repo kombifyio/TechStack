@@ -20,6 +20,7 @@
 
 <script lang="ts">
   import { tr } from "#lib/i18n.svelte.js";
+  import { NEW_SERVER_CREATION_HREF } from "#lib/server-links.js";
   import {
     cancelWizardRunRollout,
     dismissWizardRun,
@@ -110,7 +111,7 @@
       // resume on the progress page; send the user back into the wizard.
       return run.result?.kit_assignment_mode === "join" && run.kit_deployment_id
         ? `/stacks/${encodeURIComponent(run.kit_deployment_id)}/servers/new`
-        : "/stacks/new";
+        : NEW_SERVER_CREATION_HREF;
     }
     const params = new URLSearchParams();
     params.set("job_id", jobRef);

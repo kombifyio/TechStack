@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 // ReadStackIdentitySnapshot reads the owner revision and active identity from
@@ -23,7 +25,7 @@ func (s *PostgresStore) ReadStackIdentitySnapshot(ctx context.Context, tenantID,
 		return nil, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", tenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return nil, 0, err
 	}
 	var revision int64

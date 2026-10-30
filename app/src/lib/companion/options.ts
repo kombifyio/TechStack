@@ -25,8 +25,35 @@ import type {
   CompanionAppearance,
   CompanionFinish,
   MountCompanionOptions,
+  CompanionSurfaceContext,
 } from "@kombiverselabs/embed";
 import type { CompanionLauncherStackIdentity } from "#lib/companion/stack-identity.js";
+import type { ViewContextBody } from "#lib/view-context.js";
+
+/** A page hint only: it never widens the person's authorization or scope. */
+export function companionPageContext(
+  view: ViewContextBody | null,
+  locale: string,
+): CompanionSurfaceContext {
+  return {
+    version: 2,
+    surface: "techstack",
+    locale,
+    scope: { kind: "none" },
+    ...(view
+      ? {
+          route: view.route,
+          ...(view.subject ? { subject: view.subject } : {}),
+          page: {
+            tool: "techstack",
+            title: view.title,
+            ...(view.state ? { state: view.state } : {}),
+            ...(view.facts ? { facts: view.facts } : {}),
+          },
+        }
+      : {}),
+  };
+}
 
 /** The five launcher strings the SDK never ships — packages carry no prose. */
 export interface CompanionMessages {

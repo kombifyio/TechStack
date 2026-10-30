@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	stackKitReleasePinEnv    = "TECHSTACK_STACKKIT_RELEASE_PIN"
-	stackKitReleaseCacheEnv  = "TECHSTACK_STACKKIT_RELEASE_CACHE"
-	stackKitReleaseBundleEnv = "TECHSTACK_STACKKIT_RELEASE_BUNDLE"
+	stackKitReleasePinEnv     = "TECHSTACK_STACKKIT_RELEASE_PIN"
+	stackKitReleaseCacheEnv   = "TECHSTACK_STACKKIT_RELEASE_CACHE"
+	stackKitReleaseBundleEnv  = "TECHSTACK_STACKKIT_RELEASE_BUNDLE"
+	stackKitTargetMetadataEnv = "TECHSTACK_STACKKIT_TARGET_METADATA_DIR"
 )
 
 func configuredPinnedStackKitRelease() (*stackkitrelease.Release, error) {
@@ -42,6 +43,13 @@ func configuredPinnedStackKitRelease() (*stackkitrelease.Release, error) {
 func configuredTargetStackKitRelease() (*stackkitrelease.Release, error) {
 	bundlePath := strings.TrimSpace(os.Getenv(stackKitReleaseBundleEnv))
 	if bundlePath == "" {
+		if metadataDir := strings.TrimSpace(os.Getenv(stackKitTargetMetadataEnv)); metadataDir != "" {
+			target, err := stackkitrelease.ResolveLinuxRuntimeMetadata(metadataDir)
+			if err != nil {
+				return nil, fmt.Errorf("admit signed managed runtime metadata: %w", err)
+			}
+			return &target, nil
+		}
 		return configuredPinnedStackKitRelease()
 	}
 	bundled, err := stackkitrelease.ResolveLinuxRuntimeBundle(bundlePath)
@@ -87,13 +95,17 @@ var releaseRead struct {
 // ConfiguredTargetStackKitRelease and admit afresh.
 func CachedTargetStackKitRelease() (*stackkitrelease.Release, error) {
 	key := releaseFileIdentity()
+	return cachedTargetStackKitRelease(key, configuredTargetStackKitRelease)
+}
+
+func cachedTargetStackKitRelease(key string, resolve func() (*stackkitrelease.Release, error)) (*stackkitrelease.Release, error) {
 	now := time.Now()
 	releaseRead.mu.Lock()
 	defer releaseRead.mu.Unlock()
 	if releaseRead.key == key && now.Before(releaseRead.expires) {
 		return releaseRead.release, releaseRead.err
 	}
-	release, err := configuredTargetStackKitRelease()
+	release, err := resolve()
 	ttl := releaseReadTTL
 	if err != nil {
 		ttl = releaseReadFailureTTL
@@ -106,7 +118,7 @@ func CachedTargetStackKitRelease() (*stackkitrelease.Release, error) {
 // modification time, so a replaced bundle or pin is resolved again at once.
 func releaseFileIdentity() string {
 	var parts []string
-	for _, name := range []string{stackKitReleaseBundleEnv, stackKitReleasePinEnv, stackKitReleaseCacheEnv} {
+	for _, name := range []string{stackKitReleaseBundleEnv, stackKitTargetMetadataEnv, stackKitReleasePinEnv, stackKitReleaseCacheEnv} {
 		path := strings.TrimSpace(os.Getenv(name))
 		part := name + "=" + path
 		if path != "" {

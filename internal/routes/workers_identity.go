@@ -18,6 +18,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/guardidentity"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/logger"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/workerauth"
 )
 
@@ -266,12 +267,20 @@ func (h workerRouteHandlers) authenticateRuntimeAgent(e *httpx.Event, id string,
 		return authCtx, false
 	}
 	if h.identityStore == nil {
+		if releasechannel.StageRuntimePrepared() {
+			denyGuard(e, guardidentity.CodeIdentityUnavailable, "")
+			return authCtx, false
+		}
 		authCtx.IdentityBinding = controlplane.IdentityBindingLegacyBearer
 		return authCtx, true
 	}
 	identity, err := h.identityStore.GetWorkerIdentity(e.Request.Context(), authCtx.TenantID, authCtx.RuntimeAgentID)
 	switch {
 	case errors.Is(err, controlplane.ErrNotFound):
+		if releasechannel.StageRuntimePrepared() {
+			denyGuard(e, guardidentity.CodeIdentityUpgradeRequired, "")
+			return authCtx, false
+		}
 		authCtx.IdentityBinding = controlplane.IdentityBindingLegacyBearer
 		return authCtx, true
 	case err != nil:
@@ -282,6 +291,10 @@ func (h workerRouteHandlers) authenticateRuntimeAgent(e *httpx.Event, id string,
 	case identity.State == controlplane.WorkerIdentityUpgradePending:
 		// A key is proposed but not approved: the worker stays on the bearer
 		// credential, which is observe-only.
+		if releasechannel.StageRuntimePrepared() {
+			denyGuard(e, guardidentity.CodeIdentityUpgradePending, "")
+			return authCtx, false
+		}
 		authCtx.IdentityBinding = controlplane.IdentityBindingLegacyBearer
 		return authCtx, true
 	default:
@@ -356,6 +369,10 @@ func (h workerRouteHandlers) authenticateKeyBoundRuntimeAgent(e *httpx.Event, id
 		ServerID: stringFromAny(worker.Capabilities[workerFieldServerID]), RuntimeAgentID: worker.ID,
 	}
 	if !validateRuntimeAgentClaims(e, id, req, placement) {
+		return out, false
+	}
+	if err := h.requireStageEnrolledLease(e, worker); err != nil {
+		writeStageWorkerAdmissionError(e, err)
 		return out, false
 	}
 	if !h.consumeGuardProof(e, claims.TenantID, id, proof) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/tenantdb"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -161,6 +162,7 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 				http.Error(e.Response, "invalid edge authentication", http.StatusUnauthorized)
 				return nil
 			}
+			envelope := cloneEdgeEnvelope(e.Request)
 			stepUp, stepUpBound, emailVerified, err := verifyEdgeSignature(e.Request, cfg)
 			if err != nil {
 				slog.Warn("edge identity: signature verification failed", "error", err)
@@ -227,6 +229,15 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 				stripIdentityHeaders(e.Request)
 				return nil
 			}
+			// Carry only the opaque DB-context token after every edge check. The
+			// database must verify it before use; it grants no HTTP identity,
+			// tenant selection or authorization here.
+			if id.IsAuthenticated() {
+				tenantdb.ContextTokenMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					e.Request = r
+				})).ServeHTTP(e.Response, e.Request)
+			}
+			e.Request = e.Request.WithContext(context.WithValue(e.Request.Context(), verifiedEdgeEnvelopeKey{}, envelope))
 			stripIdentityHeaders(e.Request)
 			return e.Next()
 		}
@@ -270,6 +281,7 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 // so that downstream handlers cannot be confused by them if they were
 // spoofed by an external caller (defense in depth).
 func stripIdentityHeaders(r *http.Request) {
+	r.Header.Del(tenantdb.ContextTokenHeader)
 	r.Header.Del("X-User-ID")
 	r.Header.Del("X-Org-ID")
 	r.Header.Del("X-User-Email")

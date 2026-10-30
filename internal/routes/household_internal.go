@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,8 +122,9 @@ func onBehalfOf(caller *servicecall.Caller) (sub, org string) {
 }
 
 type householdProjectionBody struct {
-	OwnerSubject string `json:"owner_subject"`
-	Member       struct {
+	OwnerSubject       string `json:"owner_subject"`
+	ProjectionRevision string `json:"projection_revision"`
+	Member             struct {
 		Subject     string `json:"subject"`
 		Email       string `json:"email"`
 		DisplayName string `json:"display_name"`
@@ -141,8 +143,14 @@ func (h householdHandlers) projection(e *httpx.Event) error {
 		}
 		body.OwnerSubject = strings.TrimSpace(body.OwnerSubject)
 		body.Member.Subject = strings.TrimSpace(body.Member.Subject)
-		if body.OwnerSubject == "" || body.Member.Subject == "" || (body.Action != household.ActionAdd && body.Action != household.ActionRemove && body.Action != household.ActionUpdateApps) {
-			_ = householdSurface.deny(e, http.StatusBadRequest, "projection_invalid", false, "Name the owner, the member and the action add, update_apps or remove.")
+		revision, revisionErr := strconv.ParseUint(body.ProjectionRevision, 10, 63)
+		if revisionErr != nil || revision == 0 || strconv.FormatUint(revision, 10) != body.ProjectionRevision {
+			_ = householdSurface.deny(e, http.StatusBadRequest, "projection_revision_required", false,
+				"Send the positive Cloud owner/member projection generation.")
+			return
+		}
+		if body.OwnerSubject == "" || body.Member.Subject == "" || (body.Action != household.ActionAdd && body.Action != household.ActionRemove) {
+			_ = householdSurface.deny(e, http.StatusBadRequest, "projection_invalid", false, "Name the owner, the member and the desired action add or remove.")
 			return
 		}
 		var apps household.AppGrant
@@ -181,7 +189,7 @@ func (h householdHandlers) projection(e *httpx.Event) error {
 		defer cancelProject()
 		started := time.Now()
 		result, err := h.svc.Project(projectCtx, household.ProjectionRequest{
-			HintTenant: org, OwnerSubject: body.OwnerSubject, Action: body.Action, Apps: apps,
+			HintTenant: org, OwnerSubject: body.OwnerSubject, Action: body.Action, Apps: apps, Revision: revision,
 			Member: household.Member{Subject: body.Member.Subject, Email: body.Member.Email, DisplayName: body.Member.DisplayName},
 		})
 		logger.Default().Info("household_projection_outcome",
@@ -209,7 +217,7 @@ func (h householdHandlers) projection(e *httpx.Event) error {
 			h.writeError(e, err)
 			return
 		}
-		out := map[string]any{"status": result.Status}
+		out := map[string]any{"status": result.Status, "projection_revision": body.ProjectionRevision}
 		if result.StackID != "" {
 			out["stack_id"], out["username"], out["link_status"] = result.StackID, result.Username, result.LinkStatus
 		}
@@ -232,6 +240,7 @@ type householdLinkBody struct {
 	OwnerSubject string `json:"owner_subject"`
 	StackID      string `json:"stack_id,omitempty"`
 	IDToken      string `json:"id_token,omitempty"`
+	ReferenceID  string `json:"reference_id,omitempty"`
 	Nonce        string `json:"nonce,omitempty"`
 }
 
@@ -262,7 +271,7 @@ func (h householdHandlers) linkBegin(e *httpx.Event) error {
 		}
 		_ = e.JSON(http.StatusOK, map[string]any{
 			"stack_id": begin.StackID, "username": begin.Username, "issuer": begin.Issuer,
-			"client_id": begin.ClientID, "scope": begin.Scope,
+			"client_id": begin.ClientID, "scope": begin.Scope, "reference_id": begin.ReferenceID,
 		})
 	})
 }
@@ -277,7 +286,7 @@ func (h householdHandlers) linkComplete(e *httpx.Event) error {
 		if !ok {
 			return
 		}
-		ref, err := h.svc.CompleteLink(e.Request.Context(), household.LinkProof{LinkRequest: req, IDToken: body.IDToken, Nonce: body.Nonce})
+		ref, err := h.svc.CompleteLink(e.Request.Context(), household.LinkProof{LinkRequest: req, IDToken: body.IDToken, Nonce: body.Nonce, ReferenceID: body.ReferenceID})
 		if err != nil {
 			h.writeError(e, err)
 			return

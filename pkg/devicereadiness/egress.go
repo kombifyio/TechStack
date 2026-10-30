@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 // Egress lends a device a temporary way out.
@@ -277,7 +279,9 @@ func (e EgressProxy) handleConnect(deviceConn net.Conn, buffered *bufio.Reader, 
 		return
 	}
 
-	upstream, err := net.DialTimeout("tcp", target, 20*time.Second)
+	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+	defer cancel()
+	upstream, err := fulllocal.Dial((&net.Dialer{Timeout: 20 * time.Second}).DialContext)(ctx, "tcp", target)
 	if err != nil {
 		writeProxyStatus(deviceConn, http.StatusBadGateway)
 		return
@@ -312,7 +316,7 @@ func (e EgressProxy) handlePlain(deviceConn net.Conn, request *http.Request) {
 	// The executor resolves and connects itself. The device's own resolver is
 	// very likely the thing that is broken, and a proxy that trusted the
 	// device's name resolution would inherit that fault.
-	outbound, err := http.NewRequest(request.Method, request.URL.String(), request.Body)
+	outbound, err := http.NewRequestWithContext(request.Context(), request.Method, request.URL.String(), request.Body)
 	if err != nil {
 		writeProxyStatus(deviceConn, http.StatusBadRequest)
 		return

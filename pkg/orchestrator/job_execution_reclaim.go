@@ -371,6 +371,7 @@ func (r *JobExecutionReclaimer) reclaimOne(
 		ErrorDetails:       details,
 		ResultPatch:        patch,
 		ReclaimedAt:        now,
+		ReasonCode:         reasonCode,
 	})
 	if err != nil {
 		if errors.Is(err, controlplane.ErrConflict) {

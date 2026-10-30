@@ -7,6 +7,7 @@
   import HomelabTitle from "#lib/components/dashboard/HomelabTitle.svelte";
   import NodeMessageLine from "#lib/components/dashboard/NodeMessageLine.svelte";
   import ServiceLogo from "#lib/components/dashboard/ServiceLogo.svelte";
+  import TrademarkNotice from "#lib/components/TrademarkNotice.svelte";
   import type { NodeMessage } from "#lib/dashboard/node-messages.js";
   import {
     groupNodesByDeployment,
@@ -238,6 +239,8 @@
       devices.state === "unavailable" || devices.state === "error"
         ? devices.message
         : "",
+      ...(people.state === "ready" ? people.notices ?? [] : []),
+      ...(devices.state === "ready" ? devices.notices ?? [] : []),
     ].filter(Boolean),
   );
   const orbitPoint = (index: number, count: number) => {
@@ -615,6 +618,8 @@
         </div>
       {/each}
     </section>
+
+    <TrademarkNotice class="-mt-2 shrink-0" />
 
     <section
       id="strata-devices"

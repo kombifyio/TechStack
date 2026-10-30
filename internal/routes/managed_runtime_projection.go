@@ -31,14 +31,17 @@ const (
 	managedRuntimeLeaseIDPrefix   = "lease:"
 	managedRuntimeLeaseNamePrefix = "lease-"
 
-	workerFieldHostname      = "hostname"
-	workerFieldCPU           = "cpu_cores"
-	workerFieldRAM           = "ram_mb"
-	workerFieldDisk          = "disk_gb"
-	workerFieldProvider      = "provider"
-	workerFieldServerID      = "server_id"
-	workerFieldCreated       = "created"
-	workerFieldDockerVersion = "docker_version"
+	workerFieldHostname = "hostname"
+	workerFieldCPU      = "cpu_cores"
+	workerFieldRAM      = "ram_mb"
+	workerFieldDisk     = "disk_gb"
+	workerFieldProvider = "provider"
+	workerFieldServerID = "server_id"
+	// workerFieldTenantHandoffReceipts lists the digests of the handoff receipts
+	// a cross-tenant rebind consumed (Guard G04).
+	workerFieldTenantHandoffReceipts = "tenant_handoff_receipts"
+	workerFieldCreated               = "created"
+	workerFieldDockerVersion         = "docker_version"
 )
 
 type managedRuntimeLeaseLister interface {

@@ -102,6 +102,8 @@ const (
 	stackKitStepRelocateUndrain = "relocate_undrain"
 	stackKitStepRelocateSend    = "relocate_send"
 	stackKitStepRelocateReceive = "relocate_receive"
+	stackKitStepRelocateStatus  = "relocate_status"
+	stackKitStepRelocateAbort   = "relocate_abort"
 
 	defaultStackKitNodeWorkspace = "/opt/stackkit"
 	stackKitReadCommandTimeout   = 5 * time.Minute
@@ -290,6 +292,7 @@ type StackKitLifecycleRequest struct {
 	DurableJobID        string
 	ServiceActionDigest string
 	RILOperation        *RILOperationBinding
+	WizardExtend        *WizardExtendBinding
 	WorkloadRef         string
 	AddressPrefix       string
 	BoundSpecPath       string
@@ -338,6 +341,8 @@ type StackKitLifecycleRequest struct {
 	// projects, the secret-free plan, the source's share address and the
 	// destination's domain switches. Set by the relocation job only.
 	RelocationProjects      []string
+	RelocationResourceUUIDs []string
+	RelocationTransferID    string
 	RelocationPlanJSON      []byte
 	RelocationSourceAddress string
 	RelocationSetDomains    []string
@@ -579,7 +584,7 @@ func validateStackKitLifecycleOperation(req *StackKitLifecycleRequest) error {
 	if isRelocationStep(req.Operation) {
 		return validateRelocationStepRequest(req)
 	}
-	if len(req.RelocationProjects) != 0 || len(req.RelocationPlanJSON) != 0 || req.RelocationSourceAddress != "" || len(req.RelocationSetDomains) != 0 {
+	if len(req.RelocationProjects) != 0 || len(req.RelocationResourceUUIDs) != 0 || req.RelocationTransferID != "" || len(req.RelocationPlanJSON) != 0 || req.RelocationSourceAddress != "" || len(req.RelocationSetDomains) != 0 {
 		return fmt.Errorf("relocation inputs require a relocation step")
 	}
 	switch req.Operation {
@@ -706,6 +711,9 @@ func validateStackKitLifecycleOperation(req *StackKitLifecycleRequest) error {
 }
 
 func validateDurableStackKitServiceAction(req StackKitLifecycleRequest) error {
+	if req.WizardExtend != nil {
+		return validateWizardExtend(req)
+	}
 	if req.RILOperation != nil {
 		return ValidateRILStackKitBinding(req)
 	}
@@ -726,6 +734,7 @@ func validateDurableStackKitServiceAction(req StackKitLifecycleRequest) error {
 func StackKitLifecyclePayload(req StackKitLifecycleRequest) map[string]interface{} {
 	return map[string]interface{}{
 		"ril_operation_binding":          req.RILOperation,
+		"wizard_extend_binding":          req.WizardExtend,
 		"connector_binding":              req.Connector,
 		"application_binding":            req.Application,
 		"stackkit_instance_id":           req.StackKitInstanceID,
@@ -927,7 +936,9 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 		}
 		resolveRelease := cfg.releaseResolver
 		if resolveRelease == nil {
-			resolveRelease = configuredTargetStackKitRelease
+			resolveRelease = func() (*stackkitrelease.Release, error) {
+				return TargetStackKitReleaseForStack(ctx, req.TenantID, req.StackID)
+			}
 		}
 		release, err := resolveRelease()
 		if err != nil {
@@ -935,6 +946,9 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 		}
 		if release == nil {
 			return NewConfigError(fmt.Errorf("pinned published StackKits release is not configured"))
+		}
+		if req.WizardExtend != nil && (req.WizardExtend.ReleaseVersion != release.Receipt().Version || req.WizardExtend.ArchiveSHA256 != release.Receipt().ArchiveSHA256) {
+			return NewConfigError(fmt.Errorf("wizard extension belongs to a different pinned StackKits release"))
 		}
 		if IsApplicationConnectorLifecycleOperation(req.Operation) {
 			return runApplicationConnectorJob(ctx, cfg, job, q, req, *release)
@@ -1349,6 +1363,15 @@ func stackKitLifecycleRequestFromJob(job *Job) (StackKitLifecycleRequest, error)
 			return req, err
 		}
 	}
+	if raw := job.Payload["wizard_extend_binding"]; raw != nil {
+		data, err := json.Marshal(raw)
+		if err != nil {
+			return req, err
+		}
+		if err := json.Unmarshal(data, &req.WizardExtend); err != nil {
+			return req, err
+		}
+	}
 	if raw := job.Payload["ril_operation_binding"]; raw != nil {
 		data, err := json.Marshal(raw)
 		if err != nil {
@@ -1365,6 +1388,9 @@ func stackKitLifecycleRequestFromJob(job *Job) (StackKitLifecycleRequest, error)
 	if normalized.RILOperation != nil && normalized.DurableJobID != job.ID {
 		return req, fmt.Errorf("RIL lifecycle intent belongs to a different durable job")
 	}
+	if normalized.WizardExtend != nil && normalized.DurableJobID != job.ID {
+		return req, fmt.Errorf("wizard extension belongs to a different durable job")
+	}
 	return normalized, nil
 }
 
@@ -1373,9 +1399,22 @@ func stackKitLifecycleCommand(commandID string, req StackKitLifecycleRequest, re
 	if err != nil {
 		return nil, err
 	}
-	binding, err := localExecutionBindingForNode(req.StackKit, req.NodeRef)
-	if err != nil {
-		return nil, err
+	var binding localExecutionBinding
+	if req.WizardExtend != nil && req.Operation == StackKitLifecyclePlan {
+		// The canonical read inspects the enrolled node's own workspace and
+		// needs no local execution tuple, including on an arbitrary joined host.
+	} else if req.WizardExtend != nil && req.WizardExtend.ExecutionBinding != nil {
+		admitted := req.WizardExtend.ExecutionBinding
+		if err := admitted.Validate(); err != nil || admitted.NodeRef != req.NodeRef {
+			return nil, fmt.Errorf("wizard lifecycle execution binding is invalid")
+		}
+		binding = localExecutionBinding{SiteRef: admitted.SiteRef, NodeRef: admitted.NodeRef, ExecutionChannelRef: admitted.ExecutionChannelRef}
+	} else {
+		var err error
+		binding, err = localExecutionBindingForNode(req.StackKit, req.NodeRef)
+		if err != nil {
+			return nil, err
+		}
 	}
 	specPath := req.SpecPath
 	if specPath == "" {
@@ -1439,6 +1478,8 @@ func stackKitLifecycleCommand(commandID string, req StackKitLifecycleRequest, re
 		// The plan is public; the transfer secret stays in the node's Wallet
 		// item custody, so only the item and its tenant are named.
 		command.RelocationProjects = append([]string(nil), req.RelocationProjects...)
+		command.RelocationResourceUuids = append([]string(nil), req.RelocationResourceUUIDs...)
+		command.RelocationTransferId = req.RelocationTransferID
 		command.RelocationPlanJson = append([]byte(nil), req.RelocationPlanJSON...)
 		command.RelocationSourceAddress = req.RelocationSourceAddress
 		command.RelocationSetDomains = append([]string(nil), req.RelocationSetDomains...)
@@ -1595,6 +1636,10 @@ func stackKitLifecycleAgentOperation(operation string) (agentpb.StackKitOperatio
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND, nil
 	case stackKitStepRelocateReceive:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE, nil
+	case stackKitStepRelocateStatus:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_STATUS, nil
+	case stackKitStepRelocateAbort:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_ABORT, nil
 	default:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_UNSPECIFIED, fmt.Errorf("unsupported StackKits lifecycle operation %q", operation)
 	}

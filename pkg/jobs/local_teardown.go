@@ -320,7 +320,7 @@ func removeLocalStackKitWorkloads(ctx context.Context, cfg *ProvisionConfig, job
 	if _, err := boundLocalStackKitTeardownAuthority(job, snapshot); err != nil {
 		return err
 	}
-	release, err := configuredTargetStackKitRelease()
+	release, err := TargetStackKitReleaseForStack(ctx, snapshot.TenantID, snapshot.TechstackID)
 	if err != nil {
 		return fmt.Errorf("resolve pinned StackKits release for local teardown: %w", err)
 	}

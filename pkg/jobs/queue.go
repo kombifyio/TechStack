@@ -14,6 +14,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/providererrors"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/google/uuid"
 )
 
@@ -514,6 +515,10 @@ type jobExecutionAttempt struct {
 }
 
 func (q *Queue) processJob(ctx context.Context, job *Job) {
+	if !queueAdmitsJob(job) {
+		q.log.Warn("job_execution_not_owned", "reason", releasechannel.ErrTenantNotOwned)
+		return
+	}
 	releaseTarget, acquired := q.acquireTargetExecution(ctx, job)
 	if !acquired {
 		return
@@ -557,6 +562,10 @@ func (q *Queue) processJob(ctx context.Context, job *Job) {
 }
 
 func (q *Queue) beginJobExecution(ctx context.Context, job *Job) (*jobExecutionAttempt, bool) {
+	if !queueAdmitsJob(job) {
+		q.log.Warn("job_execution_not_owned", "reason", releasechannel.ErrTenantNotOwned)
+		return nil, false
+	}
 	jobCtx, jobCancel := context.WithCancel(ctx)
 	stopQueueCancellation := context.AfterFunc(q.ctx, jobCancel)
 	cleanup := func() {
@@ -1293,6 +1302,9 @@ func (q *Queue) addLogUnlessRecent(job *Job, level, message string) {
 
 // Enqueue adds a new job to the queue.
 func (q *Queue) Enqueue(job *Job) error {
+	if !queueAdmitsJob(job) {
+		return releasechannel.ErrTenantNotOwned
+	}
 	if job.ID == "" {
 		job.ID = NewID()
 	}
@@ -1332,6 +1344,17 @@ func (q *Queue) Enqueue(job *Job) error {
 		q.jobsMu.Unlock()
 		return fmt.Errorf("job queue full")
 	}
+}
+
+// The same ownership decision gates both initial enqueue state and direct
+// durable execution. A foreign tenant never changes attempts or wins a claim.
+func queueAdmitsJob(job *Job) bool {
+	if job == nil {
+		return false
+	}
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	return releasechannel.AdmitsJobExecution(firstJobString(job.Payload, job.Result, "tenant_id"))
 }
 
 // Get returns a job by ID.

@@ -28,6 +28,17 @@ func controllerAddressPlannerRelease(target stackkitrelease.Release) (stackkitre
 	if filepath.IsAbs(target.BinaryPath()) {
 		return target, nil
 	}
+	if target.Receipt().Candidate != nil {
+		pin := strings.TrimSpace(os.Getenv(stackKitReleasePinEnv))
+		if !filepath.IsAbs(pin) {
+			return stackkitrelease.Release{}, fmt.Errorf("candidate planning needs its admitted controller runtime pin")
+		}
+		release, err := target.CandidateController(filepath.Dir(pin))
+		if err != nil {
+			return stackkitrelease.Release{}, err
+		}
+		return *release, nil
+	}
 	// A bundled Linux runtime names a path inside the Agent bundle, which the
 	// controller cannot execute. A Linux controller (the hosted Core image, a
 	// Linux lab Core) holds that very archive as its own pinned release and

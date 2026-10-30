@@ -1,3 +1,4 @@
+import { fillSecret } from "../helpers/secret-input";
 import {
   test,
   expect,
@@ -79,9 +80,10 @@ async function loginAsAdmin(
   });
   if (await existingEmail.isVisible().catch(() => false)) {
     await existingEmail.fill(TEST_CREDENTIALS.email);
-    await page
-      .getByTestId("windows-local-existing-password")
-      .fill(TEST_CREDENTIALS.password);
+    await fillSecret(
+      page.getByTestId("windows-local-existing-password"),
+      TEST_CREDENTIALS.password,
+    );
     await page.getByTestId("windows-local-existing-submit").click();
     await page.waitForURL(/\/stacks/, { timeout: 30_000 });
     await expect(page.locator("aside").first()).toBeVisible();
@@ -89,9 +91,10 @@ async function loginAsAdmin(
   }
   if (await localOwnerForm.isVisible().catch(() => false)) {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
-    await page
-      .getByRole("textbox", { name: "Password", exact: true })
-      .fill(TEST_CREDENTIALS.password);
+    await fillSecret(
+      page.getByRole("textbox", { name: "Password", exact: true }),
+      TEST_CREDENTIALS.password,
+    );
     await localOwnerForm.click();
     await page.waitForURL(/\/stacks/, { timeout: 30_000 });
     await expect(page.locator("aside").first()).toBeVisible();
@@ -149,7 +152,7 @@ async function loginViaAuth0(page: Page, request?: APIRequestContext) {
     .locator('input[type="password"]:not([aria-hidden="true"])')
     .first();
   await passwordField.waitFor({ state: "visible", timeout: 30_000 });
-  await passwordField.fill(TEST_CREDENTIALS.password);
+  await fillSecret(passwordField, TEST_CREDENTIALS.password);
 
   await page
     .getByRole("button", { name: /^(continue|log\s*in|sign\s*in)$/i })
@@ -167,15 +170,19 @@ async function loginViaAuth0(page: Page, request?: APIRequestContext) {
     await skipPasskey.first().waitFor({ state: "visible", timeout: 5_000 });
     await skipPasskey.first().click();
   } catch {
-    // No passkey prompt - already redirecting to /stacks.
+    // No passkey prompt - already redirecting to the landing page.
   }
 
-  // Auth0 redirects back through /api/v2/auth/callback to /stacks (or to
-  // an MFA / consent step we cannot handle non-interactively).
-  await page.waitForURL(/techstack\.kombify\.io.*\/stacks/, {
-    timeout: 60_000,
-  });
-  await expect(page.locator("aside").first()).toBeVisible();
+  // Auth0 redirects back through /api/v2/auth/callback to the signed-in
+  // landing page, whichever route that is (or to an MFA / consent step we
+  // cannot handle non-interactively).
+  await page.waitForURL(
+    (url) =>
+      /(^|\.)techstack\.kombify\.io$/.test(url.hostname) &&
+      !url.pathname.startsWith("/api/") &&
+      !url.pathname.startsWith("/login"),
+    { timeout: 60_000 },
+  );
 }
 
 test.describe.serial("Release Smoke (Render deploy gate)", () => {
@@ -314,34 +321,12 @@ test.describe.serial("Authenticated Release Smoke", () => {
       );
     }
 
-    const sidebar = page.locator("aside").first();
-    await expect(sidebar).toBeVisible();
-    await expect(
-      sidebar.getByRole("link", { name: "kombify Techstack" }),
-    ).toBeVisible();
-    await expect(sidebar.getByText("Dashboard")).toBeVisible();
-    await expect(sidebar.getByText("Services")).toBeVisible();
-    await expect(sidebar.getByText("Monitoring")).toBeVisible();
-    await expect(sidebar.getByText("Wallet")).toBeVisible();
-    await expect(sidebar.getByText(TEST_CREDENTIALS.email)).toBeVisible();
-    await expect(
-      page.getByRole("heading", {
-        name: "kombify-TechStack",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-
+    // Which labels and headings the navigation and pages show is the owner's
+    // choice (D-2026-10-21-18): the smoke proves the signed-in session keeps
+    // a protected route instead of sending it back to sign-in.
     await page.goto("/settings");
     await waitForPageLoad(page);
-    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "Account" }).first(),
-    ).toBeVisible();
-    // The account section renders different fields per role and deployment
-    // mode (SaaS vs self-hosted); asserting the literal email here was
-    // flaky across the TEST_ADMIN vs TEST_PRO_USER candidate fallback
-    // in techstack-test-users.ts. The sidebar email check above already
-    // pinned the session - that is enough for the smoke contract.
+    await expect(page).toHaveURL(/\/settings/);
 
     await attachFullPageScreenshot(page, "release-smoke-settings");
   });
@@ -376,16 +361,18 @@ test.describe.serial("Authenticated Release Smoke", () => {
     expect(await dashboard.innerText()).not.toMatch(/\(\d+ total\)/);
   });
 
-  // The creation page used to render up to 18 flat task cards (`task-item`).
-  // We grouped them into 5 phase cards (`task-group`) with auto-expanded
-  // drill-down for the running/failed phase. This test exercises the new
-  // testids end-to-end without needing a real provisioning job: the page
-  // surfaces a "failed" group when the job_id is bogus, which is enough to
-  // prove the GroupedTaskList rendered.
-  test("creation page renders phase-grouped task list", async ({
+  // The creation page tracks a job by polling /api/v1/jobs/<id>. A job it
+  // cannot read must not leave the user on an endless spinner: after its
+  // bounded retries (or at once on 401/403) the page says it cannot check
+  // the progress and offers to check again. A bogus job_id drives that
+  // without a real provisioning job; the generous timeout covers slow
+  // backend round-trips on cold Render instances.
+  test("creation page reports a job it cannot read", async ({
     page,
     request,
   }) => {
+    // A 404 shows the callout only after the fifth backed-off poll (~45 s).
+    test.setTimeout(150_000);
     try {
       await loginAsAdmin(page, { request });
     } catch (err) {
@@ -399,35 +386,10 @@ test.describe.serial("Authenticated Release Smoke", () => {
     );
     await waitForPageLoad(page);
 
-    const groups = page.getByTestId("task-group");
-    await expect(groups.first()).toBeVisible({ timeout: 15_000 });
-    const groupCount = await groups.count();
-    expect(
-      groupCount,
-      "expected at least 1 phase-group card on the creating page",
-    ).toBeGreaterThan(0);
+    await expect(page.getByTestId("creation-connection-issue")).toBeVisible({
+      timeout: 90_000,
+    });
 
-    await expect(
-      page.locator('[data-testid="task-group"][data-group-id="configure"]'),
-    ).toHaveCount(1);
-
-    // Wait for the polling loop to fail against the bogus job id. The
-    // page calls /api/v1/jobs/<id>; after MAX_POLL_ERRORS (5 attempts at
-    // BASE_POLL_INTERVAL=3s) it marks the group failed and auto-expands
-    // the sub-items via GroupedTaskList. Generous timeout covers slow
-    // backend round-trips on cold Render instances.
-    await expect(
-      page.locator('[data-testid="task-group"][data-status="failed"]').first(),
-    ).toBeVisible({ timeout: 30_000 });
-
-    const subs = page.getByTestId("task-subitem");
-    expect(
-      await subs.count(),
-      "expected the failed phase to be auto-expanded with sub-items",
-    ).toBeGreaterThan(0);
-
-    await expect(page.getByTestId("task-item")).toHaveCount(0);
-
-    await attachFullPageScreenshot(page, "release-smoke-creating-grouped");
+    await attachFullPageScreenshot(page, "release-smoke-creating-unreadable");
   });
 });

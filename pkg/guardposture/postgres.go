@@ -9,10 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/google/uuid"
 )
-
-const tenantGUC = "app.tenant_id"
 
 // findingsRetention is how long a resolved finding stays as history.
 const findingsRetention = 90 * 24 * time.Hour
@@ -46,7 +45,7 @@ func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", tenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {

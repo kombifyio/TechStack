@@ -158,3 +158,57 @@ func TestIntegrationMigrateEnforcesExpectedDatabaseIdentityPin(t *testing.T) {
 		t.Fatalf("Migrate with matching identity pin: %v", err)
 	}
 }
+
+// A database leg that ran before its service leg must leave the previous
+// binary serving only when the newer ledger entries are marked additive. The
+// isolated schema carries this binary's exact ledger and the required tables.
+func TestIntegrationVerifyAdmitsOnlyAdditiveAheadLedger(t *testing.T) {
+	d := openIsolatedGuardTestDB(t)
+	clearGuardEnv(t)
+	ctx := context.Background()
+	exec := func(statement string, args ...any) {
+		t.Helper()
+		if _, err := d.ExecContext(ctx, statement, args...); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	exec("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+	for _, table := range []string{"techstack_tenants", "stacks", "jobs", "workers", "client_pairing_codes", "nodes", "services",
+		"breakglass_admin", "ril_workflow_runs", "ril_workflow_timers", "techstack_notification_outbox",
+		"provider_desired_spec_revisions", "provider_operations", "provider_operation_receipts",
+		"provider_operation_resources", "provider_operation_evidence", "provider_operation_execution_claims",
+		"provider_provision_dispatch_guards", "managed_runtime_server_slots", "managed_runtime_server_slot_generations"} {
+		exec("CREATE TABLE " + pgx.Identifier{table}.Sanitize() + " ()")
+	}
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newest := ""
+	for _, entry := range entries {
+		exec("INSERT INTO schema_migrations (version) VALUES ($1)", entry.Name())
+		newest = entry.Name()
+	}
+	var currentDatabase string
+	if err := d.QueryRowContext(ctx, "SELECT current_database()").Scan(&currentDatabase); err != nil {
+		t.Fatalf("load current database: %v", err)
+	}
+	t.Setenv(EnvExpectedDatabaseIdentity, currentDatabase)
+
+	if err := d.VerifyMigrations(ctx); err != nil {
+		t.Fatalf("exact ledger refused: %v", err)
+	}
+	exec("INSERT INTO schema_migrations (version) VALUES ($1)", "999_future_notes.additive.sql")
+	if err := d.VerifyMigrations(ctx); err != nil {
+		t.Fatalf("additive ahead ledger refused: %v", err)
+	}
+	exec("INSERT INTO schema_migrations (version) VALUES ($1)", "998_future_drop.sql")
+	if err := d.VerifyMigrations(ctx); err == nil || !strings.Contains(err.Error(), "998_future_drop.sql") {
+		t.Fatalf("non-additive ahead ledger error = %v", err)
+	}
+	exec("DELETE FROM schema_migrations WHERE version = $1", "998_future_drop.sql")
+	exec("DELETE FROM schema_migrations WHERE version = $1", newest)
+	if err := d.VerifyMigrations(ctx); err == nil || !strings.Contains(err.Error(), "missing ["+newest+"]") {
+		t.Fatalf("missing ledger error = %v", err)
+	}
+}

@@ -15,6 +15,7 @@
   import CreationGoals from "./CreationGoals.svelte";
   import ThemeToggle from "../ui/ThemeToggle.svelte";
   import ServerStep from "./steps/ServerStep.svelte";
+  import { NEW_SERVER_CREATION_HREF } from "#lib/server-links.js";
 
   let {
     initialVariant = "discover",
@@ -47,7 +48,7 @@
 
 <div class="creation-preview-page">
   <nav class="preview-navigation" aria-label={tr("wizard.preview.navigation")}>
-    <a href="/stacks/new"
+    <a href={NEW_SERVER_CREATION_HREF}
       ><ArrowLeft size={15} aria-hidden="true" />{tr("wizard.preview.back")}</a
     >
     <div class="preview-actions">

@@ -19,11 +19,10 @@ func ReleaseChannel() string {
 	return config.ReleaseChannel()
 }
 
-// refusePreviewMigration keeps the Preview and Early Access deployments
-// read-only against the shared live schema: they run newer code on the stable
-// database and never apply migrations or genesis. Schema changes ship only
-// through the governed database delivery, code first and backward compatible.
-// Fail closed: both must be configured to verify, never to apply.
+// refusePreviewMigration keeps secondary serving processes verify-only with
+// genesis disabled. Preview uses the non-production Stage database, migrated
+// first by the governed exact-source main path; Early Access migrations remain
+// owned by the release path. Neither serving process holds migration custody.
 func refusePreviewMigration() error {
 	if !config.SecondaryChannel() {
 		return nil

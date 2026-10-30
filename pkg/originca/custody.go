@@ -8,10 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/lib/pq"
 )
-
-const custodyTenantGUC = "app.tenant_id"
 
 // ErrNotFound reports a stack without an origin certificate record.
 var ErrNotFound = errors.New("origin certificate custody not found")
@@ -58,7 +57,7 @@ func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", custodyTenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {

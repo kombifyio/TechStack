@@ -16,6 +16,7 @@ import (
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -173,6 +174,9 @@ func (d *NativeDecommissioner) DecommissionManagedLeases(
 	req.ResourceGenerationDigest = strings.TrimSpace(req.ResourceGenerationDigest)
 	if req.TenantID == "" || req.OwnerID == "" || (req.StackID == "" && req.LeaseID == "") {
 		return nil, fmt.Errorf("%w: tenant, owner, and stack or lease are required", errNativeDecommissionCustody)
+	}
+	if !releasechannel.AdmitsJobExecution(req.TenantID) {
+		return nil, releasechannel.ErrTenantNotOwned
 	}
 
 	candidates, err := d.prepareCandidates(ctx, req)
@@ -729,6 +733,14 @@ func (d *NativeDecommissioner) convergeCandidate(
 	advanced, _, err := d.application.Advance(ctx, record.Command.TenantID, record.Command.OperationID)
 	if err != nil {
 		if errors.Is(err, providercontrol.ErrExecutionClaimHeld) {
+			return jobs.ManagedLeaseDecommissionProof{}, false, true, nil
+		}
+		if errors.Is(err, releasechannel.ErrTenantNotOwned) &&
+			releasechannel.AdmitsJobExecution(record.Command.TenantID) {
+			// The exact decommission operation already exists durably. Ordinary
+			// Preview admitted it for the owning Stable worker; no local claim was
+			// acquired and provider absence remains unproven. Keep the existing
+			// pending/recovery result instead of falsely failing accepted cleanup.
 			return jobs.ManagedLeaseDecommissionProof{}, false, true, nil
 		}
 		return jobs.ManagedLeaseDecommissionProof{}, false, true, err

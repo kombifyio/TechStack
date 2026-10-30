@@ -3,6 +3,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,14 +17,33 @@ func (r *deployRollout) bootstrapManagedRuntimeTarget(ctx context.Context) error
 		return nil
 	}
 	target := normalizeRuntimeActionTarget(r.actionReq.RuntimeTarget)
-	if !runtimeActionTargetHasSSHCredential(target) {
+	native, nativeCustody := r.cfg.RuntimeActions.RuntimeTargetResolver.(ManagedRuntimeTargetPreparer)
+	if !nativeCustody && !runtimeActionTargetHasSSHCredential(target) {
 		return nil
 	}
 	started := time.Now()
-	r.q.UpdateProgress(r.job.ID, 72, "Preparing managed VPS with StackKits CLI...")
-	result, err := r.runStackKitPrepare(ctx, target)
+	message := "Preparing managed VPS with StackKits CLI..."
+	if nativeCustody {
+		message = "Checking managed server readiness..."
+	}
+	r.q.UpdateProgress(r.job.ID, 72, message)
+	var result *RuntimeTargetBootstrapResult
+	var err error
+	if nativeCustody {
+		result, err = r.prepareNativeManagedRuntimeTarget(ctx, native)
+	} else {
+		result, err = r.runStackKitPrepare(ctx, target)
+	}
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		reason := runtimeTargetBootstrapReason(result, err)
+		var wait *JobWaitError
+		if errors.As(err, &wait) {
+			r.recordTargetBootstrapProof(result, wait.Reason, "waiting", err)
+			return err
+		}
 		r.recordTargetBootstrapProof(result, reason, "failed", err)
 		bundle := r.collectRuntimeDiagnostics(ctx, nil, r.actionReq, "target_bootstrap", reason, time.Since(started), err)
 		if bundle != nil {
@@ -40,12 +60,63 @@ func (r *deployRollout) bootstrapManagedRuntimeTarget(ctx context.Context) error
 	return nil
 }
 
+const ManagedRuntimeHostPreparationPendingReason = "managed_runtime_host_preparation_pending"
+const nativeHostPreparationStartedKey = "managed_runtime_host_preparation_started_at"
+
+func (r *deployRollout) prepareNativeManagedRuntimeTarget(ctx context.Context, preparer ManagedRuntimeTargetPreparer) (*RuntimeTargetBootstrapResult, error) {
+	if r.job == nil {
+		return nil, fmt.Errorf("native host preparation requires its existing rollout job")
+	}
+	snapshot := r.job.Snapshot()
+	now := time.Now().UTC()
+	started := now
+	if raw := stringFromMap(snapshot.Result, nativeHostPreparationStartedKey); raw != "" {
+		var err error
+		started, err = time.Parse(time.RFC3339Nano, raw)
+		if err != nil || started.After(now.Add(time.Minute)) {
+			r.job.mutateResult(func(result map[string]interface{}) { delete(result, nativeHostPreparationStartedKey) })
+			return nil, fmt.Errorf("native host preparation has an invalid persisted observation window")
+		}
+	} else {
+		r.job.mutateResult(func(result map[string]interface{}) {
+			result[nativeHostPreparationStartedKey] = started.Format(time.RFC3339Nano)
+		})
+	}
+	leaseID := firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField))
+	result, err := preparer.PrepareManagedRuntimeTarget(ctx, ManagedRuntimeTargetRequest{
+		StackID: r.job.TargetID, StackName: r.actionReq.StackName, StackKit: r.actionReq.StackKit,
+		TenantID: r.actionReq.TenantID, OwnerID: r.actionReq.OwnerID, LeaseID: leaseID,
+	})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// The job context, not the transport's error encoding, owns cancellation.
+			return result, ctxErr
+		}
+		var wait *JobWaitError
+		if errors.As(err, &wait) {
+			// Observe first: a host that became ready at the boundary must pass.
+			if !time.Now().UTC().Before(started.Add(defaultRuntimeTargetBootstrapTimeout)) {
+				r.job.mutateResult(func(result map[string]interface{}) { delete(result, nativeHostPreparationStartedKey) })
+				return &RuntimeTargetBootstrapResult{Status: "failed", ReasonCode: RuntimeTargetBootstrapTimeout}, fmt.Errorf("managed host preparation did not become ready within its observation window")
+			}
+			return result, err
+		}
+		r.job.mutateResult(func(result map[string]interface{}) { delete(result, nativeHostPreparationStartedKey) })
+		return result, err
+	}
+	r.job.mutateResult(func(result map[string]interface{}) { delete(result, nativeHostPreparationStartedKey) })
+	if result == nil || result.Status != "ready" {
+		return result, fmt.Errorf("native host preparation returned no ready observation")
+	}
+	return result, nil
+}
+
 func (r *deployRollout) runStackKitPrepare(ctx context.Context, target *RuntimeActionTarget) (*RuntimeTargetBootstrapResult, error) {
 	prepRunner := r.cfg.RuntimeActions.StackKitPrepRunner
 	if prepRunner == nil &&
 		strings.TrimSpace(r.actionReq.StackSpecPath) != "" &&
 		!truthyRuntimeActionEnv("TECHSTACK_STACKKIT_PREP_DISABLED") {
-		release, err := configuredPinnedStackKitRelease()
+		release, err := PinnedStackKitReleaseForStack(ctx, r.actionReq.TenantID, r.actionReq.StackID)
 		if err != nil {
 			return nil, err
 		}
@@ -228,6 +299,7 @@ func (r *deployRollout) recordTargetBootstrapProof(result *RuntimeTargetBootstra
 	}
 	proof := map[string]interface{}{
 		"status":      status,
+		"observed_at": time.Now().UTC().Format(time.RFC3339Nano),
 		"reason_code": reason,
 		"message":     secrets.Redact(message),
 		"duration_ms": durationMS,

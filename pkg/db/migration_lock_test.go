@@ -18,6 +18,48 @@ const (
 	requiredTableQueryPattern    = `SELECT EXISTS \(\s+SELECT 1\s+FROM`
 )
 
+// Sensitive migration boundary: do not create a real login credential or grant
+// it cross-tenant authority merely to exercise the refusal path.
+func TestPendingHouseholdMigrationRefusesLoginBeforeDDL(t *testing.T) {
+	const version = "168_household_projection_bindings.sql"
+	body, err := migrationsFS.ReadFile("migrations/" + version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, catalogUnavailable := range []bool{false, true} {
+		sqlDB, mock, mockErr := sqlmock.New()
+		if mockErr != nil {
+			t.Fatal(mockErr)
+		}
+		mock.ExpectBegin()
+		query := mock.ExpectQuery(`SELECT EXISTS \(\s*SELECT 1 FROM pg_catalog.pg_roles\s*WHERE rolname = 'techstack_household_worker' AND rolcanlogin\s*\)`)
+		want := "household migration refuses an existing login credential"
+		if catalogUnavailable {
+			query.WillReturnError(errors.New("catalog unavailable"))
+			want = "household migration role posture unavailable"
+		} else {
+			query.WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+		}
+		// Any migration execution or ledger write is an unexpected operation.
+		mock.ExpectRollback()
+		tx, beginErr := sqlDB.BeginTx(context.Background(), nil)
+		if beginErr != nil {
+			t.Fatal(beginErr)
+		}
+		got := executePendingMigration(context.Background(), tx, version, body)
+		if got == nil || !strings.Contains(got.Error(), want) {
+			t.Errorf("catalogUnavailable=%t: error=%v, want %s", catalogUnavailable, got, want)
+		}
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			t.Error(rollbackErr)
+		}
+		if expectationErr := mock.ExpectationsWereMet(); expectationErr != nil {
+			t.Error(expectationErr)
+		}
+		_ = sqlDB.Close()
+	}
+}
+
 func TestMigrateDiscardsConnectionWhenAdvisoryLockAcquisitionIsAmbiguous(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	if err != nil {

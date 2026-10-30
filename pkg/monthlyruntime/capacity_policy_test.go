@@ -2,18 +2,15 @@ package monthlyruntime
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth/edgeauthtest"
 )
 
 func TestManagedRuntimeCapacityPolicyRejectsInvalidConstruction(t *testing.T) {
@@ -58,8 +55,9 @@ func TestSignedManagedRuntimeCapacityPolicyRequiresCommercialEntitlements(t *tes
 	_, err = resolver.ResolveCapacity(ctx, CapacityPolicyRequest{
 		TenantID: "tenant-1", OwnerSubjectID: "owner-1", ProviderID: ProviderIONOS,
 	})
-	if !errors.Is(err, ErrCapacityPolicyAuthorityUnavailable) {
-		t.Fatalf("error=%v, want missing signed provider entitlement", err)
+	var denial *CapacityPolicyDenialError
+	if !errors.As(err, &denial) || denial == nil || len(denial.MissingFeatures) == 0 {
+		t.Fatalf("error=%v, want missing signed provider entitlement denial", err)
 	}
 }
 
@@ -77,7 +75,7 @@ func TestSignedManagedRuntimeCapacityPolicyResolvesOnlyExplicitUnlimitedMode(t *
 	for _, raw := range []json.RawMessage{
 		json.RawMessage(`{}`),
 		json.RawMessage(`{"managed_servers":null}`),
-		json.RawMessage(`{"managed_servers":{"mode":"limited","limit":0}}`),
+		json.RawMessage(`{"managed_servers":{"mode":"limited","limit":-1}}`),
 		json.RawMessage(`{"managed_servers":{"mode":"limited","limit":3.5}}`),
 		json.RawMessage(`{"managed_servers":{"mode":"unlimited","limit":3}}`),
 		json.RawMessage(`{"managed_servers":{"mode":"unknown"}}`),
@@ -215,16 +213,8 @@ func signedCapacityContext(t *testing.T, providerID string, budget json.RawMessa
 	r.Header.Set(edgeauth.HeaderEdgeTimestamp, timestamp)
 	r.Header.Set(edgeauth.HeaderEdgeNonce, "nonce-1")
 	r.Header.Set(edgeauth.HeaderEdgeSignedPath, signedPath)
-	edgePayload := strings.Join([]string{
-		"v2", "edge-primary", http.MethodPost, signedPath,
-		edgeauth.EdgeAuthValueJWT, "techstack", "/v1/techstack",
-		"owner-1", "tenant-1", "", "", "", "", "", "",
-		timestamp, "nonce-1",
-	}, "\n")
-	edgeMAC := hmac.New(sha256.New, []byte(edgeSecret))
-	_, _ = edgeMAC.Write([]byte(edgePayload))
-	edgeSignature := "v2=" + base64.RawURLEncoding.EncodeToString(edgeMAC.Sum(nil))
-	r.Header.Set(edgeauth.HeaderEdgeSignature, edgeSignature)
+	edgeauthtest.Sign(t, r, edgeauthtest.Config{Version: "v2", Secret: edgeSecret, KeyID: "edge-primary", At: now, Nonce: "nonce-1"})
+	edgeSignature := r.Header.Get(edgeauth.HeaderEdgeSignature)
 
 	decisionHeaders, err := edgeauth.SignDecisionHeaders(edgeauth.DecisionSignInput{
 		Secret:        flagsSecret,

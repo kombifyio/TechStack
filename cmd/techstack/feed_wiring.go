@@ -106,6 +106,33 @@ func (o feedOwnerTenants) ResolveOwnerTenant(ctx context.Context, hint, owner st
 // the node through the orchestrator's typed command channel.
 type feedIdentityRuntime struct{ orch *orchestrator.Orchestrator }
 
+func (r feedIdentityRuntime) ResolveProjectionTarget(ctx context.Context, target household.Target) (household.Target, error) {
+	bound, err := r.orch.ResolveStackKitIdentityTarget(ctx, target.TenantID, target.OwnerID, target.StackID)
+	if err != nil {
+		return household.Target{}, err
+	}
+	target.AgentID, target.StackKitInstanceID = bound.AgentID, bound.StackKitInstanceID
+	return target, nil
+}
+
+func (r feedIdentityRuntime) Project(ctx context.Context, target household.Target, request household.IdentityProjection) (household.Invitation, error) {
+	result, err := r.orch.RunStackKitIdentityCommand(ctx, orchestrator.StackKitIdentityCommandRequest{
+		TenantID: target.TenantID, OwnerID: target.OwnerID, DeploymentID: target.StackID,
+		Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT, OwnerApproved: true,
+		HouseholdUsername: request.Username, HouseholdEmail: request.Email, HouseholdDisplayName: request.DisplayName,
+		HouseholdApps: request.Apps.Apps, HouseholdAppsSet: request.Apps.Set,
+		HouseholdProjectionKey: request.Key, HouseholdProjectionRevision: request.Revision, HouseholdProjectionAction: request.Action,
+		ExpectedAgentID: target.AgentID, ExpectedStackKitInstanceID: target.StackKitInstanceID,
+	})
+	if err != nil {
+		return household.Invitation{}, err
+	}
+	if request.Action == household.ActionRemove {
+		return household.Invitation{Username: request.Username, Status: "removed"}, nil
+	}
+	return decodeHouseholdInvitation(result)
+}
+
 func (r feedIdentityRuntime) Invite(ctx context.Context, target household.Target, username, email, displayName string, apps household.AppGrant) (household.Invitation, error) {
 	result, err := r.orch.RunStackKitIdentityCommand(ctx, orchestrator.StackKitIdentityCommandRequest{
 		TenantID: target.TenantID, OwnerID: target.OwnerID, DeploymentID: target.StackID,
@@ -116,6 +143,10 @@ func (r feedIdentityRuntime) Invite(ctx context.Context, target household.Target
 	if err != nil {
 		return household.Invitation{}, err
 	}
+	return decodeHouseholdInvitation(result)
+}
+
+func decodeHouseholdInvitation(result *agentpb.StackKitResult) (household.Invitation, error) {
 	raw := append([]byte(nil), result.SensitiveResultJson...)
 	clear(result.SensitiveResultJson)
 	result.SensitiveResultJson = nil
@@ -354,4 +385,5 @@ func registerHouseholdRoutes(router *httpx.Router, deps routeDeps) {
 		cfg.Service = deps.feed.household
 	}
 	routes.RegisterHouseholdInternalRoutes(router, cfg)
+	routes.RegisterHouseholdRelay(router, deps.typedControl)
 }

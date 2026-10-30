@@ -3,12 +3,13 @@ package discovery
 import (
 	"context"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/grandcat/zeroconf"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 type passiveMDNSEvent struct {
@@ -148,8 +149,26 @@ func (s *Scanner) resolvePassiveScanHosts(req *ScanRequest, result *ScanResult, 
 	if err != nil {
 		return nil, err
 	}
+	for i, host := range hosts {
+		admitted, err := fulllocal.AdmitIP(host)
+		if err != nil {
+			markPassiveScanFailed(result, resultMu, err)
+			return nil, err
+		}
+		hosts[i] = admitted
+	}
 	if req.DetectTailscale {
-		hosts = s.appendTailscaleHosts(hosts)
+		var omitted error
+		hosts, omitted = s.appendTailscaleHosts(hosts)
+		if omitted != nil {
+			if len(hosts) == 0 {
+				markPassiveScanFailed(result, resultMu, omitted)
+				return nil, omitted
+			}
+			resultMu.Lock()
+			result.Errors = append(result.Errors, "automatic Tailscale peers omitted: "+omitted.Error())
+			resultMu.Unlock()
+		}
 	}
 	return hosts, nil
 }
@@ -198,7 +217,8 @@ func markPassiveScanFailed(result *ScanResult, resultMu *sync.Mutex, err error) 
 	resultMu.Unlock()
 }
 
-func (s *Scanner) appendTailscaleHosts(hosts []string) []string {
+func (s *Scanner) appendTailscaleHosts(hosts []string) ([]string, error) {
+	var omitted error
 	interfaces, _ := s.GetLocalInterfaces()
 	for _, iface := range interfaces {
 		if !strings.Contains(strings.ToLower(iface.Name), "tailscale") {
@@ -210,13 +230,19 @@ func (s *Scanner) appendTailscaleHosts(hosts []string) []string {
 				continue
 			}
 			for _, host := range more {
-				if !containsString(hosts, host) {
-					hosts = append(hosts, host)
+				if containsString(hosts, host) {
+					continue
 				}
+				admitted, err := fulllocal.AdmitIP(host)
+				if err != nil {
+					omitted = err
+					continue
+				}
+				hosts = append(hosts, admitted)
 			}
 		}
 	}
-	return hosts
+	return hosts, omitted
 }
 
 func (s *Scanner) passiveScanExclusions(req *ScanRequest) map[string]bool {
@@ -337,6 +363,11 @@ func collectPassiveScanResults(
 			appendPassiveProbeResult(result, resultMu, *device)
 			emitProgress()
 		case event := <-mdnsCh:
+			admitted, err := fulllocal.AdmitIP(event.ip)
+			if err != nil {
+				continue
+			}
+			event.ip = admitted
 			if mdnsAdded >= mdnsMax || event.ip == "" || excluded[event.ip] || seenIPs[event.ip] {
 				continue
 			}
@@ -396,5 +427,3 @@ func passiveMDNSDrainChannel(timer *time.Timer) <-chan time.Time {
 	}
 	return timer.C
 }
-
-var _ = net.LookupAddr

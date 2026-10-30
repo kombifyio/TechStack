@@ -7,15 +7,21 @@
 
   let {
     domain = "",
+    logoUrl = undefined,
     children,
   }: {
     domain?: string;
+    /** A logo the caller already resolved; it wins over the domain's icon. */
+    logoUrl?: string;
     children: Snippet;
   } = $props();
 
   setContext<BrandLogoContext>(BRAND_LOGO_CONTEXT, {
     get domain() {
       return domain;
+    },
+    get logoUrl() {
+      return logoUrl;
     },
   });
 </script>

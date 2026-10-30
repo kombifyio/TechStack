@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -201,7 +202,7 @@ func (s *PostgresUsageStore) withTenant(ctx context.Context, tenantID string, fn
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", custodyTenantGUC, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant context: %w", err)
 	}
 	if err := fn(tx); err != nil {

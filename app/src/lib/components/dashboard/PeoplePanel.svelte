@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tr } from "#lib/i18n.svelte.js";
-  import { Laptop, Smartphone, Monitor } from "@lucide/svelte";
+  import { Laptop, Smartphone, Monitor, Box, Watch } from "@lucide/svelte";
+  import EdgeDeviceSettings from "./EdgeDeviceSettings.svelte";
+  import { edgeLoadErrorMessage, loadDevices } from "#lib/dashboard/people.js";
   import { SegmentedControl } from "@kombiverselabs/ui/primitives";
   import {
     ActorCard,
@@ -53,8 +55,22 @@
     filter === "all" || entry.audience === filter;
   const shownPeople = $derived(readyPeople.filter(matches));
   const shownDevices = $derived(readyDevices.filter(matches));
+  // Edge devices (kombify Box, kombify Watch) check in on their own and are
+  // listed apart from the kombify apps on phones and computers.
+  const shownClients = $derived(shownDevices.filter((entry) => !entry.edge));
+  const shownEdges = $derived(shownDevices.filter((entry) => entry.edge));
+  const deviceNotices = $derived(
+    devices.state === "ready" ? (devices.notices ?? []) : [],
+  );
+  const clientNotices = $derived(
+    deviceNotices.filter((notice) => notice !== edgeLoadErrorMessage()),
+  );
+  const edgeNotices = $derived(
+    deviceNotices.filter((notice) => notice === edgeLoadErrorMessage()),
+  );
 
   function deviceIcon(entry: DeviceEntry) {
+    if (entry.edge) return entry.edge.kind === "kombify-watch" ? Watch : Box;
     if (entry.platform === "android" || entry.platform === "ios") {
       return Smartphone;
     }
@@ -107,7 +123,10 @@
       return [
         {
           k: tr("ui.servicesApplicationId.role"),
-          v: entry.audience === "owner" ? "Owner" : tr("ui.peoplePanel.householdMember"),
+          v:
+            entry.audience === "owner"
+              ? "Owner"
+              : tr("ui.peoplePanel.householdMember"),
         },
         { k: tr("ui.settings.account"), v: entry.detail },
         { k: tr("ui.stacksId.status"), v: entry.status },
@@ -120,14 +139,33 @@
         },
       ];
     }
+    if (entry.edge)
+      return [
+        { k: tr("box.board"), v: entry.edge.board },
+        { k: tr("box.firmware"), v: entry.edge.firmware_version },
+        {
+          k: tr("nodes.fact.address"),
+          v: entry.edge.local_ip ?? tr("box.notReported"),
+        },
+        {
+          k: tr("nodes.fact.lastSeen"),
+          v: formatRelative(entry.edge.last_seen_at),
+        },
+      ];
     return [
-      { k: tr("ui.peoplePanel.platform"), v: platformLabel(entry.platform) || "not reported" },
+      {
+        k: tr("ui.peoplePanel.platform"),
+        v: platformLabel(entry.platform) || "not reported",
+      },
       { k: "kombify clients", v: entry.clients.join(" · ") || "none active" },
       {
         k: tr("ui.stacksIdServersServerId.lastSeen"),
         v: entry.lastSeen ? formatRelative(entry.lastSeen) : "not reported",
       },
-      ...entry.source.installations.map((installation) => ({
+      ...("installations" in entry.source
+        ? entry.source.installations
+        : []
+      ).map((installation) => ({
         k: installation.display_name,
         v: [
           installation.status,
@@ -163,7 +201,11 @@
 {/snippet}
 
 {#snippet row(entry: PeopleEntry)}
-  <li data-testid="people-row" data-audience={entry.audience}>
+  <li
+    data-testid="people-row"
+    data-audience={entry.audience}
+    data-kind={entry.kind}
+  >
     {#if entry.kind === "person"}
       <ActorCard
         kind="person"
@@ -181,7 +223,9 @@
         size="row"
         name={entry.name}
         formFactor={deviceFormFactorFromPlatform(entry.platform)}
-        model={platformLabel(entry.platform) || undefined}
+        model={entry.edge
+          ? entry.detail
+          : platformLabel(entry.platform) || undefined}
         lastSeen={entry.lastSeen ? formatRelative(entry.lastSeen) : undefined}
         clients={entry.clients}
         owner={audienceLabel(entry)}
@@ -216,7 +260,9 @@
       </a>
     </div>
   {:else}
-    <h2 id="dashboard-people-title" class="sr-only">{tr("ui.dashboard.devicesPeople")}</h2>
+    <h2 id="dashboard-people-title" class="sr-only">
+      {tr("ui.dashboard.devicesPeople")}
+    </h2>
   {/if}
   <SegmentedControl
     items={filterItems}
@@ -233,6 +279,13 @@
     </p>
     {@render sectionNote(people, "people-state")}
     {#if people.state === "ready"}
+      {#each people.notices ?? [] as notice (notice)}<p
+          role="status"
+          class="px-4 py-3 text-sm text-muted-foreground"
+          data-testid="people-notice"
+        >
+          {notice}
+        </p>{/each}
       {#if shownPeople.length > 0}
         <ul class="flex flex-col gap-2 p-2">
           {#each shownPeople as entry (entry.id)}
@@ -255,9 +308,15 @@
     </p>
     {@render sectionNote(devices, "devices-state")}
     {#if devices.state === "ready"}
-      {#if shownDevices.length > 0}
+      {#each clientNotices as notice (notice)}<p
+          role="status"
+          class="px-4 py-3 text-sm text-muted-foreground"
+        >
+          {notice}
+        </p>{/each}
+      {#if shownClients.length > 0}
         <ul class="flex flex-col gap-2 p-2">
-          {#each shownDevices as entry (entry.id)}
+          {#each shownClients as entry (entry.id)}
             {@render row(entry)}
           {/each}
         </ul>
@@ -268,10 +327,37 @@
             : tr("ui.peoplePanel.noKombifyClientIsLinked")}
         </p>
       {/if}
+
+      <p
+        class="border-t border-b border-border/60 px-4 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase"
+        data-testid="edge-devices-heading"
+      >
+        {tr("box.edgeDevices")}
+      </p>
+      {#each edgeNotices as notice (notice)}<p
+          role="status"
+          class="px-4 py-3 text-sm text-warning"
+        >
+          {notice}
+        </p>{/each}
+      {#if shownEdges.length > 0}
+        <ul class="flex flex-col gap-2 p-2" data-testid="edge-devices">
+          {#each shownEdges as entry (entry.id)}
+            {@render row(entry)}
+          {/each}
+        </ul>
+      {:else if edgeNotices.length === 0}
+        <p class="px-4 py-3 text-sm text-muted-foreground">
+          {filter === "household"
+            ? tr("ui.peoplePanel.householdDevicesAreNotTracked")
+            : tr("box.noEdgeDevice")}
+        </p>
+      {/if}
     {/if}
   </div>
   <p class="text-xs leading-relaxed text-muted-foreground">
     {tr("ui.peoplePanel.ownerDevicesCanManageThe")}
+    {tr("box.deviceHint")}
   </p>
 </section>
 
@@ -288,10 +374,24 @@
       ? (deviceIcon(selected) as unknown as EntityIcon)
       : undefined}
     shape={selected.kind === "person" ? "circle" : undefined}
-    presence={selected.kind === "device" ? presence(selected.online) : undefined}
+    presence={selected.kind === "device"
+      ? presence(selected.online)
+      : undefined}
     statusLabel={selected.kind === "person" ? selected.status : undefined}
     tags={[audienceLabel(selected)]}
     facts={facts.map<EntityFact>((fact) => ({ label: fact.k, value: fact.v }))}
     {labels}
-  />
+  >
+    {#if selected.kind === "device" && selected.edge}
+      {#key selected.id}
+        <EdgeDeviceSettings
+          device={selected.edge}
+          onremoved={() => {
+            selected = null;
+            void loadDevices().then((result) => (devices = result));
+          }}
+        />
+      {/key}
+    {/if}
+  </EntityDetailSheet>
 {/if}

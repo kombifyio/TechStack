@@ -327,6 +327,16 @@ const (
 	// carries public material only: a CA public key with its principal map, or
 	// a host certificate.
 	StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY StackKitOperation = 63
+	// Read the locally Owner-signed move receipt and observe current runtime.
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_STATUS StackKitOperation = 64
+	// Permanently abort a checked move only before any destination restore effects.
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_ABORT StackKitOperation = 65
+	// Author a bounded use-case configuration candidate without applying runtime changes.
+	StackKitOperation_STACKKIT_OPERATION_USE_CASE_CONFIGURE StackKitOperation = 66
+	// Author a retained-data candidate for one workload or an exact catalog use case.
+	StackKitOperation_STACKKIT_OPERATION_USE_CASE_REMOVE StackKitOperation = 68
+	// Apply one Cloud owner/person generation under the node lifecycle lock.
+	StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT StackKitOperation = 69
 )
 
 // Enum value maps for StackKitOperation.
@@ -396,6 +406,11 @@ var (
 		61: "STACKKIT_OPERATION_RELOCATE_SEND",
 		62: "STACKKIT_OPERATION_RELOCATE_RECEIVE",
 		63: "STACKKIT_OPERATION_HOST_SSH_APPLY",
+		64: "STACKKIT_OPERATION_RELOCATE_STATUS",
+		65: "STACKKIT_OPERATION_RELOCATE_ABORT",
+		66: "STACKKIT_OPERATION_USE_CASE_CONFIGURE",
+		68: "STACKKIT_OPERATION_USE_CASE_REMOVE",
+		69: "STACKKIT_OPERATION_HOUSEHOLD_PROJECT",
 	}
 	StackKitOperation_value = map[string]int32{
 		"STACKKIT_OPERATION_UNSPECIFIED":                         0,
@@ -462,6 +477,11 @@ var (
 		"STACKKIT_OPERATION_RELOCATE_SEND":                       61,
 		"STACKKIT_OPERATION_RELOCATE_RECEIVE":                    62,
 		"STACKKIT_OPERATION_HOST_SSH_APPLY":                      63,
+		"STACKKIT_OPERATION_RELOCATE_STATUS":                     64,
+		"STACKKIT_OPERATION_RELOCATE_ABORT":                      65,
+		"STACKKIT_OPERATION_USE_CASE_CONFIGURE":                  66,
+		"STACKKIT_OPERATION_USE_CASE_REMOVE":                     68,
+		"STACKKIT_OPERATION_HOUSEHOLD_PROJECT":                   69,
 	}
 )
 
@@ -3026,8 +3046,22 @@ type StackKitCommand struct {
 	RelocationSourceAddress string `protobuf:"bytes,69,opt,name=relocation_source_address,json=relocationSourceAddress,proto3" json:"relocation_source_address,omitempty"`
 	// RELOCATE_RECEIVE only: OLD=NEW domain switches of the restored resources.
 	RelocationSetDomains []string `protobuf:"bytes,70,rep,name=relocation_set_domains,json=relocationSetDomains,proto3" json:"relocation_set_domains,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// RELOCATE_PLAN and RELOCATE_SEND only: exact individual application UUIDs.
+	// Projects and UUID selectors are mutually exclusive; dependencies remain included.
+	RelocationResourceUuids []string `protobuf:"bytes,71,rep,name=relocation_resource_uuids,json=relocationResourceUuids,proto3" json:"relocation_resource_uuids,omitempty"`
+	// Shared semantic move identity on send and receive, scoped to one durable job.
+	RelocationTransferId string `protobuf:"bytes,72,opt,name=relocation_transfer_id,json=relocationTransferId,proto3" json:"relocation_transfer_id,omitempty"`
+	// USE_CASE_CONFIGURE only: strict public catalog intent. Guard chooses every argv and candidate path.
+	UseCaseConfigurationJson []byte `protobuf:"bytes,73,opt,name=use_case_configuration_json,json=useCaseConfigurationJson,proto3" json:"use_case_configuration_json,omitempty"`
+	// USE_CASE_REMOVE only: strict retained-data selector and catalog membership.
+	UseCaseRemovalJson []byte `protobuf:"bytes,75,opt,name=use_case_removal_json,json=useCaseRemovalJson,proto3" json:"use_case_removal_json,omitempty"`
+	// HOUSEHOLD_PROJECT only: opaque owner/person digest, positive generation,
+	// and add/remove intent. Older pinned binaries reject this operation.
+	HouseholdProjectionKey      string `protobuf:"bytes,76,opt,name=household_projection_key,json=householdProjectionKey,proto3" json:"household_projection_key,omitempty"`
+	HouseholdProjectionRevision uint64 `protobuf:"varint,77,opt,name=household_projection_revision,json=householdProjectionRevision,proto3" json:"household_projection_revision,omitempty"`
+	HouseholdProjectionAction   string `protobuf:"bytes,78,opt,name=household_projection_action,json=householdProjectionAction,proto3" json:"household_projection_action,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *StackKitCommand) Reset() {
@@ -3548,6 +3582,55 @@ func (x *StackKitCommand) GetRelocationSetDomains() []string {
 		return x.RelocationSetDomains
 	}
 	return nil
+}
+
+func (x *StackKitCommand) GetRelocationResourceUuids() []string {
+	if x != nil {
+		return x.RelocationResourceUuids
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetRelocationTransferId() string {
+	if x != nil {
+		return x.RelocationTransferId
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetUseCaseConfigurationJson() []byte {
+	if x != nil {
+		return x.UseCaseConfigurationJson
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetUseCaseRemovalJson() []byte {
+	if x != nil {
+		return x.UseCaseRemovalJson
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetHouseholdProjectionKey() string {
+	if x != nil {
+		return x.HouseholdProjectionKey
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetHouseholdProjectionRevision() uint64 {
+	if x != nil {
+		return x.HouseholdProjectionRevision
+	}
+	return 0
+}
+
+func (x *StackKitCommand) GetHouseholdProjectionAction() string {
+	if x != nil {
+		return x.HouseholdProjectionAction
+	}
+	return ""
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON
@@ -5660,7 +5743,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"platformOs\x12#\n" +
 	"\rplatform_arch\x18\x03 \x01(\tR\fplatformArch\x12%\n" +
 	"\x0earchive_sha256\x18\x04 \x01(\tR\rarchiveSha256\x120\n" +
-	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\x99\x19\n" +
+	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\xbb\x1c\n" +
 	"\x0fStackKitCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12C\n" +
@@ -5739,7 +5822,14 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x13relocation_projects\x18C \x03(\tR\x12relocationProjects\x120\n" +
 	"\x14relocation_plan_json\x18D \x01(\fR\x12relocationPlanJson\x12:\n" +
 	"\x19relocation_source_address\x18E \x01(\tR\x17relocationSourceAddress\x124\n" +
-	"\x16relocation_set_domains\x18F \x03(\tR\x14relocationSetDomains\"\xf6\x05\n" +
+	"\x16relocation_set_domains\x18F \x03(\tR\x14relocationSetDomains\x12:\n" +
+	"\x19relocation_resource_uuids\x18G \x03(\tR\x17relocationResourceUuids\x124\n" +
+	"\x16relocation_transfer_id\x18H \x01(\tR\x14relocationTransferId\x12=\n" +
+	"\x1buse_case_configuration_json\x18I \x01(\fR\x18useCaseConfigurationJson\x121\n" +
+	"\x15use_case_removal_json\x18K \x01(\fR\x12useCaseRemovalJson\x128\n" +
+	"\x18household_projection_key\x18L \x01(\tR\x16householdProjectionKey\x12B\n" +
+	"\x1dhousehold_projection_revision\x18M \x01(\x04R\x1bhouseholdProjectionRevision\x12>\n" +
+	"\x1bhousehold_projection_action\x18N \x01(\tR\x19householdProjectionAction\"\xf6\x05\n" +
 	"\x0eStackKitResult\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x18\n" +
@@ -5934,7 +6024,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x1fTERRAMATE_OPERATION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TERRAMATE_OPERATION_RUN\x10\x01\x12\"\n" +
 	"\x1eTERRAMATE_OPERATION_SYNC_DRIFT\x10\x02\x12$\n" +
-	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\xf9\x14\n" +
+	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\xc5\x16\n" +
 	"\x11StackKitOperation\x12\"\n" +
 	"\x1eSTACKKIT_OPERATION_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bSTACKKIT_OPERATION_VALIDATE\x10\x01\x12\x1f\n" +
@@ -6000,7 +6090,12 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"#STACKKIT_OPERATION_RELOCATE_UNDRAIN\x10<\x12$\n" +
 	" STACKKIT_OPERATION_RELOCATE_SEND\x10=\x12'\n" +
 	"#STACKKIT_OPERATION_RELOCATE_RECEIVE\x10>\x12%\n" +
-	"!STACKKIT_OPERATION_HOST_SSH_APPLY\x10?*|\n" +
+	"!STACKKIT_OPERATION_HOST_SSH_APPLY\x10?\x12&\n" +
+	"\"STACKKIT_OPERATION_RELOCATE_STATUS\x10@\x12%\n" +
+	"!STACKKIT_OPERATION_RELOCATE_ABORT\x10A\x12)\n" +
+	"%STACKKIT_OPERATION_USE_CASE_CONFIGURE\x10B\x12&\n" +
+	"\"STACKKIT_OPERATION_USE_CASE_REMOVE\x10D\x12(\n" +
+	"$STACKKIT_OPERATION_HOUSEHOLD_PROJECT\x10E*|\n" +
 	"\x11StackKitDriftMode\x12#\n" +
 	"\x1fSTACKKIT_DRIFT_MODE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cSTACKKIT_DRIFT_MODE_STANDARD\x10\x01\x12 \n" +

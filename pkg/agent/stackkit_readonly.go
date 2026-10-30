@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/secrets"
 )
 
@@ -65,7 +64,7 @@ func (executor *StackKitExecutor) RunReadOnly(ctx context.Context, run ReadOnlyR
 		return ReadOnlyResult{}, err
 	}
 	defer unlock()
-	release, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
+	release, err := executor.releaseCache().ResolvePin(executor.pinPath)
 	if err != nil {
 		return ReadOnlyResult{}, fmt.Errorf("%w: %v", ErrStackKitRuntimeUnavailable, err)
 	}

@@ -1,3 +1,4 @@
+import { fillSecret } from "../helpers/secret-input";
 import { type Page } from "@playwright/test";
 
 import {
@@ -32,6 +33,8 @@ export interface RuntimeAuthOptions {
   sessionCookieName?: string;
   entryPath?: string;
   expectedAuthIssuer?: string;
+  /** Existing canonical shared identities, selected explicitly for A/B isolation. */
+  fixturePrefix?: "TEST_RIL_PRO_USER" | "TEST_ALL_YOU_NEED_USER";
 }
 
 export async function authenticateRuntimeUser(
@@ -39,7 +42,9 @@ export async function authenticateRuntimeUser(
   page: Page,
   options: RuntimeAuthOptions,
 ): Promise<RuntimeAuthSession> {
-  const user = requireTechStackTestUser(role);
+  const user = options.fixturePrefix
+    ? canonicalRuntimeFixture(options.fixturePrefix)
+    : requireTechStackTestUser(role);
 
   await page.goto(options.entryPath ?? "/login", {
     waitUntil: "domcontentloaded",
@@ -69,6 +74,13 @@ export async function authenticateRuntimeUser(
     );
   }
   return { token };
+}
+
+function canonicalRuntimeFixture(prefix: NonNullable<RuntimeAuthOptions["fixturePrefix"]>) {
+  const email = process.env[`${prefix}_EMAIL`]?.trim();
+  const password = process.env[`${prefix}_PASSWORD`];
+  if (!email || !password) throw new Error(`Canonical shared fixture ${prefix} is not configured`);
+  return { email, password };
 }
 
 export async function fetchBrowserWhoAmI(page: Page): Promise<{
@@ -310,7 +322,7 @@ async function fillAuth0UniversalLogin(
   }
   await waitForAuth0Field(page, passwordInput, "password");
   assertExpectedIssuer(page, expectedOrigin);
-  await passwordInput.first().fill(password, { timeout: 5_000 });
+  await fillSecret(passwordInput.first(), password);
   await page
     .getByRole("button", { name: /^(log in|sign in|continue)$/i })
     .last()

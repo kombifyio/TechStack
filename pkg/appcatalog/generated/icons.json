@@ -1,0 +1,6731 @@
+{
+  "schema": "kombify.appcatalog.icons.v1",
+  "base_url": "https://assets.kombify.io/brand/app-icons/",
+  "sources": [
+    {
+      "id": "dashboard-icons",
+      "repository": "https://github.com/homarr-labs/dashboard-icons",
+      "commit": "83f32e08257b66fbd971ac8d7645f5b38d52e85d",
+      "license": "Apache-2.0"
+    },
+    {
+      "id": "simple-icons",
+      "repository": "https://github.com/simple-icons/simple-icons",
+      "commit": "90646e4bf7f3b89df6c37e65baf3e7bc759a517c",
+      "license": "CC0-1.0"
+    }
+  ],
+  "icons": {
+    "3cx": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "3cx",
+      "dark": "3cx-light"
+    },
+    "3cx-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "9router": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "activepieces": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "actual-budget": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "adguard-home": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "adminer": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "adventure-log": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "affine": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "affine",
+      "dark": "affine-light"
+    },
+    "affine-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "akaunting": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "alexandrie": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "alexandrie",
+      "dark": "alexandrie-dark"
+    },
+    "alexandrie-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "alist": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "alltube": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "alltube",
+      "dark": "alltube-light"
+    },
+    "alltube-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "amcrest": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "amp": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "ampache": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "anubis": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "anything-llm": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "anything-llm",
+      "dark": "anything-llm-light"
+    },
+    "anything-llm-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "anytype": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apache": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apache-cloudstack": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apache-guacamole": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apache-superset": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "apache-superset-light",
+      "dark": "apache-superset-dark"
+    },
+    "apache-superset-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apache-superset-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apache-tomcat": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "apache-tomcat",
+      "dark": "apache-tomcat-light"
+    },
+    "apache-tomcat-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apollo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "appflowy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "apprise": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "appwrite": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "archivebox": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "arris": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "arris",
+      "dark": "arris-light"
+    },
+    "arris-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "astrbot": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "asus-router": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "asustor": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "atlassian-bamboo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "atlassian-confluence": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "atlassian-jira": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "audiobookshelf": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "authelia": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "authentik": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "autobrr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "avigilon": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "axis": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "azuracast": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "babybuddy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "backrest": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "backrest-light",
+      "dark": "backrest-dark"
+    },
+    "backrest-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "backrest-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "backstage": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "backstage-dark",
+      "dark": "backstage-light"
+    },
+    "backstage-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "backstage-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "baikal": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "barrage": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "baserow": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bazarr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "bazarr",
+      "dark": "bazarr-dark"
+    },
+    "bazarr-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bentopdf": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "beszel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "beszel",
+      "dark": "beszel-light"
+    },
+    "beszel-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bigcapital": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bigfix": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bitcoin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bitwarden": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "blender": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "blue-iris": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "bluesky": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bonfire": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "booklore": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bookstack": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "borgitory": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "browserless": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "browserless",
+      "dark": "browserless-light"
+    },
+    "browserless-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "buddy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "budget-board": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "budibase": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bunkerweb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "burpsuite": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "buzz": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "bytestash": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cabot": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "cacti": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "caddy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cadvisor": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "cal-com": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "cal-com",
+      "dark": "cal-com-light"
+    },
+    "cal-com-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "calagopus": {
+      "source": "kombify",
+      "formats": [
+        "svg"
+      ]
+    },
+    "caldera": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "calibre": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "calibre-web": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "calibre-web-automated-book-downloader": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "caprover": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "casaos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "castopod": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "centreon": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "centron": {
+      "source": "kombify",
+      "formats": [
+        "svg"
+      ]
+    },
+    "changedetection": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "chatwoot": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "check-cle": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "check-point": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "checkmate": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "chevereto": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "chibisafe": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "chiefonboarding": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "chroma": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "chromium": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cinny": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "cinny",
+      "dark": "cinny-light"
+    },
+    "cinny-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "classicpress": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "clickhouse": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cloud9": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cloudbeaver": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cloudflared": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "cloudflared-light",
+      "dark": "cloudflared-dark"
+    },
+    "cloudflared-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cloudflared-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cloudpanel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cloudreve": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cockpit": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "cockpit",
+      "dark": "cockpit-light"
+    },
+    "cockpit-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "code-server": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "coder": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "coder",
+      "dark": "coder-light"
+    },
+    "coder-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "codimd": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "codimd",
+      "dark": "codimd-light"
+    },
+    "codimd-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "collabora-office": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "comfyui": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "comfyui-light",
+      "dark": "comfyui-dark"
+    },
+    "comfyui-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "comfyui-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "commafeed": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "commafeed",
+      "dark": "commafeed-light"
+    },
+    "commafeed-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "commento": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "commento",
+      "dark": "commento-light"
+    },
+    "commento-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "compreface": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "concourse": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "confluence": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "consul": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "convertx": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "convex": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cookiecloud": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "coolify": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "couchdb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cpanel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "crafty-controller": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "crater-invoice": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "crawlab": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "crowdsec": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cryptpad": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cup": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cups": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "cups",
+      "dark": "cups-light"
+    },
+    "cups-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "cyberchef": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dahua": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "dashy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "databasus": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dbgate": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dd-wrt": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "dd-wrt",
+      "dark": "dd-wrt-light"
+    },
+    "dd-wrt-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "defguard": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dell": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "dell",
+      "dark": "dell-light"
+    },
+    "dell-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "deluge": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dependency-track": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "directadmin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "directus": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "discord-tickets": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "discourse": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "discourse",
+      "dark": "discourse-light"
+    },
+    "discourse-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "diun": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "docker": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dockge": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "docling": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "docmost": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "docspell": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "documenso": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "docuseal": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dokploy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "dokploy",
+      "dark": "dokploy-dark"
+    },
+    "dokploy-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dokuwiki": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dolibarr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "dozzle": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "draw-io": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "drupal": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dumbassets": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "dumbpad": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "duplicati": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "edgeos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "edgeos",
+      "dark": "edgeos-light"
+    },
+    "edgeos-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "elasticsearch": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "emby": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "embystat": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "emqx": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "enshrouded": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "ente-photos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "esphome": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "esphome",
+      "dark": "esphome-light"
+    },
+    "esphome-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "espocrm": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "etcd": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "etherpad": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "euro-office": {
+      "source": "kombify",
+      "formats": [
+        "svg"
+      ]
+    },
+    "evcc": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "excalidraw": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ezbookkeeping": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "fider": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "filebrowser": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "fileflows": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "filegator": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "filerise": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "filerun": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "filestash": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "firefly-iii": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "firefox": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "flaresolverr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "flarum": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "flatnotes": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "flowise": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "fluidd": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "fluxer": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "focalboard": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "forgejo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "formbricks": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "fortinet": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "foundry-vtt": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "freeipa": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "freepbx": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "freescout": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "freshrss": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "friendica": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "frigate": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "frigate",
+      "dark": "frigate-light"
+    },
+    "frigate-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "fritzbox": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "fritzbox",
+      "dark": "fritzbox-light"
+    },
+    "fritzbox-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "froxlor": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "funkwhale": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "funkwhale",
+      "dark": "funkwhale-light"
+    },
+    "funkwhale-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "fusionauth": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "fusionauth",
+      "dark": "fusionauth-light"
+    },
+    "fusionauth-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "garage": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gatus": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ghost": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "ghost",
+      "dark": "ghost-light"
+    },
+    "ghost-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "gitea": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gitea-mirror": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "gitlab": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gladys-assistant": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "glance": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "glances": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "glances",
+      "dark": "glances-light"
+    },
+    "glances-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "glitchtip": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "glpi": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "go2rtc": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "gocd": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gogs": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "gollum": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gonic": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gotenberg": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "gotify": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gotosocial": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "grafana": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "gramps-web": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "grandstream": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "graphite": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "graphite",
+      "dark": "graphite-dark"
+    },
+    "graphite-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "graylog": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "greenbone": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "greenbone",
+      "dark": "greenbone-light"
+    },
+    "greenbone-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "greenlight": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "grimoire": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "grist": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "grocy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "habitica": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "habitica",
+      "dark": "habitica-dark"
+    },
+    "habitica-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "harbor": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hashicorp-boundary": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "headplane": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "headplane-light",
+      "dark": "headplane-dark"
+    },
+    "headplane-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "headplane-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "headscale": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "healthchecks": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "healthchecks-dark",
+      "dark": "healthchecks-light"
+    },
+    "healthchecks-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "healthchecks-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hedgedoc": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "heimdall": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "heimdall",
+      "dark": "heimdall-light"
+    },
+    "heimdall-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hermes": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hestia": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "heyform": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hikvision": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hoarder": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "hoarder",
+      "dark": "hoarder-light"
+    },
+    "hoarder-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "homarr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "home-assistant": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "homebox": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "homebridge": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "homepage": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "homer": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hoobs": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hoppscotch": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hortusfox": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "huawei": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "humhub": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "hydra": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "icecast": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "icewarp": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "icinga": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "icinga",
+      "dark": "icinga-light"
+    },
+    "icinga-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ihatemoney": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "ilo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "ilo",
+      "dark": "ilo-dark"
+    },
+    "ilo-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "immich": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "infisical": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "influxdb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "invoice-ninja": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "invoice-ninja",
+      "dark": "invoice-ninja-light"
+    },
+    "invoice-ninja-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "invoiceplane": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "iobroker": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ionos": {
+      "source": "kombify",
+      "formats": [
+        "svg"
+      ]
+    },
+    "ipfs": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "ipfs",
+      "dark": "ipfs-light"
+    },
+    "ipfs-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ispconfig": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ispy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "it-tools": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "it-tools",
+      "dark": "it-tools-light"
+    },
+    "it-tools-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "itop": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jamf": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jeedom": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jellyfin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jellyseerr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jenkins": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jira": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jitsi": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "joomla": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "joplin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jumpserver": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "jupyter": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kafka": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "kafka-light",
+      "dark": "kafka-dark"
+    },
+    "kafka-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kafka-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kanboard": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "kanboard",
+      "dark": "kanboard-light"
+    },
+    "kanboard-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "karakeep": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "karakeep-dark",
+      "dark": "karakeep"
+    },
+    "karakeep-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kaseya": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kasm": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kavita": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "keenetic": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "keila": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kestra": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "keycloak": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kibana": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kimai": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kitchenowl": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "koel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kokoro-web": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "kombify": {
+      "source": "kombify",
+      "formats": [
+        "png"
+      ]
+    },
+    "komga": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "komodo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kong": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "kong-light",
+      "dark": "kong-dark"
+    },
+    "kong-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kong-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kubeflow": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kubernetes-dashboard": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "kutt": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "label-studio": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "langflow": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "langflow-light",
+      "dark": "langflow-dark"
+    },
+    "langflow-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "langflow-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "ldap-account-manager": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "leantime": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lemmy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "lemmy-light",
+      "dark": "lemmy"
+    },
+    "lemmy-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lexmark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "librechat": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "libredb-studio": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "librenms": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "libreoffice": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "libreoffice",
+      "dark": "libreoffice-light"
+    },
+    "libreoffice-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "librephotos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "librephotos",
+      "dark": "librephotos-light"
+    },
+    "librephotos-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "librespeed": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "librespeed",
+      "dark": "librespeed-light"
+    },
+    "librespeed-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "libretranslate": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "libretranslate",
+      "dark": "libretranslate-dark"
+    },
+    "libretranslate-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lidarr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lighttpd": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "limesurvey": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "linkding": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "linkstack": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "linkwarden": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "listmonk": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lldap": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "lldap",
+      "dark": "lldap-dark"
+    },
+    "lldap-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lobe-chat": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lodestone": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "logto": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "loxone": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "lubelogger": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "mailcow": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mailhog": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "mailpit": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mailu": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "mainsail": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mantisbt": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "mariadb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "marimo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "matomo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "matrix": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "matrix",
+      "dark": "matrix-light"
+    },
+    "matrix-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mattermost": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mautic": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mayan-edms": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "mayan-edms",
+      "dark": "mayan-edms-light"
+    },
+    "mayan-edms-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "maybe": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mazanoke": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "mealie": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mediawiki": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "medusa": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "medusa",
+      "dark": "medusa-light"
+    },
+    "medusa-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "meilisearch": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "memos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "meshcentral": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "metabase": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "metamcp": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "metube": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "microbin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "minecraft": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "miniflux": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "miniflux",
+      "dark": "miniflux-light"
+    },
+    "miniflux-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "minio": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "minio",
+      "dark": "minio-light"
+    },
+    "minio-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "misp": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "misskey": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "misskey",
+      "dark": "misskey-light"
+    },
+    "misskey-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mixpost": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mobilizon": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "monica": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "monica",
+      "dark": "monica-light"
+    },
+    "monica-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "moodle": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "moodle",
+      "dark": "moodle-light"
+    },
+    "moodle-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "morphos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mosquitto": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mumble": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "mumble",
+      "dark": "mumble-light"
+    },
+    "mumble-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "myspeed": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "mysql": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "n8n": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "nagios": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "navidrome": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "neko": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "neko",
+      "dark": "neko-light"
+    },
+    "neko-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "neo4j": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "netbird": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "netdata": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "netgear": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "netgear",
+      "dark": "netgear-light"
+    },
+    "netgear-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "netmaker": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "networking-toolbox": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "networking-toolbox",
+      "dark": "networking-toolbox-dark"
+    },
+    "networking-toolbox-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "new-api": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "nextcloud": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "nexus": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "nexus",
+      "dark": "nexus-dark"
+    },
+    "nexus-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "nginx": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "nginx-proxy-manager": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "nocobase": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ],
+      "light": "nocobase",
+      "dark": "nocobase-light"
+    },
+    "nocobase-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "nocodb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "node-red": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "nodebb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "novnc": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ntfy": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ntopng": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "nutanix": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "nzbget": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "observium": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "obsidian": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "octoprint": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "odoo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ollama": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "ollama",
+      "dark": "ollama-dark"
+    },
+    "ollama-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "omni-tools": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "onedev": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "onedev",
+      "dark": "onedev-light"
+    },
+    "onedev-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "oneuptime": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "oneuptime",
+      "dark": "oneuptime-light"
+    },
+    "oneuptime-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "onlyoffice": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "open-cloud": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "open-cloud",
+      "dark": "open-cloud-dark"
+    },
+    "open-cloud-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "open-observe": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "open-wb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "open-webui": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "open-webui",
+      "dark": "open-webui-light"
+    },
+    "open-webui-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "opencart": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "openclaw": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "openclaw-dark",
+      "dark": "openclaw"
+    },
+    "openclaw-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "opencode": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "opencode-light",
+      "dark": "opencode-dark"
+    },
+    "opencode-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "opencode-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openemr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "openemr",
+      "dark": "openemr-light"
+    },
+    "openemr-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "opengist": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "opengist-light",
+      "dark": "opengist"
+    },
+    "opengist-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openpanel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "openpanel",
+      "dark": "openpanel-light"
+    },
+    "openpanel-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openproject": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "opensearch": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openspeedtest": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openstack": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openvas": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openvpn": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "openwrt": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "opnform": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "opnsense": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "organizr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "osticket": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "otter-wiki": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "otter-wiki",
+      "dark": "otter-wiki-dark"
+    },
+    "otter-wiki-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "outline": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "outline",
+      "dark": "outline-light"
+    },
+    "outline-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "overseerr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "owncast": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "owncloud": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pairdrop": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "palmr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "palworld": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "pangolin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "paperless": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "paperless-light",
+      "dark": "paperless-dark"
+    },
+    "paperless-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "paperless-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "paperless-ngx": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "paperwork": {
+      "source": "kombify",
+      "formats": [
+        "png"
+      ]
+    },
+    "parseable": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "part-db": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "part-db",
+      "dark": "part-db-light"
+    },
+    "part-db-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "passbolt": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "paymenter": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "peertube": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pelican-panel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "penpot": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "penpot",
+      "dark": "penpot-light"
+    },
+    "penpot-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "peppermint": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pfsense": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "pfsense",
+      "dark": "pfsense-light"
+    },
+    "pfsense-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pgadmin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pgbackweb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "pgbackweb-dark",
+      "dark": "pgbackweb-light"
+    },
+    "pgbackweb-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pgbackweb-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "photoprism": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "photoprism",
+      "dark": "photoprism-light"
+    },
+    "photoprism-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "phpldapadmin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "phpmyadmin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pi-hole": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "picsur": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "picsur",
+      "dark": "picsur-light"
+    },
+    "picsur-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pinchflat": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "pingvin-share": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "piwigo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pixelfed": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "plane": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "planka": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "planka-dark",
+      "dark": "planka"
+    },
+    "planka-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "plausible": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "plesk": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "plex": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "plex",
+      "dark": "plex-light"
+    },
+    "plex-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pocket-id": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "pocket-id",
+      "dark": "pocket-id-light"
+    },
+    "pocket-id-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pocketbase": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "pocketbase-dark",
+      "dark": "pocketbase"
+    },
+    "pocketbase-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "podfetch": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "podfetch-light",
+      "dark": "podfetch"
+    },
+    "podfetch-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "portabase": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "portabase-dark",
+      "dark": "portabase-light"
+    },
+    "portabase-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "portabase-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "portainer": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "portainer",
+      "dark": "portainer-dark"
+    },
+    "portainer-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "postal": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "postgres": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "postgresql": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "postgresus": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "posthog": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "posthog",
+      "dark": "posthog-light"
+    },
+    "posthog-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "postiz": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "postiz",
+      "dark": "postiz-dark"
+    },
+    "postiz-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "powerdns": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pretix": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pritunl": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "privatebin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "projectsend": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "prometheus": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "prowlarr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "proxmox": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "proxmox",
+      "dark": "proxmox-light"
+    },
+    "proxmox-backup-server": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "proxmox-backup-server-light",
+      "dark": "proxmox-backup-server-dark"
+    },
+    "proxmox-backup-server-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "proxmox-backup-server-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "proxmox-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "prtg": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "psitransfer": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "pterodactyl": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pufferpanel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pulse": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pure-storage": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "pyload": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "qbittorrent": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "qdrant": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "quant-ux": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "quay": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "qui": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rabbitmq": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "radarr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rallly": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rancher": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "raneto": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "raspberrymatic": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "reactive-resume": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "reactive-resume-light",
+      "dark": "reactive-resume"
+    },
+    "reactive-resume-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "readeck": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "redis": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "redlib": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "redlib",
+      "dark": "redlib-light"
+    },
+    "redlib-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "redmine": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "reolink": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "restreamer": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ricoh": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rocket-chat": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "roundcube": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rport": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rss-bridge": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rsshub": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "rstudio": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ruckus-unleashed": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "rundeck": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rustdesk": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rustfs": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rutorrent": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "rybbit": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "rybbit",
+      "dark": "rybbit-dark"
+    },
+    "rybbit-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "ryot": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "ryot",
+      "dark": "ryot-light"
+    },
+    "ryot-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sabnzbd": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "sabnzbd",
+      "dark": "sabnzbd-light"
+    },
+    "sabnzbd-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "satisfactory": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "scrutiny": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "scrutiny",
+      "dark": "scrutiny-light"
+    },
+    "scrutiny-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "scrypted": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "seafile": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "searxng": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "security-onion": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sensu": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sentry": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "sentry",
+      "dark": "sentry-light"
+    },
+    "sentry-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "seq": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "sftpgo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "sharry": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "sharry",
+      "dark": "sharry-dark"
+    },
+    "sharry-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "shellhub": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "shiori": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "shlink": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "si:airbyte": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "615EFF"
+    },
+    "si:answer": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "0033FF"
+    },
+    "si:appsmith": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "2A2F3D"
+    },
+    "si:arangodb": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "DDDF72"
+    },
+    "si:dify": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "0033FF"
+    },
+    "si:drizzle": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "C5F74F"
+    },
+    "si:erpnext": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "0089FF"
+    },
+    "si:falco": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "00AEC7"
+    },
+    "si:fivem": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "F40552"
+    },
+    "si:languagetool": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "45A1FC"
+    },
+    "si:livekit": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "FFFFFF"
+    },
+    "si:macos": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "000000"
+    },
+    "si:neon": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "34D59A"
+    },
+    "si:novu": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "000000"
+    },
+    "si:prefect": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "070E10"
+    },
+    "si:shopware": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "189EFF"
+    },
+    "si:torbrowser": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "7D4698"
+    },
+    "si:twenty": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "000000"
+    },
+    "si:weblate": {
+      "source": "simple-icons",
+      "formats": [
+        "svg"
+      ],
+      "hex": "2ECCAA"
+    },
+    "signoz": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sillytavern": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "silverbullet": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "siyuan": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "slash": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "slash",
+      "dark": "slash-light"
+    },
+    "slash-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "snapdrop": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "snipe-it": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "sogo": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sonarqube": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sonarr": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "sonarr-dark",
+      "dark": "sonarr"
+    },
+    "sonarr-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sophos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "sophos-dark",
+      "dark": "sophos"
+    },
+    "sophos-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "spark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sparky-fitness": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "speedtest-tracker": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "spiceworks": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "spiderfoot": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "spliit": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "splunk": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "stalwart": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "stalwart-mail-server": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "statping-ng": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "step-ca": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "stirling-pdf": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "strapi": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sunshine": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "supabase": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "sure": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "surrealdb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "swarmpit": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "synapse": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "synapse",
+      "dark": "synapse-light"
+    },
+    "synapse-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "syncthing": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "syncthing-dark",
+      "dark": "syncthing"
+    },
+    "syncthing-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "synology-webstation": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "tacticalrmm": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "taiga": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tailscale": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "tailscale",
+      "dark": "tailscale-light"
+    },
+    "tailscale-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tandoor-recipes": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tasmoadmin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "tautulli": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "teamcity": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "teamcity-light",
+      "dark": "teamcity"
+    },
+    "teamcity-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "teleport": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tenable": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "tenable",
+      "dark": "tenable-dark"
+    },
+    "tenable-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "termix": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "terramaster": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "terraria": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "teslamate": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "teslamate-light",
+      "dark": "teslamate"
+    },
+    "teslamate-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "thingsboard": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tianji": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "tianji",
+      "dark": "tianji-light"
+    },
+    "tianji-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tinyauth": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tolgee": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "tooljet": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "tooljet-dark",
+      "dark": "tooljet"
+    },
+    "tooljet-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "topdesk": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "traccar": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "traccar-dark",
+      "dark": "traccar"
+    },
+    "traccar-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "traefik": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "transmission": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "trellix": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "trellix",
+      "dark": "trellix-dark"
+    },
+    "trellix-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "trilium": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "triliumnext": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "truenas": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "typesense": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "typo3": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "umami": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "umami",
+      "dark": "umami-light"
+    },
+    "umami-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "umbrel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "unbound": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "unifi": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "unifi-dark",
+      "dark": "unifi"
+    },
+    "unifi-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "universal-media-server": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "untangle": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "upsnap": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "uptime-kuma": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "urbackup": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "valkey": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "vault": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "vault",
+      "dark": "vault-light"
+    },
+    "vault-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "vaultwarden": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "vaultwarden",
+      "dark": "vaultwarden-light"
+    },
+    "vaultwarden-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "veeam": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "verdaccio": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "verdaccio-dark",
+      "dark": "verdaccio"
+    },
+    "verdaccio-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "versitygw": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "victoriametrics": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "victoriametrics",
+      "dark": "victoriametrics-light"
+    },
+    "victoriametrics-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "vikunja": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "vmware-horizon": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "vmware-nsx": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "volumio": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "volumio",
+      "dark": "volumio-light"
+    },
+    "volumio-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "wakapi": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "wallabag": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "wallabag",
+      "dark": "wallabag-light"
+    },
+    "wallabag-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "wallos": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "wanderer": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "wanderer",
+      "dark": "wanderer-light"
+    },
+    "wanderer-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "watcher": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "watchtower": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "watchyourlan": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "wazuh": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "wd-mycloud": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "web-check": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "web-check-dark",
+      "dark": "web-check"
+    },
+    "web-check-dark": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "webmin": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "wekan": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "whodb": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "whoogle": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "wikijs": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "windmill": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "windshift": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "wireguard": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "wordpress": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "writefreely": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "writefreely",
+      "dark": "writefreely-light"
+    },
+    "writefreely-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "xen-orchestra": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "yaade": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "yacht": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "yamtrack": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "yamtrack",
+      "dark": "yamtrack-light"
+    },
+    "yamtrack-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "yopass": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "yourls": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "zabbix": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "zigbee2mqtt": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "zigbee2mqtt",
+      "dark": "zigbee2mqtt-light"
+    },
+    "zigbee2mqtt-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "zimbra": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "zipline": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "zipline",
+      "dark": "zipline-light"
+    },
+    "zipline-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "zitadel": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ],
+      "light": "zitadel",
+      "dark": "zitadel-light"
+    },
+    "zitadel-light": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    },
+    "zoneminder": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "webp"
+      ]
+    },
+    "zulip": {
+      "source": "dashboard-icons",
+      "formats": [
+        "png",
+        "svg",
+        "webp"
+      ]
+    }
+  }
+}

@@ -15,6 +15,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,10 +44,24 @@ func main() {
 }
 
 func run(command, arg string, extra ...string) (string, error) {
-	if len(extra) != 0 && command != "verify" {
+	if len(extra) != 0 && command != "verify" && command != "artifact-index" {
 		return "", fmt.Errorf("%s takes one path", command)
 	}
 	switch command {
+	case "verify-seed":
+		return "", verifySeedManifest(arg)
+	case "artifact-index":
+		expectedSource := ""
+		if len(extra) != 0 {
+			if len(extra) != 2 || extra[0] != "--expected-source" || !sourceCommitPattern.MatchString(extra[1]) {
+				return "", errInvalidExpectedSource
+			}
+			expectedSource = extra[1]
+		}
+		if err := verifyRelease(arg, expectedSource, true, false, false); err != nil {
+			return "", err
+		}
+		return releaseArtifactIndex(arg)
 	case "tree-digest":
 		return guardrelease.TreeDigest(arg)
 	case "archive-digest":
@@ -97,6 +112,93 @@ func run(command, arg string, extra ...string) (string, error) {
 		return "", verifyRelease(arg, expectedSource, requireRuntime, refreshPublished, requireCurrentPolicy)
 	}
 	return "", fmt.Errorf("unknown command %q", command)
+}
+
+// verifySeedManifest authenticates the immutable publication seed at its
+// signed issuance time. Current policy is separately checked by verifyRelease;
+// this clock never grants an old/revoked artifact admission.
+func verifySeedManifest(dir string) error {
+	raw, err := os.ReadFile(filepath.Join(dir, "release-manifest-seed.json"))
+	if err != nil {
+		return err
+	}
+	seed, err := guardrelease.ParseManifest(raw)
+	if err != nil {
+		return err
+	}
+	bundle, err := os.ReadFile(filepath.Join(dir, "release-manifest-seed.sigstore.json"))
+	if err != nil {
+		return err
+	}
+	verifier, err := guardrelease.NewVerifier(guardrelease.Options{Now: func() time.Time { return seed.IssuedAt }})
+	if err != nil {
+		return err
+	}
+	_, err = verifier.VerifyManifest(raw, bundle)
+	return err
+}
+
+// releaseArtifactIndex runs only after full signature and runtime-tree
+// verification. Outer archive digests are transport identities absent from the
+// signed manifest, so derive them from the exact verified files.
+func releaseArtifactIndex(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "release-manifest.json"))
+	if err != nil {
+		return "", err
+	}
+	manifest, err := guardrelease.ParseManifest(raw)
+	if err != nil {
+		return "", err
+	}
+	if manifest.StackKits == nil {
+		return "", errors.New("signed runtime identity is missing")
+	}
+	type entry struct {
+		Kind     string `json:"kind"`
+		OS       string `json:"os"`
+		Arch     string `json:"arch"`
+		SHA256   string `json:"sha256"`
+		Size     int64  `json:"size"`
+		Filename string `json:"filename"`
+	}
+	index := struct {
+		Schema         string  `json:"schema"`
+		ReleaseVersion string  `json:"release_version"`
+		ManifestSHA256 string  `json:"manifest_sha256"`
+		Artifacts      []entry `json:"artifacts"`
+	}{Schema: "techstack.artifact-index/v1", ReleaseVersion: manifest.Version,
+		ManifestSHA256: fmt.Sprintf("%x", sha256.Sum256(raw))}
+	for _, arch := range []string{"amd64", "arm64"} {
+		binary, ok := manifest.Artifact("linux", arch)
+		if !ok {
+			return "", fmt.Errorf("signed binary for linux/%s is missing", arch)
+		}
+		index.Artifacts = append(index.Artifacts, entry{Kind: "guard_binary", OS: "linux", Arch: arch,
+			SHA256: binary.SHA256, Size: binary.Size, Filename: "techstack-linux-" + arch})
+		name := "stackkit-runtime-linux-" + arch + ".tar.gz"
+		file, err := os.Open(filepath.Join(dir, name))
+		if err != nil {
+			return "", err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return "", err
+		}
+		hash := sha256.New()
+		_, err = io.Copy(hash, file)
+		_ = file.Close()
+		if err != nil {
+			return "", err
+		}
+		index.Artifacts = append(index.Artifacts, entry{Kind: "stackkit_runtime", OS: "linux", Arch: arch,
+			SHA256: fmt.Sprintf("%x", hash.Sum(nil)), Size: info.Size(), Filename: name})
+	}
+	encoded, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 var sourceCommitPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)

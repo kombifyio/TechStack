@@ -89,7 +89,7 @@ func (h crudRouteHandlers) lockedStackServices(
 ) ([]string, error) {
 	locked, err := h.lockedStackServicesContext(e.Request.Context(), tenantID, stackID, operation)
 	if err != nil {
-		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service lock state is unavailable", nil)
+		return nil, httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service lock state is unavailable", nil)
 	}
 	return locked, nil
 }
@@ -129,9 +129,9 @@ func (h crudRouteHandlers) refuseDuringServerMaintenance(e *httpx.Event, tenantI
 		return nil
 	}
 	if err != nil {
-		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server maintenance state is unavailable", nil)
+		return httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server maintenance state is unavailable", nil)
 	}
-	return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "A server of this stack is under maintenance", map[string]interface{}{
+	return httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "A server of this stack is under maintenance", map[string]interface{}{
 		"reason": "maintenance_active", "job_id": active.ID, "server_id": active.ServerID,
 	})
 }
@@ -246,6 +246,9 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 	}
 	jobID, err := h.orch.EnqueueStackKitLifecycle(e.Request.Context(), normalized)
 	if err != nil {
+		if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+			return refusal
+		}
 		if errors.Is(err, controlplane.ErrNotFound) {
 			return httpx.NotFound(e, "Stack or agent not found")
 		}

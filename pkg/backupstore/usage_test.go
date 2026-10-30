@@ -102,7 +102,7 @@ func TestUsageNotMeasuredIsNotZeroUsage(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).
 		WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT bucket, stored_bytes, object_count, measured_at").
 		WithArgs("tenant-a", "stack-a").
@@ -126,7 +126,7 @@ func TestRecordPersistsUnderTenantContext(t *testing.T) {
 	measuredAt := time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true)")).
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config($1, $2, true), set_config('kombify.ctx_token', '', true)")).
 		WithArgs(custodyTenantGUC, "tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("INSERT INTO stack_backup_usage").
 		WithArgs("tenant-a", "stack-a", "skbk-stack-a", int64(4096), int64(2)).

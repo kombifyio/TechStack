@@ -1,5 +1,6 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
+import { fillSecret } from "./secret-input";
 import {
   getTechStackTestUser,
   requireTechStackTestUser,
@@ -280,15 +281,17 @@ export async function login(page: Page, email?: string, password?: string) {
   const existingEmail = page.getByTestId("windows-local-existing-email");
   if (await existingEmail.isVisible().catch(() => false)) {
     await existingEmail.fill(credentials.email);
-    await page
-      .getByTestId("windows-local-existing-password")
-      .fill(credentials.password);
+    await fillSecret(
+      page.getByTestId("windows-local-existing-password"),
+      credentials.password,
+    );
     await page.getByTestId("windows-local-existing-submit").click();
   } else {
     await page.getByTestId("windows-local-admin-email").fill(credentials.email);
-    await page
-      .getByTestId("windows-local-admin-password")
-      .fill(credentials.password);
+    await fillSecret(
+      page.getByTestId("windows-local-admin-password"),
+      credentials.password,
+    );
     await page.getByTestId("windows-local-setup-submit").click();
   }
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });

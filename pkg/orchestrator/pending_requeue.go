@@ -170,15 +170,35 @@ func (o *Orchestrator) RequeuePendingJobs(ctx context.Context) (int, error) {
 }
 
 func (o *Orchestrator) requeueTenantPendingJobs(ctx context.Context, tenantID string, now time.Time) (int, int) {
-	rows, err := o.jobStore.ListPendingJobs(ctx, tenantID, pendingJobPage)
+	var rows []controlplane.Job
+	var err error
+	reader, scoped := o.jobStore.(interface {
+		ListPendingNonBackupJobs(context.Context, string, int) ([]controlplane.Job, error)
+	})
+	if !o.ownsJobType(jobs.JobTypeBackup) && scoped {
+		rows, err = reader.ListPendingNonBackupJobs(ctx, tenantID, pendingJobPage)
+	} else {
+		rows, err = o.jobStore.ListPendingJobs(ctx, tenantID, pendingJobPage)
+	}
 	if err != nil {
 		o.log.Warn("pending_jobs_list_failed", "tenant_id", tenantID, "error", err)
 		return 0, 0
 	}
+	return o.requeuePendingJobRows(ctx, tenantID, now, rows, true)
+}
+
+func (o *Orchestrator) requeuePendingJobRows(ctx context.Context, tenantID string, now time.Time, rows []controlplane.Job, checkRecoveryWindow bool) (int, int) {
+	var err error
 	requeued := 0
 	skipped := 0
 	for index := range rows {
 		row := rows[index]
+		if !o.ownsJobType(jobs.JobType(row.Type)) {
+			continue
+		}
+		if _, queued := o.queue.Get(row.ID); queued {
+			continue
+		}
 		row, err = o.hydratePendingOriginalRestore(ctx, row)
 		if err != nil {
 			skipped++
@@ -203,7 +223,7 @@ func (o *Orchestrator) requeueTenantPendingJobs(ctx context.Context, tenantID st
 			o.log.Warn("pending_job_requeue_skipped_native_retry_binding", "job_id", row.ID, "stack_id", row.StackID, "error", err)
 			continue
 		}
-		if row.CreatedAt.Before(now.Add(-pendingJobRecoveryWindow)) {
+		if checkRecoveryWindow && row.CreatedAt.Before(now.Add(-pendingJobRecoveryWindow)) {
 			skipped++
 			o.log.Warn("pending_job_requeue_skipped_stale",
 				"job_id", row.ID, "stack_id", row.StackID, "type", row.Type,

@@ -17,7 +17,6 @@ import (
 	"sync"
 
 	"github.com/kombifyio/techstack/internal/gocommon/authsession"
-	"github.com/getsentry/sentry-go"
 
 	"github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -78,7 +77,7 @@ func RecordRecovered(e *httpx.Event, fromTenant, toTenant, rung string) {
 	if counter != nil {
 		counter(tenantLabel(fromTenant), "recovered")
 	}
-	captureSentry(e, sentry.LevelInfo, RecoveredMessage, map[string]string{
+	captureSentry(e, "info", RecoveredMessage, map[string]string{
 		"reason_code":    ReasonCode,
 		"from_tenant_id": tenantLabel(fromTenant),
 		"to_tenant_id":   tenantLabel(toTenant),
@@ -108,7 +107,7 @@ func Denial(e *httpx.Event, tenantID string, cause error) *httpx.APIError {
 	if counter != nil {
 		counter(tenantLabel(tenantID), "reauth_required")
 	}
-	captureSentry(e, sentry.LevelWarning, ReasonCode, map[string]string{
+	captureSentry(e, "warning", ReasonCode, map[string]string{
 		"reason_code": ReasonCode,
 		"tenant_id":   tenantLabel(tenantID),
 	})
@@ -141,23 +140,4 @@ func tenantLabel(tenantID string) string {
 		return tenantID
 	}
 	return "unknown"
-}
-
-func captureSentry(e *httpx.Event, level sentry.Level, message string, tags map[string]string) {
-	hub := sentry.CurrentHub()
-	if e != nil && e.Request != nil {
-		if ctxHub := sentry.GetHubFromContext(e.Request.Context()); ctxHub != nil {
-			hub = ctxHub
-		}
-	}
-	if hub == nil || hub.Client() == nil {
-		return // self-hosted no-op path (empty SENTRY_DSN)
-	}
-	hub.WithScope(func(scope *sentry.Scope) {
-		scope.SetLevel(level)
-		for key, value := range tags {
-			scope.SetTag(key, value)
-		}
-		hub.CaptureMessage(message)
-	})
 }

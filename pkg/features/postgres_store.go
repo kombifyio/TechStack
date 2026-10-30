@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/kombifyio/techstack/pkg/identity"
 )
 
-const featureTenantGUC = "app.tenant_id"
-
-type PostgresStore struct {
-	db *sql.DB
-}
+type PostgresStore struct{ db *sql.DB }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
@@ -139,8 +136,8 @@ func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", featureTenantGUC, tenantID); err != nil {
-		return fmt.Errorf("set tenant guc: %w", err)
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
+		return err
 	}
 	if err := fn(tx); err != nil {
 		return err

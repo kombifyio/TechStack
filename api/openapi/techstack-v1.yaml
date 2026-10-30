@@ -3687,6 +3687,104 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /api/v1/workers/{id}/tenant-handoff:
+    post:
+      operationId: confirmWorkerTenantHandoff
+      x-kombify-cli: { command: "workers tenant-handoff confirm", args: [id] }
+      x-kombify-mcp: false # owner decision that releases a retired server's command evidence, not an agent tool
+      tags: [Workers]
+      summary: Confirm the handoff of a retired server's command evidence
+      description: >-
+        The owner, as custodian of a detached or retired server, confirms that the command evidence its Guard still
+        holds (journal entries, outcomes and identity state) may leave the server by `export` (an archive the operator
+        takes off the server) or `quarantine` (a root-only directory outside the Guard state). The response shows a
+        one-time `confirmation` exactly once and is valid for 72 hours. It is bound to the host key the worker used. The
+        operator passes it to `techstack agent handoff --server --confirmation-file`, which has the control plane verify
+        it for this server's key, then moves and securely removes the evidence and records a receipt. Pairing a server whose host key served another tenant, or that declares another tenant's evidence,
+        is refused (409 `tenant_handoff_required`) until a receipt of that tenant is consumed. A receipt is consumed
+        once, by the pairing that proves the confirmed key, before expiry; only that pairing may repeat it within 15
+        minutes (409 `tenant_handoff_invalid` otherwise). Requires the
+        owner and a fresh multi-factor sign-in (at most 300 seconds old). 409 `tenant_handoff_worker_active` while the
+        worker is not revoked or rejected, 409 `tenant_handoff_unbindable` for a worker that never bound a host key. A worker of another tenant or owner is 404.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [disposition]
+              properties:
+                disposition: { type: string, enum: [export, quarantine] }
+      responses:
+        "201":
+          description: The handoff is confirmed; the confirmation is shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [handoff_id, worker_id, disposition, expires_at, confirmation]
+                    properties:
+                      handoff_id: { type: string }
+                      worker_id: { type: string }
+                      disposition: { type: string, enum: [export, quarantine] }
+                      expires_at: { type: string, format: date-time }
+                      confirmation: { type: string }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/v1/workers/tenant-handoffs/verify:
+    post:
+      operationId: verifyWorkerTenantHandoff
+      x-kombify-cli: { command: "workers tenant-handoff verify", hidden: true }
+      x-kombify-mcp: false # node agent protocol authenticated by a one-time confirmation and a host-key proof, not a user agent tool
+      tags: [Workers]
+      summary: Check a handoff confirmation before the server removes anything
+      description: >-
+        Called by `techstack agent handoff` before it moves or removes any command evidence. The request carries the
+        one-time confirmation and a DPoP proof signed by the server's host key and bound to the confirmation. 200
+        only for an unconsumed, unexpired confirmation that the prior owner issued for exactly that key; otherwise
+        409 `tenant_handoff_invalid`. Nothing is consumed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmation]
+              properties:
+                confirmation: { type: string }
+      responses:
+        "200":
+          description: The confirmation is valid for this server
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      verified: { type: boolean }
+                      handoff_id: { type: string }
+                      disposition: { type: string, enum: [export, quarantine] }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /api/v1/workers/{id}/identity/rotate:
     post:
       operationId: rotateWorkerIdentityKey
@@ -4516,6 +4614,134 @@ paths:
                       completed: { type: integer, minimum: 0 }
                       failed: { type: integer, minimum: 0 }
                       canceled: { type: integer, minimum: 0 }
+
+  /api/v1/failures/signatures:
+    get:
+      operationId: listFailureSignatures
+      x-kombify-cli: { command: "failures signatures" }
+      tags: [Jobs]
+      summary: List the tenant's failure signatures
+      description: |
+        Returns the caller tenant's own failed operations normalized into
+        failure signatures, most recently seen first. A signature is the
+        SHA-256 over the normalizer version, component, phase, error code and
+        a template in which every variable token (timestamps, IDs, addresses,
+        host names, paths, user names, quoted values, numbers) is replaced.
+        No raw error text is stored or returned, and another tenant's
+        occurrences are never visible.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+        - name: window_days
+          in: query
+          required: false
+          description: Length of the growth window; recent_occurrences counts the last window, previous_occurrences the one before it.
+          schema:
+            type: integer
+            default: 7
+            minimum: 1
+            maximum: 90
+      responses:
+        "200":
+          description: The tenant's failure signatures
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FailureSignatureListEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/failures/outcomes:
+    post:
+      operationId: recordFailureOutcome
+      x-kombify-cli: { command: "failures outcome record" }
+      tags: [Jobs]
+      summary: Record the outcome of an applied failure resolution
+      description: |
+        Attributes a finished procedure job of the caller tenant to the
+        failure resolution it applied and the failure signature it was
+        applied to. The outcome is the job's terminal state (completed is
+        succeeded, failed is failed), never a value the caller sends; a job
+        that is still running or was canceled is refused. The context is the
+        one of the tenant's own latest occurrence of that signature. The
+        record stays in the tenant; repeating the call for the same
+        resolution and job returns the stored record.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordFailureOutcomeRequest"
+      responses:
+        "200":
+          description: The outcome was already recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FailureOutcomeEnvelope"
+        "201":
+          description: The outcome was recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FailureOutcomeEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    get:
+      operationId: listFailureOutcomes
+      x-kombify-cli: { command: "failures outcomes" }
+      tags: [Jobs]
+      summary: List the tenant's failure resolution outcomes
+      description: |
+        Returns the caller tenant's own recorded resolution outcomes, newest
+        first, and the succeeded and failed counts per resolution and
+        signature. Another tenant's outcomes are never visible.
+      parameters:
+        - name: resolution_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: The tenant's failure resolution outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FailureOutcomeListEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ============================================================
   # DISCOVERY
@@ -10881,6 +11107,196 @@ components:
             total_pages:
               type: integer
               minimum: 0
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    FailureSignature:
+      type: object
+      required:
+        [
+          signature,
+          normalizer_version,
+          component,
+          phase,
+          error_code,
+          latest_template,
+          latest_exit_status,
+          occurrences,
+          targets,
+          first_seen,
+          last_seen,
+          recent_occurrences,
+          previous_occurrences,
+          latest_stackkit_module,
+        ]
+      properties:
+        signature:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        normalizer_version:
+          type: string
+          example: fk-normalizer/v2
+        component:
+          type: string
+          description: Failing capability, for example techstack.stackkit.deploy.
+        phase:
+          type: string
+          description: Step in which the operation failed; empty when unknown.
+        error_code:
+          type: string
+          description: Most specific recorded reason code; empty when unknown.
+        latest_template:
+          type: string
+          maxLength: 512
+          description: Normalized error template of the most recent occurrence.
+        latest_exit_status:
+          type: integer
+          nullable: true
+        occurrences:
+          type: integer
+          minimum: 1
+        targets:
+          type: integer
+          minimum: 0
+          description: Distinct StackKit deployments with this signature.
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        recent_occurrences:
+          type: integer
+          minimum: 0
+          description: Occurrences within the last window_days.
+        previous_occurrences:
+          type: integer
+          minimum: 0
+          description: Occurrences within the window_days before the last window.
+        latest_stackkit_module:
+          type: string
+          description: StackKit module of the most recent occurrence; empty when unknown.
+
+    FailureSignatureListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [items, normalizer_version]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/FailureSignature"
+            normalizer_version:
+              type: string
+            window_days:
+              type: integer
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    RecordFailureOutcomeRequest:
+      type: object
+      required: [resolution_id, signature, procedure, job_id]
+      properties:
+        resolution_id:
+          type: string
+          format: uuid
+          description: Id of the failure resolution that was applied (find_similar_failures).
+        signature:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Failure signature the resolution was applied to; the tenant must have an occurrence of it.
+        procedure:
+          type: string
+          pattern: "^(stackkits|techstack):[a-z0-9][a-z0-9._:/@#-]{1,199}$"
+          example: stackkits:nextcloud/repair-data-permissions
+          description: Product procedure reference of the applied fix step.
+        job_id:
+          type: string
+          maxLength: 128
+          description: The tenant's job that ran the procedure.
+
+    FailureOutcome:
+      type: object
+      required: [resolution_id, signature, procedure, job_id, outcome, context, completed_at, recorded_at]
+      properties:
+        resolution_id:
+          type: string
+          format: uuid
+        signature:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        procedure:
+          type: string
+        job_id:
+          type: string
+        stack_id:
+          type: string
+        outcome:
+          type: string
+          enum: [succeeded, failed]
+        context:
+          type: object
+          description: Coarse context dimensions of the failure (stackkit_module, os, provider, ...); absent when unknown.
+          additionalProperties:
+            type: string
+        completed_at:
+          type: string
+          format: date-time
+        recorded_at:
+          type: string
+          format: date-time
+
+    FailureOutcomeEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [outcome, created]
+          properties:
+            outcome:
+              $ref: "#/components/schemas/FailureOutcome"
+            created:
+              type: boolean
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    FailureOutcomeListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [items, resolutions]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/FailureOutcome"
+            resolutions:
+              type: array
+              items:
+                type: object
+                required: [resolution_id, signature, succeeded, failed, last_outcome]
+                properties:
+                  resolution_id:
+                    type: string
+                    format: uuid
+                  signature:
+                    type: string
+                    pattern: "^[0-9a-f]{64}$"
+                  succeeded:
+                    type: integer
+                    minimum: 0
+                  failed:
+                    type: integer
+                    minimum: 0
+                  last_outcome:
+                    type: string
+                    format: date-time
         meta:
           $ref: "#/components/schemas/ResponseMeta"
 

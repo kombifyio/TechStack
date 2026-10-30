@@ -21,8 +21,10 @@
     Plus,
     Server,
     Smartphone,
+    Box,
   } from "@lucide/svelte";
   import { PageHeader } from "@kombiverselabs/ui/shell";
+  import EdgeDeviceSettings from "#lib/components/dashboard/EdgeDeviceSettings.svelte";
   import { SegmentedControl } from "@kombiverselabs/ui/primitives";
   import {
     ServerCard,
@@ -46,7 +48,11 @@
   import Button from "#lib/components/ui/Button.svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
-  import { addServerHref, serverDetailHref } from "#lib/server-links.js";
+  import {
+    addServerHref,
+    placeUseCasesHref,
+    serverDetailHref,
+  } from "#lib/server-links.js";
   import { listCanonicalServers } from "#lib/api/registry.js";
   import { listWorkers } from "#lib/api/workers.js";
   import { getHomelab } from "#lib/api/homelab.js";
@@ -126,6 +132,7 @@
   }
 
   function deviceIcon(entry: DeviceEntry) {
+    if (entry.edge) return Box;
     if (entry.platform === "android" || entry.platform === "ios")
       return Smartphone;
     if (entry.platform === "windows" || entry.platform === "linux")
@@ -185,6 +192,19 @@
   }
 
   function deviceFacts(entry: DeviceEntry): EntityFact[] {
+    if (entry.edge)
+      return [
+        { label: tr("box.board"), value: entry.edge.board },
+        { label: tr("box.firmware"), value: entry.edge.firmware_version },
+        {
+          label: tr("nodes.fact.address"),
+          value: entry.edge.local_ip ?? tr("box.notReported"),
+        },
+        {
+          label: tr("nodes.fact.lastSeen"),
+          value: formatRelative(entry.edge.last_seen_at),
+        },
+      ];
     return [
       { label: tr("nodes.fact.os"), value: platformLabel(entry.platform) },
       entry.lastSeen && {
@@ -269,12 +289,7 @@
       {state.message}
     </p>
   {:else if state.state === "error"}
-    <ErrorCallout
-      message={state.message}
-      {onRetry}
-      {retrying}
-      testId={testId}
-    />
+    <ErrorCallout message={state.message} {onRetry} {retrying} {testId} />
   {:else if state.items.length === 0}
     <div
       class="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border p-5"
@@ -303,6 +318,15 @@
         >
           <Plus class="h-4 w-4" />
           {tr("servers.add")}
+        </Button>
+        <!-- Use cases go onto these servers first; a new one is the last option. -->
+        <Button
+          variant="secondary"
+          testId="servers-add-use-cases"
+          onclick={() => void goto(placeUseCasesHref())}
+        >
+          <Plus class="h-4 w-4" />
+          {tr("layout.addUseCases.entry")}
         </Button>
         <SegmentedControl
           items={VIEWS.map((value) => ({
@@ -405,8 +429,12 @@
             {size}
             name={entry.name}
             formFactor={deviceFormFactorFromPlatform(entry.platform)}
-            model={platformLabel(entry.platform) || undefined}
-            lastSeen={entry.lastSeen ? formatRelative(entry.lastSeen) : undefined}
+            model={entry.edge
+              ? entry.detail
+              : platformLabel(entry.platform) || undefined}
+            lastSeen={entry.lastSeen
+              ? formatRelative(entry.lastSeen)
+              : undefined}
             clients={entry.clients}
             presence={presence(entry.online)}
             selected={entry.id === selectedDeviceId}
@@ -415,6 +443,14 @@
           />
         {/snippet}
       </EntityCollection>
+    {/if}
+    {#if devices.state === "ready"}
+      {#each devices.notices ?? [] as notice (notice)}<p
+          role="status"
+          class="text-sm text-muted-foreground"
+        >
+          {notice}
+        </p>{/each}
     {/if}
   </section>
 </div>
@@ -431,5 +467,17 @@
     tags={selectedDevice.clients}
     facts={deviceFacts(selectedDevice)}
     {labels}
-  />
+  >
+    {#if selectedDevice.edge}
+      {#key selectedDevice.id}
+        <EdgeDeviceSettings
+          device={selectedDevice.edge}
+          onremoved={() => {
+            selectDevice(null);
+            void retryDevices();
+          }}
+        />
+      {/key}
+    {/if}
+  </EntityDetailSheet>
 {/if}

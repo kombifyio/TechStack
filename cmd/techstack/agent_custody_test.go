@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -65,7 +66,13 @@ func TestGuardDaemonKeepsLifecycleInAdmittedCustody(t *testing.T) {
 	if err := os.WriteFile(outside, sentinel, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(other, dir); err != nil {
+	if runtime.GOOS == "windows" {
+		// A directory junction exercises the same redirected-root attack
+		// without requiring Windows Developer Mode or symlink privileges.
+		if output, err := exec.Command("cmd.exe", "/c", "mklink", "/J", dir, other).CombinedOutput(); err != nil {
+			t.Fatalf("replace custody with a junction: %v: %s", err, output)
+		}
+	} else if err := os.Symlink(other, dir); err != nil {
 		t.Fatal(err)
 	}
 	// The heartbeat producer must create its child beneath the admitted root,

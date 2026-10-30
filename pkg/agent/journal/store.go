@@ -749,23 +749,86 @@ func (s *Store) Decommission() (kept int, err error) {
 		}
 		return len(s.entries), s.compactLocked()
 	}
+	return 0, s.destroyLogLocked()
+}
+
+// destroyLogLocked overwrites the log with zeros, syncs it and removes it.
+func (s *Store) destroyLogLocked() error {
 	if s.file != nil {
 		_ = s.file.Close()
 		s.file = nil
 	}
 	path := logName
-	if info, statErr := s.root.Stat(path); statErr == nil && info.Mode().IsRegular() && info.Size() <= 256<<20 {
+	if info, statErr := s.root.Stat(path); statErr == nil && info.Mode().IsRegular() {
 		if handle, openErr := privatefs.OpenFile(s.root, path, os.O_WRONLY, 0); openErr == nil {
-			_, _ = handle.Write(make([]byte, info.Size()))
-			_ = handle.Sync()
+			_ = zeroFile(handle, info.Size())
 			_ = handle.Close()
 		}
 	}
 	if removeErr := s.root.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-		return 0, removeErr
+		return removeErr
 	}
 	s.size = 0
-	return 0, nil
+	return nil
+}
+
+// HandOff removes every entry of tenantID, whatever its state, after the
+// caller archived them under a custodian-confirmed cross-tenant handoff
+// (guardbinding.TenantHandoffReceipt). Deduplication tombstones go as well: a
+// handoff runs only on a decommissioned Guard, which admits nothing until it
+// is paired again. When no entry of another tenant remains the log is
+// overwritten and destroyed; otherwise it is rewritten without the removed
+// entries. It returns how many entries were removed.
+func (s *Store) HandOff(tenantID string) (removed int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.denied != nil {
+		return 0, s.denied
+	}
+	if strings.TrimSpace(tenantID) == "" {
+		return 0, errors.New("a handoff names the prior tenant")
+	}
+	for id, e := range s.entries {
+		if e.Intent.TenantID == tenantID {
+			delete(s.entries, id)
+			removed++
+		}
+	}
+	s.tombs = map[string]tombstone{}
+	if len(s.entries) == 0 {
+		return removed, s.destroyLogLocked()
+	}
+	if s.file == nil {
+		return removed, errors.New("journal is closed")
+	}
+	// The rewrite replaces the log by rename, which would leave the removed
+	// payloads in the old file's blocks: keep a handle on the old file and
+	// overwrite it once the rewrite is durable.
+	old, err := privatefs.OpenFile(s.root, logName, os.O_WRONLY, 0)
+	if err != nil {
+		return removed, err
+	}
+	defer old.Close()
+	info, err := old.Stat()
+	if err != nil {
+		return removed, err
+	}
+	if err := s.compactLocked(); err != nil {
+		return removed, err
+	}
+	return removed, zeroFile(old, info.Size())
+}
+
+func zeroFile(handle *os.File, size int64) error {
+	zeros := make([]byte, 1<<20)
+	for offset := int64(0); offset < size; {
+		chunk := min(size-offset, int64(len(zeros)))
+		if _, err := handle.WriteAt(zeros[:chunk], offset); err != nil {
+			return err
+		}
+		offset += chunk
+	}
+	return handle.Sync()
 }
 
 // Compact drops acknowledged entries into deduplication tombstones, drops

@@ -73,6 +73,7 @@ func RegisterCRUDRuntimeRoutes(r *httpx.Router, runtime auth.RuntimeStore, orch 
 	// POST /api/v1/stacks/{id}/stackkit/operations - Dispatch one closed,
 	// typed StackKits lifecycle operation to an enrolled mTLS agent.
 	r.POST("/api/v1/stacks/{id}/stackkit/operations", h.startStackKitLifecycle)
+	h.registerWorkloadRelocationRoutes(r)
 
 	// POST /api/v1/stacks/{id}/resume-enrollment - Resume one overdue
 	// provider, Guard, or enrollment wait on its already-created exact managed VM.

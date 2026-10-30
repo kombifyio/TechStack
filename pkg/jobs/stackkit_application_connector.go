@@ -435,6 +435,17 @@ func ApplicationConnectorRefreshRequest(original *controlplane.Job, service *con
 	return applicationConnectorRefreshRequest(original, service, *release)
 }
 
+func ApplicationConnectorRefreshRequestForStack(ctx context.Context, original *controlplane.Job, service *controlplane.ServiceRuntime) (StackKitLifecycleRequest, error) {
+	if service == nil {
+		return StackKitLifecycleRequest{}, fmt.Errorf("connector source is unavailable")
+	}
+	release, err := TargetStackKitReleaseForStack(ctx, service.TenantID, service.StackID)
+	if err != nil || release == nil {
+		return StackKitLifecycleRequest{}, fmt.Errorf("admitted connector release unavailable")
+	}
+	return applicationConnectorRefreshRequest(original, service, *release)
+}
+
 func applicationConnectorRefreshRequest(original *controlplane.Job, service *controlplane.ServiceRuntime, release stackkitrelease.Release) (StackKitLifecycleRequest, error) {
 	var empty StackKitLifecycleRequest
 	if original == nil || service == nil || original.State != "completed" || original.TenantID != service.TenantID || original.StackID != service.StackID || service.MutationLock.Locked() {

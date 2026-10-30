@@ -52,6 +52,16 @@ func (h workerRouteHandlers) issueRuntimeAgentToken() (string, error) {
 	return workerauth.OpaqueToken()
 }
 
+func (h workerRouteHandlers) writeWorkerEnrollmentResponse(e *httpx.Event, ctx workerEnrollmentContext) error {
+	response := h.workerEnrollmentResponse(e, ctx)
+	if h.bindingSigner != nil && strings.TrimSpace(ctx.AgentToken) != "" {
+		if _, ok := response["binding_signing_keys"]; !ok {
+			return httpx.Error(e, http.StatusServiceUnavailable, "BINDING_KEY_UNAVAILABLE", "Guard enrollment requires its native binding signing key", nil)
+		}
+	}
+	return httpx.Success(e, http.StatusOK, response)
+}
+
 func (h workerRouteHandlers) workerEnrollmentResponse(e *httpx.Event, ctx workerEnrollmentContext) map[string]any {
 	ctx.WorkerID = strings.TrimSpace(ctx.WorkerID)
 	ctx.LeaseID = strings.TrimSpace(ctx.LeaseID)
@@ -121,11 +131,13 @@ func (h workerRouteHandlers) workerEnrollmentResponse(e *httpx.Event, ctx worker
 		resp["agent_token"] = strings.TrimSpace(ctx.AgentToken)
 		// Only the Guard that receives this worker's credential learns its
 		// binding key. Without it the Guard stays unpinned, as before signing.
-		signer, err := h.bindingSignerFor(ctx.TenantID, ctx.RuntimeAgentID)
+		signer, err := h.bindingSignerFor(e.Request.Context(), ctx.TenantID, ctx.RuntimeAgentID)
 		if err != nil {
 			slog.Error("guard_binding_key_unavailable", "tenant_id", ctx.TenantID, "runtime_agent_id", ctx.RuntimeAgentID, "error", err)
-		} else if keys := signer.PublicKeys(); len(keys) > 0 {
-			resp["binding_signing_keys"] = keys
+		} else if signer != nil {
+			if keys := signer.PublicKeys(); len(keys) > 0 {
+				resp["binding_signing_keys"] = keys
+			}
 		}
 	}
 	if ctx.GuardIdentity != nil {

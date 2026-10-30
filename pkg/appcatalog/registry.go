@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 const (
@@ -78,8 +80,13 @@ func (e *tagCacheEntry) ttl() time.Duration {
 	return updateCheckTagTTL
 }
 
-// NewUpdateChecker returns a checker with strict per-request timeouts.
+// NewUpdateChecker returns a checker with strict per-request timeouts. Under
+// Full Local it returns nil: a registry lookup would send image names to a
+// public registry, so every comparison reports update_check_disabled instead.
 func NewUpdateChecker() *UpdateChecker {
+	if fulllocal.Active() {
+		return nil
+	}
 	return &UpdateChecker{
 		client:    &http.Client{Timeout: updateCheckRequestTime},
 		now:       func() time.Time { return time.Now().UTC() },

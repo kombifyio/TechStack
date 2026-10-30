@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 func (s *PostgresStore) UpsertTenant(ctx context.Context, tenant Tenant) (*Tenant, error) {
@@ -158,7 +160,7 @@ func (s *PostgresStore) UpsertUser(ctx context.Context, user User) (*User, error
 	}()
 	// The user writes only its own row: this scope is what the techstack_users
 	// self policy matches once that table is FORCE-RLS (D-2026-10-22-02).
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", userGUC, userID); err != nil {
+	if err := tenantcontext.ApplyUser(ctx, tx, userID); err != nil {
 		return nil, err
 	}
 
@@ -315,7 +317,7 @@ func (s *PostgresStore) ListMembershipsByUser(ctx context.Context, userID string
 		}
 	}()
 
-	if _, gucErr := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", userGUC, userID); gucErr != nil {
+	if gucErr := tenantcontext.ApplyUser(ctx, tx, userID); gucErr != nil {
 		return nil, fmt.Errorf("set user guc: %w", gucErr)
 	}
 	rows, err := tx.QueryContext(ctx, `

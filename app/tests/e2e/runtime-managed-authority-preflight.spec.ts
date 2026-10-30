@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { requireTechStackTestUser } from "../../src/lib/testing/techstack-test-users";
 
 import {
   authenticateRuntimeUser,
@@ -116,6 +117,32 @@ function assertFreshCloudClaims(
   expect(issuedAt as number).toBeGreaterThanOrEqual(issuedAfterSeconds);
 }
 
+async function assertAuthenticatedCloudOwner(
+  token: string,
+  claims: Record<string, unknown>,
+): Promise<void> {
+  const issuer = (process.env.TECHSTACK_AUTH_CLOUD_ISSUER ?? "https://login.kombify.io").replace(/[/]+$/, "");
+  const expectedUser = requireTechStackTestUser("cloud");
+  expect(
+    claims.iss === issuer || claims.iss === issuer + "/",
+    "The Gateway token must name the configured Auth0 authority",
+  ).toBe(true);
+  const response = await fetch(requireLiveProductURL(issuer) + "/userinfo", {
+    headers: { Authorization: `Bearer ${token}` },
+    redirect: "error",
+    signal: AbortSignal.timeout(15_000),
+  });
+  expect(response.ok, "Auth0 UserInfo must validate the actual Gateway bearer").toBe(true);
+  const user = await response.json() as Record<string, unknown>;
+  const subjectMatches = typeof user.sub === "string" && user.sub.length > 0 && user.sub === claims.sub;
+  const fixtureMatches = typeof user.email === "string" &&
+    user.email.trim().toLowerCase() === expectedUser.email.trim().toLowerCase();
+  expect(
+    subjectMatches && fixtureMatches && user.email_verified === true,
+    "The authenticated owner must match the selected canonical shared fixture",
+  ).toBe(true);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -143,6 +170,7 @@ for (const providerID of selectedManagedProviders()) {
     const gateway = await captureGatewayApiSession(page);
     const claims = decodeGatewayTokenClaims(gateway.token);
     assertFreshCloudClaims(claims, providerID, issuedAfterSeconds);
+    await assertAuthenticatedCloudOwner(gateway.token, claims);
 
     await test.info().attach(`managed-runtime-claims-${providerID}.json`, {
       body: Buffer.from(
@@ -152,10 +180,11 @@ for (const providerID of selectedManagedProviders()) {
           fresh_auth0_token: {
             token_material_omitted: true,
             subject_omitted: true,
+            userinfo_verified_owner_matches_selected_fixture: true,
             issued_after_test_start: true,
           },
           claims: {
-            tier: "ayn",
+            tier: managedServerTiers[String(claims[tierClaim])],
             required_entitlements: [
               ...commonEntitlements,
               `techstack.managed.runtime.${providerID}`,

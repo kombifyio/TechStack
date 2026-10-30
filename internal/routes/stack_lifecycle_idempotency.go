@@ -18,6 +18,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/internal/providercontrol"
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -466,6 +467,16 @@ func (h stackLifecycleRouteHandlers) admitManagedRuntimeServer(
 	return result, nil
 }
 
+func managedRuntimeCapacityPolicyDenial(cause error, effective managedRuntimeEffectiveIntent) *monthlyruntime.CapacityPolicyDenialError {
+	var denial *monthlyruntime.CapacityPolicyDenialError
+	if !errors.As(cause, &denial) || denial == nil ||
+		denial.TenantID != effective.TenantID || denial.OwnerSubjectID != effective.OwnerSubjectID ||
+		denial.ProviderID != effective.ProviderID {
+		return nil
+	}
+	return denial
+}
+
 func writeManagedRuntimeAdmissionError(
 	e *httpx.Event,
 	stack managedRuntimeStackRef,
@@ -473,6 +484,21 @@ func writeManagedRuntimeAdmissionError(
 	job *controlplane.Job,
 	admissionErr error,
 ) error {
+	if refusal := tenantguard.ExecutionRefusal(admissionErr); refusal != nil {
+		return refusal
+	}
+	if denial := managedRuntimeCapacityPolicyDenial(admissionErr, effective); denial != nil {
+		details := denial.Details()
+		details["stack_id"] = effective.StackID
+		details[managedRuntimeDetailsJobIDKey] = job.ID
+		details["job_state"] = "running"
+		details["retry_scope"] = "exact_same_idempotency_key"
+		details["attempt_outcome"] = "rejected_before_native_write"
+		if guidance, ok := details["user_guidance"].(map[string]any); ok {
+			guidance["body"] = fmt.Sprint(guidance["body"]) + " This attempt returned before its own native write. The existing running job remains the only reconciliation identity; retry only with the same Idempotency-Key."
+		}
+		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden, denial.Error(), details)
+	}
 	var capacityErr *providercontrol.ManagedRuntimeCapacityExceededError
 	if errors.As(admissionErr, &capacityErr) {
 		return writeManagedRuntimeAdmissionCapacityRecheckDenial(e, effective, job, capacityErr)
@@ -767,6 +793,15 @@ func (h stackLifecycleRouteHandlers) preflightManagedRuntimeServer(
 	err := preflight.PreflightCreateOrBindLease(e.Request.Context(), managedRuntimeLeaseRequest(effective, operationKey))
 	if err == nil {
 		return false, nil
+	}
+	if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+		return true, refusal
+	}
+	if denial := managedRuntimeCapacityPolicyDenial(err, effective); denial != nil {
+		details := denial.Details()
+		details["stack_id"] = effective.StackID
+		appendManagedRuntimePreflightState(details, persistedJobID)
+		return true, httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden, denial.Error(), details)
 	}
 	var capacity *providercontrol.ManagedRuntimeCapacityExceededError
 	if errors.As(err, &capacity) && capacity != nil &&

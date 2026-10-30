@@ -4,6 +4,35 @@
 // i18n.ts.
 export const creationFlowMessages = {
   en: {
+    "placement.chooseTitle": "Where should your next use case run?",
+    "placement.chooseBody":
+      "Use one of your StackKits or enrolled servers, or set up a new server. You choose the use cases next.",
+    "placement.chooseNext": "Choose its use cases in the next step",
+    "placement.leased":
+      "This managed server must keep its current provider binding. Open its existing deployment.",
+    "placement.restricted":
+      "Changes on this server are unavailable. Review its access and readiness.",
+    "placement.title": "Where should this use case run?",
+    "placement.body":
+      "Use an existing StackKit and its servers, or set up a server. Your choices come with you.",
+    "placement.loading": "Checking your existing targets…",
+    "placement.failed":
+      "Your targets could not be checked. Try again, or choose a new server.",
+    "placement.change": "Change target",
+    "placement.unknownNodes": "Server details unavailable",
+    "placement.compatible": "Verified to fit on these servers",
+    "placement.unavailable":
+      "This target cannot be recommended yet. Review its setup and capacity.",
+    "placement.new": "Set up a new server",
+    "placement.newBody":
+      "Keep your use case and answers and choose where the new server comes from.",
+    "placement.continue": "Continue with this target",
+    "placement.install": "Install a StackKit on {name}",
+    "placement.installBody":
+      "This enrolled server has no StackKit yet. Review the setup before installing.",
+    "placement.disconnected":
+      "This server must reconnect before you can install a StackKit.",
+
     "common.retry": "Try again",
     "ui.recreate.recreating": "Recreating…",
     "ui.theme.toLight": "Switch to light theme",
@@ -15,6 +44,8 @@ export const creationFlowMessages = {
     "wizard.stepper.label": "Setup steps",
     "wizard.stepper.completed": "completed",
     "wizard.stepper.position": "Step {current} of {total}: {step}",
+    "wizard.stepper.goTo": "Go to {step}",
+    "wizard.stepper.locked": "Complete the steps before this one first",
 
     "wizard.validation.serverSelection":
       "Choose where your server comes from to continue.",
@@ -74,6 +105,35 @@ export const creationFlowMessages = {
       "If it keeps happening, contact support and share the technical details",
   },
   de: {
+    "placement.chooseTitle": "Wo soll dein nächster Anwendungsfall laufen?",
+    "placement.chooseBody":
+      "Nutze eines deiner StackKits oder einen verbundenen Server, oder richte einen neuen Server ein. Die Anwendungsfälle wählst du im nächsten Schritt.",
+    "placement.chooseNext": "Die Anwendungsfälle wählst du im nächsten Schritt",
+    "placement.leased":
+      "Dieser verwaltete Server muss seine Anbieterbindung behalten. Öffne sein vorhandenes Deployment.",
+    "placement.restricted":
+      "Änderungen sind auf diesem Server nicht verfügbar. Prüfe Zugriff und Bereitschaft.",
+    "placement.title": "Wo soll dieser Anwendungsfall laufen?",
+    "placement.body":
+      "Nutze ein vorhandenes StackKit mit seinen Servern oder richte einen Server ein. Deine Auswahl bleibt erhalten.",
+    "placement.loading": "Vorhandene Ziele werden geprüft…",
+    "placement.failed":
+      "Deine Ziele konnten nicht geprüft werden. Versuche es erneut oder wähle einen neuen Server.",
+    "placement.change": "Ziel ändern",
+    "placement.unknownNodes": "Serverdetails nicht verfügbar",
+    "placement.compatible": "Passt nachweislich auf diese Server",
+    "placement.unavailable":
+      "Dieses Ziel kann noch nicht empfohlen werden. Prüfe Einrichtung und Kapazität.",
+    "placement.new": "Neuen Server einrichten",
+    "placement.newBody":
+      "Behalte Anwendungsfall und Antworten und wähle, woher der neue Server kommt.",
+    "placement.continue": "Mit diesem Ziel fortfahren",
+    "placement.install": "StackKit auf {name} installieren",
+    "placement.installBody":
+      "Dieser verbundene Server hat noch kein StackKit. Prüfe die Einrichtung vor der Installation.",
+    "placement.disconnected":
+      "Dieser Server muss sich vor der StackKit-Installation wieder verbinden.",
+
     "common.retry": "Erneut versuchen",
     "ui.recreate.recreating": "Wird neu erstellt…",
     "ui.theme.toLight": "Zum hellen Design wechseln",
@@ -85,6 +145,8 @@ export const creationFlowMessages = {
     "wizard.stepper.label": "Einrichtungsschritte",
     "wizard.stepper.completed": "abgeschlossen",
     "wizard.stepper.position": "Schritt {current} von {total}: {step}",
+    "wizard.stepper.goTo": "Zu {step} wechseln",
+    "wizard.stepper.locked": "Schließe zuerst die vorherigen Schritte ab",
 
     "wizard.validation.serverSelection":
       "Wähle, woher dein Server kommt, um weiterzumachen.",
@@ -146,6 +208,35 @@ export const creationFlowMessages = {
       "Falls es wieder passiert, wende dich an den Support und nenne die technischen Details",
   },
   es: {
+    "placement.chooseTitle": "¿Dónde debe ejecutarse tu próximo caso de uso?",
+    "placement.chooseBody":
+      "Usa uno de tus StackKits o servidores registrados, o configura un servidor nuevo. Después eliges los casos de uso.",
+    "placement.chooseNext": "Elige sus casos de uso en el siguiente paso",
+    "placement.leased":
+      "Este servidor gestionado debe conservar su vínculo con el proveedor. Abre su despliegue existente.",
+    "placement.restricted":
+      "Los cambios en este servidor no están disponibles. Revisa su acceso y disponibilidad.",
+    "placement.title": "¿Dónde debe ejecutarse este caso de uso?",
+    "placement.body":
+      "Usa un StackKit existente y sus servidores o configura un servidor. Tus elecciones se conservan.",
+    "placement.loading": "Comprobando tus destinos existentes…",
+    "placement.failed":
+      "No se pudieron comprobar los destinos. Inténtalo de nuevo o elige un servidor nuevo.",
+    "placement.change": "Cambiar destino",
+    "placement.unknownNodes": "Detalles del servidor no disponibles",
+    "placement.compatible": "Compatibilidad verificada con estos servidores",
+    "placement.unavailable":
+      "Este destino aún no se puede recomendar. Revisa su configuración y capacidad.",
+    "placement.new": "Configurar un servidor nuevo",
+    "placement.newBody":
+      "Conserva tu caso de uso y tus respuestas y elige de dónde viene el nuevo servidor.",
+    "placement.continue": "Continuar con este destino",
+    "placement.install": "Instalar un StackKit en {name}",
+    "placement.installBody":
+      "Este servidor registrado aún no tiene StackKit. Revisa la configuración antes de instalarlo.",
+    "placement.disconnected":
+      "Este servidor debe volver a conectarse antes de instalar un StackKit.",
+
     "common.retry": "Reintentar",
     "ui.recreate.recreating": "Recreando…",
     "ui.theme.toLight": "Cambiar al tema claro",
@@ -157,6 +248,8 @@ export const creationFlowMessages = {
     "wizard.stepper.label": "Pasos de la configuración",
     "wizard.stepper.completed": "completado",
     "wizard.stepper.position": "Paso {current} de {total}: {step}",
+    "wizard.stepper.goTo": "Ir a {step}",
+    "wizard.stepper.locked": "Completa primero los pasos anteriores",
 
     "wizard.validation.serverSelection":
       "Elige de dónde viene tu servidor para continuar.",
@@ -217,6 +310,30 @@ export const creationFlowMessages = {
       "Si sigue ocurriendo, ponte en contacto con el soporte y comparte los detalles técnicos",
   },
   "zh-Hans": {
+    "placement.chooseTitle": "你的下一个使用场景应在哪里运行？",
+    "placement.chooseBody":
+      "使用你现有的 StackKit 或已注册的服务器，或设置一台新服务器。接下来再选择使用场景。",
+    "placement.chooseNext": "在下一步中选择它的使用场景",
+    "placement.leased":
+      "此托管服务器必须保留当前的提供商绑定。请打开其现有部署。",
+    "placement.restricted": "此服务器暂不允许更改。请检查访问权限和就绪状态。",
+    "placement.title": "这个使用场景应在哪里运行？",
+    "placement.body":
+      "使用现有 StackKit 及其服务器，或设置服务器。你的选择会保留。",
+    "placement.loading": "正在检查现有目标…",
+    "placement.failed": "无法检查目标。请重试或选择新服务器。",
+    "placement.change": "更改目标",
+    "placement.unknownNodes": "服务器详情不可用",
+    "placement.compatible": "已验证适合这些服务器",
+    "placement.unavailable": "暂时无法推荐此目标。请检查其设置和容量。",
+    "placement.new": "设置新服务器",
+    "placement.newBody": "保留使用场景和回答，并选择新服务器的来源。",
+    "placement.continue": "使用此目标继续",
+    "placement.install": "在 {name} 上安装 StackKit",
+    "placement.installBody":
+      "此已注册服务器尚无 StackKit。请在安装前检查设置。",
+    "placement.disconnected": "此服务器必须重新连接后才能安装 StackKit。",
+
     "common.retry": "重试",
     "ui.recreate.recreating": "正在重新创建…",
     "ui.theme.toLight": "切换到浅色主题",
@@ -228,6 +345,8 @@ export const creationFlowMessages = {
     "wizard.stepper.label": "设置步骤",
     "wizard.stepper.completed": "已完成",
     "wizard.stepper.position": "第 {current} 步，共 {total} 步：{step}",
+    "wizard.stepper.goTo": "转到{step}",
+    "wizard.stepper.locked": "请先完成前面的步骤",
 
     "wizard.validation.serverSelection": "请选择你的服务器来源以继续。",
     "wizard.validation.hypervisorGuest":
@@ -280,6 +399,35 @@ export const creationFlowMessages = {
     "creation.failure.contactSupport": "如果问题持续，请联系支持并提供技术详情",
   },
   hi: {
+    "placement.chooseTitle": "आपका अगला यूज़ केस कहाँ चलना चाहिए?",
+    "placement.chooseBody":
+      "अपने किसी StackKit या पंजीकृत सर्वर का उपयोग करें, या नया सर्वर सेट करें। यूज़ केस आप अगले चरण में चुनेंगे।",
+    "placement.chooseNext": "इसके यूज़ केस अगले चरण में चुनें",
+    "placement.leased":
+      "इस प्रबंधित सर्वर को अपना मौजूदा प्रदाता संबंध बनाए रखना होगा। इसका मौजूदा डिप्लॉयमेंट खोलें।",
+    "placement.restricted":
+      "इस सर्वर पर बदलाव उपलब्ध नहीं हैं। इसकी पहुँच और तैयारी जाँचें।",
+    "placement.title": "यह उपयोग का मामला कहाँ चले?",
+    "placement.body":
+      "मौजूदा StackKit और उसके सर्वर इस्तेमाल करें या सर्वर सेट करें। आपके विकल्प सुरक्षित रहेंगे।",
+    "placement.loading": "आपके मौजूदा लक्ष्य जाँचे जा रहे हैं…",
+    "placement.failed":
+      "लक्ष्य जाँचे नहीं जा सके। फिर प्रयास करें या नया सर्वर चुनें।",
+    "placement.change": "लक्ष्य बदलें",
+    "placement.unknownNodes": "सर्वर की जानकारी उपलब्ध नहीं है",
+    "placement.compatible": "इन सर्वर पर चलने की पुष्टि हो गई है",
+    "placement.unavailable":
+      "अभी इस लक्ष्य की अनुशंसा नहीं की जा सकती। इसका सेटअप और क्षमता जाँचें।",
+    "placement.new": "नया सर्वर सेट करें",
+    "placement.newBody":
+      "अपने उपयोग के मामले और उत्तर सुरक्षित रखें और नए सर्वर का स्रोत चुनें।",
+    "placement.continue": "इस लक्ष्य के साथ आगे बढ़ें",
+    "placement.install": "{name} पर StackKit इंस्टॉल करें",
+    "placement.installBody":
+      "इस पंजीकृत सर्वर पर अभी StackKit नहीं है। इंस्टॉल करने से पहले सेटअप की समीक्षा करें।",
+    "placement.disconnected":
+      "StackKit इंस्टॉल करने से पहले इस सर्वर को दोबारा कनेक्ट होना होगा।",
+
     "common.retry": "फिर से कोशिश करें",
     "ui.recreate.recreating": "दोबारा बनाया जा रहा है…",
     "ui.theme.toLight": "लाइट थीम पर स्विच करें",
@@ -291,6 +439,8 @@ export const creationFlowMessages = {
     "wizard.stepper.label": "सेटअप के चरण",
     "wizard.stepper.completed": "पूरा हुआ",
     "wizard.stepper.position": "चरण {current}/{total}: {step}",
+    "wizard.stepper.goTo": "{step} पर जाएँ",
+    "wizard.stepper.locked": "पहले पिछले चरण पूरे करें",
 
     "wizard.validation.serverSelection":
       "आगे बढ़ने के लिए चुनें कि आपका सर्वर कहाँ से आएगा।",
@@ -350,6 +500,33 @@ export const creationFlowMessages = {
       "अगर यह बार-बार हो, तो सहायता से संपर्क करें और तकनीकी विवरण साझा करें",
   },
   ar: {
+    "placement.chooseTitle": "أين يجب أن تعمل حالة الاستخدام التالية؟",
+    "placement.chooseBody":
+      "استخدم إحدى حزم StackKit أو أحد الخوادم المسجلة لديك، أو أعدّ خادمًا جديدًا. تختار حالات الاستخدام في الخطوة التالية.",
+    "placement.chooseNext": "اختر حالات الاستخدام الخاصة به في الخطوة التالية",
+    "placement.leased":
+      "يجب أن يحتفظ هذا الخادم المُدار بارتباطه الحالي بالمزوّد. افتح نشره الموجود.",
+    "placement.restricted":
+      "التغييرات على هذا الخادم غير متاحة. راجع الوصول وجاهزيته.",
+    "placement.title": "أين تريد تشغيل حالة الاستخدام هذه؟",
+    "placement.body":
+      "استخدم StackKit موجودًا وخوادمه أو أعدّ خادمًا. ستبقى اختياراتك محفوظة.",
+    "placement.loading": "جارٍ فحص الوجهات الموجودة…",
+    "placement.failed": "تعذّر فحص الوجهات. حاول مجددًا أو اختر خادمًا جديدًا.",
+    "placement.change": "تغيير الوجهة",
+    "placement.unknownNodes": "تفاصيل الخادم غير متاحة",
+    "placement.compatible": "تم التحقق من ملاءمته لهذه الخوادم",
+    "placement.unavailable":
+      "لا يمكن التوصية بهذه الوجهة بعد. راجع إعدادها وسعتها.",
+    "placement.new": "إعداد خادم جديد",
+    "placement.newBody":
+      "احتفظ بحالة الاستخدام وإجاباتك واختر مصدر الخادم الجديد.",
+    "placement.continue": "المتابعة بهذه الوجهة",
+    "placement.install": "تثبيت StackKit على {name}",
+    "placement.installBody":
+      "لا يحتوي هذا الخادم المسجل على StackKit بعد. راجع الإعداد قبل التثبيت.",
+    "placement.disconnected": "يجب إعادة اتصال هذا الخادم قبل تثبيت StackKit.",
+
     "common.retry": "إعادة المحاولة",
     "ui.recreate.recreating": "جارٍ إعادة الإنشاء…",
     "ui.theme.toLight": "التبديل إلى السمة الفاتحة",
@@ -361,6 +538,8 @@ export const creationFlowMessages = {
     "wizard.stepper.label": "خطوات الإعداد",
     "wizard.stepper.completed": "مكتملة",
     "wizard.stepper.position": "الخطوة {current} من {total}: {step}",
+    "wizard.stepper.goTo": "الانتقال إلى {step}",
+    "wizard.stepper.locked": "أكمل الخطوات السابقة أولاً",
 
     "wizard.validation.serverSelection": "اختر مصدر خادمك للمتابعة.",
     "wizard.validation.hypervisorGuest":

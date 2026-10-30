@@ -40,13 +40,40 @@ export function serverHistoryHref(serverId: string): string {
   return `/monitoring/${encodeURIComponent(serverId)}`;
 }
 
+/** The creation wizard for a new server, without the choice of targets. */
+export const NEW_SERVER_CREATION_HREF = "/stacks/new?target=new";
+
 /** Adding a server to the homelab: its deployment, or the creation flow. */
 export function addServerHref(deploymentId?: string | null): string {
   const id = deploymentId?.trim();
-  return id ? `/stacks/${encodeURIComponent(id)}/servers/new` : "/stacks/new";
+  return id
+    ? `/stacks/${encodeURIComponent(id)}/servers/new`
+    : NEW_SERVER_CREATION_HREF;
 }
 
 /** Adding use cases to a homelab: the Goals step against its deployment. */
 export function addUseCasesHref(deploymentId: string): string {
   return `/stacks/${encodeURIComponent(deploymentId.trim())}/use-cases/new`;
+}
+
+/**
+ * Adding use cases anywhere in the homelab: the owner picks one of the
+ * existing StackKits or enrolled servers (or a new server) first. A server
+ * id preselects that server, or the StackKit it already runs.
+ */
+export function placeUseCasesHref(serverId?: string | null): string {
+  const id = serverId?.trim();
+  return id
+    ? `/use-cases/new?server=${encodeURIComponent(id)}`
+    : "/use-cases/new";
+}
+
+/** Configure installed use cases without leaving their deployment context. */
+export function configureUseCasesHref(deploymentId: string): string {
+  return `/stacks/${encodeURIComponent(deploymentId.trim())}/use-cases/configure`;
+}
+
+/** Remove optional applications while retaining the Foundation and servers. */
+export function removeUseCasesHref(deploymentId: string): string {
+  return `/stacks/${encodeURIComponent(deploymentId.trim())}/use-cases/remove`;
 }

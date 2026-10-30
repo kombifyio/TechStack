@@ -38,7 +38,7 @@ func attachSourceGenerationInspection(result *agentpb.StackKitResult) error {
 	if source.APIVersion == "stackkit.plan-inspection/v1" {
 		return nil // Same release: ordinary current CUE inspection.
 	}
-	if source.APIVersion != "stackkit.source-generation-inspection/v1" || len(source.Inspection) == 0 {
+	if (source.APIVersion != "stackkit.source-generation-inspection/v1" && source.APIVersion != "stackkit.source-generation-inspection/v3") || len(source.Inspection) == 0 {
 		return fmt.Errorf("source generation inspection version is invalid")
 	}
 	data["source_generation_authority"] = json.RawMessage(output)
@@ -86,6 +86,9 @@ func attachManagedBackupPlan(workspace, instance string, result *agentpb.StackKi
 		if value, ok := plan[key]; ok {
 			projection[key] = value
 		}
+	}
+	if err := appendPlanExecutionProjection(plan, projection); err != nil {
+		return err
 	}
 	projected, err := json.Marshal(projection)
 	if err != nil {

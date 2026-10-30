@@ -8,9 +8,12 @@ import (
 	"strings"
 
 	commonauthlocal "github.com/kombifyio/techstack/internal/gocommon/authlocal"
+	"github.com/kombifyio/techstack/internal/routes"
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
@@ -52,7 +55,7 @@ func previewStaticAssetPath(p string) bool {
 	case "/kombify-navy.png", "/robots.txt", "/.well-known/security.txt":
 		return true
 	}
-	return strings.HasPrefix(p, "/brand/") || strings.HasPrefix(p, "/brand-logos/") || strings.HasPrefix(p, "/preview-catalogs/")
+	return strings.HasPrefix(p, "/brand/") || strings.HasPrefix(p, "/preview-catalogs/")
 }
 
 // previewMachinePath names the service, agent and webhook routes. Guards and
@@ -104,6 +107,22 @@ func nightlyAuthMethodsHandler(registry *providers.Registry) http.Handler {
 	})
 }
 
+// hidePreviewFromCrawlers keeps the Preview deployment out of search engines
+// (CI-CD-PLATFORM-STANDARD §4.6.2 "Preview is hidden from users"): every
+// response carries a noindex header and /robots.txt disallows everything.
+// Stable and Early Access, which serve the public links, are unchanged.
+func hidePreviewFromCrawlers(e *httpx.Event) error {
+	if config.ReleaseChannel() != "preview" {
+		return e.Next()
+	}
+	e.Response.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	if e.Request.URL.Path == "/robots.txt" && previewReadOnly(e.Request) {
+		e.Response.Header().Set("Cache-Control", "no-store")
+		return e.String(http.StatusOK, "User-agent: *\nDisallow: /\n")
+	}
+	return e.Next()
+}
+
 func previewReadOnly(r *http.Request) bool {
 	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
@@ -123,7 +142,7 @@ func admitPreviewTransport(e *httpx.Event) error {
 	if e.Request.URL.RawPath != "" || e.Request.URL.EscapedPath() != p || path.Clean(p) != p || strings.Contains(p, "\\") {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Preview transport is not admitted.", nil)
 	}
-	if previewMachinePath(p) {
+	if previewMachinePath(p) && !stageWorkerTransport(e.Request) {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Machine routes run on stable.", nil)
 	}
 	if !previewPublicPath(p) {
@@ -158,16 +177,44 @@ func previewHTTPAdmission(e *httpx.Event) error {
 	if err := admitPreviewTransport(e); err != nil {
 		return err
 	}
-	if previewPublicPath(e.Request.URL.Path) {
+	if stageWorkerTransport(e.Request) || previewPublicPath(e.Request.URL.Path) {
 		return e.Next()
 	}
 	if id := identity.FromContext(e.Request.Context()); id == nil || !id.IsAuthenticated() {
 		if !previewReadOnly(e.Request) {
 			return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Preview mutations require a signed-in person.", nil)
 		}
+		// A person opening a page link (/servers, /settings, ...) signs in
+		// first; API and asset reads keep the plain 401.
+		if previewPageRequest(e.Request) {
+			return e.Redirect(http.StatusFound, "/login")
+		}
 		return httpx.NewUnauthorizedError("Preview requires a signed-in person.", nil)
 	}
+	if !previewReadOnly(e.Request) {
+		if err := releasechannel.RequireStageRequestPrincipal(e.Request.Context()); err != nil {
+			return tenantguard.ExecutionRefusal(err)
+		}
+	}
 	return e.Next()
+}
+
+// stageWorkerTransport defers only existing finite machine routes to their
+// capability/worker authentication after an actual Stage owner was bound.
+func stageWorkerTransport(request *http.Request) bool {
+	return releasechannel.StageOwnerActive() && routes.WorkerMachineRoute(request.Method, request.URL.Path)
+}
+
+// previewPageRequest is a browser navigation to an app page: a read outside
+// /api/ that asks for HTML.
+func previewPageRequest(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, "/api/") || previewStream(r) {
+		return false
+	}
+	if r.Header.Get("Sec-Fetch-Mode") == "navigate" {
+		return true
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
 // stableBootComponent gates constructors of shared work that is nobody's

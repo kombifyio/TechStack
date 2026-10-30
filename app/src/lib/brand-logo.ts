@@ -1,20 +1,85 @@
+import type { ServiceCatalogLogo } from "#lib/api/services.js";
+
 /**
- * Brand icons by vendor domain. The tools the wizard and inventory show ship
- * as local assets under /brand-logos (mostly homarr-labs/dashboard-icons,
- * Apache-2.0; provider and kombify icons from their own sources), so a real
- * logo never depends on a third-party quota. context.dev Logo Link remains the
- * fallback for domains without a local asset; its public client has a request
- * quota and answers 402 `quota_exceeded` once it is spent.
- * Docs: https://docs.context.dev/guides/get-logo-from-url
+ * Brand icons of the applications Techstack shows. Every logo comes from our
+ * own asset host (`APP_ICON_BASE`): homarr-labs/dashboard-icons (Apache-2.0)
+ * mirrored there, Simple Icons (CC0-1.0) as fallback, provider and kombify
+ * icons from their own sources. A logo is never hot-linked from a third party
+ * and never served by Render; without one the card draws a monogram.
+ *
+ * Which logo an application gets, first match wins:
+ * 1. this viewer's override for the application (hidden, or another icon),
+ * 2. the recognition's own logo (`catalog.logo`, light or dark variant),
+ * 3. the bundled icon of its vendor domain (`localBrandLogoUrl`),
+ * 4. none: the monogram.
  */
+
+/** Where the mirrored application icons live; file names equal their slugs. */
+export const APP_ICON_BASE = "https://assets.kombify.io/brand/app-icons/";
 
 export const BRAND_LOGO_CONTEXT = "techstack-brand-logo-domain";
 
 export interface BrandLogoContext {
   readonly domain: string;
+  /**
+   * A logo the caller already resolved (recognition logo or viewer override);
+   * it wins over the bundled icon of `domain`.
+   */
+  readonly logoUrl?: string;
 }
 
-const LOGO_LINK_HOST = "https://logos.context.dev/";
+export type LogoTheme = "light" | "dark";
+
+/** This viewer's choice for one application's logo. */
+export type AppLogoOverride =
+  | { readonly mode: "hidden" }
+  | { readonly mode: "icon"; readonly slug: string };
+
+const ICON_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** A dashboard-icons slug: lowercase words joined by single hyphens. */
+export function isAppIconSlug(value: unknown): value is string {
+  return (
+    typeof value === "string" && value.length <= 80 && ICON_SLUG.test(value)
+  );
+}
+
+/** The mirrored icon for a dashboard-icons slug. */
+export function appIconUrl(slug: string): string {
+  return `${APP_ICON_BASE}${slug}.svg`;
+}
+
+/** Whether a URL points into our own mirrored icon set. */
+export function isAppIconUrl(value: string): boolean {
+  if (!value.startsWith(APP_ICON_BASE)) return false;
+  const rest = value.slice(APP_ICON_BASE.length);
+  return rest.length > 0 && !/[\s?#\\]|\.\./.test(rest);
+}
+
+/**
+ * Pick the logo of one application, or undefined to draw the monogram. A
+ * "hidden" override ends the search: nothing else is shown for that app.
+ */
+export function pickAppLogo(input: {
+  override?: AppLogoOverride;
+  logo?: Pick<ServiceCatalogLogo, "url" | "light_url" | "dark_url"> | null;
+  /** The catalog removed this application's logo (a rights holder's request). */
+  removed?: boolean;
+  domain?: string | null;
+  theme: LogoTheme;
+}): string | undefined {
+  const { override, logo, removed, domain, theme } = input;
+  if (override?.mode === "hidden") return undefined;
+  if (override?.mode === "icon" && isAppIconSlug(override.slug))
+    return appIconUrl(override.slug);
+  if (removed) return undefined;
+  if (logo) {
+    const themed = theme === "dark" ? logo.dark_url : logo.light_url;
+    const url = themed || logo.url;
+    if (url) return url;
+  }
+  return localBrandLogoUrl(domain) || undefined;
+}
 
 const TOOL_BRAND_DOMAINS: Record<string, string> = {
   coolify: "coolify.io",
@@ -115,7 +180,7 @@ const ROLE_SUFFIX =
 /** Replica or version tails (`immich-server-1`, `gitea-v1.22`). */
 const VERSION_SUFFIX = /-v?\d+(?:\.\d+)*$/;
 
-/** Bundled icons by vendor domain, served from app/static/brand-logos. */
+/** Mirrored icons by vendor domain, as file names under `APP_ICON_BASE`. */
 const LOCAL_BRAND_LOGOS: Record<string, string> = {
   "activepieces.com": "activepieces.svg",
   "audiobookshelf.org": "audiobookshelf.svg",
@@ -168,10 +233,10 @@ const LOCAL_BRAND_LOGOS: Record<string, string> = {
   "vaultwarden.org": "vaultwarden.svg",
 };
 
-/** The bundled icon for a vendor domain, or "" when none ships. */
+/** The mirrored icon for a vendor domain, or "" when none is known. */
 export function localBrandLogoUrl(domain: string | undefined | null): string {
   const file = LOCAL_BRAND_LOGOS[normalizePublicDomain(domain)];
-  return file ? `/brand-logos/${file}` : "";
+  return file ? `${APP_ICON_BASE}${file}` : "";
 }
 
 function normalizeToolToken(value: string): string {
@@ -198,10 +263,10 @@ function normalizePublicDomain(value: string | undefined | null): string {
     return "";
   }
 
-  // Logo Link expects a public company domain, never a URL, port, IP address,
-  // or local hostname. The catalog map above is the authority for which
+  // The icon map is keyed by public company domains, never a URL, port, IP
+  // address, or local hostname. The map above is the authority for which
   // service owns that domain; this guard keeps malformed runtime input from
-  // becoming a third-party image request.
+  // matching it.
   if (labels.every((label) => /^\d+$/.test(label))) return "";
   if (labels.at(-1) === "local") return "";
   return domain;
@@ -261,8 +326,8 @@ function domainForToken(token: string, exact: boolean): string {
 }
 
 /**
- * Map a StackKits application/service identity to the vendor domain used by
- * Logo Link. Candidates are tried in order: first as exact identities, then
+ * Map a StackKits application/service identity to the vendor domain that keys
+ * the icon map. Candidates are tried in order: first as exact identities, then
  * through their normalized name variants. Empty when we do not know a durable
  * public domain for the tool.
  */
@@ -299,23 +364,4 @@ export function distinctToolLogos<T extends { id: string; name: string }>(
     seen.add(key);
     return true;
   });
-}
-
-export function logoLinkUrl(
-  domain: string | undefined | null,
-  publicClientId: string | undefined | null,
-  options: { theme?: "light" | "dark"; type?: "icon" | "wordmark" } = {},
-): string {
-  const d = normalizePublicDomain(domain);
-  const id = (publicClientId || "").trim();
-  // Kombify identities use our own product assets, never third-party enrichment.
-  if (d === "kombify.io" || d.endsWith(".kombify.io")) return "";
-  if (!d || !id) return "";
-  const query = new URLSearchParams({
-    publicClientId: id,
-    domain: d,
-    type: options.type || "icon",
-  });
-  if (options.theme) query.set("theme", options.theme);
-  return `${LOGO_LINK_HOST}?${query.toString()}`;
 }

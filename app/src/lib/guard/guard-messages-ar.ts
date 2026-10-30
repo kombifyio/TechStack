@@ -262,6 +262,8 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.reach.reason.kombify_me_denied": "رفض kombify.me تسجيل هذا الخادم.",
   "guard.reach.reason.connect_unavailable":
     "kombify Connect غير متاح. تحقق مجددًا بعد قليل.",
+  "guard.reach.reason.connect_not_enabled":
+    "لم يُفعَّل kombify Connect لهذا الحساب بعد. لا يتأثر العمل المحلي والتحكم في الخادم.",
   "guard.reach.reason.connect_denied": "رفض kombify Connect إدراج هذا الخادم.",
   "guard.reach.reason.reach_layout_unsupported":
     "لا يمكن منح عنوان بعيد لهذا التخطيط من التثبيت بعد.",

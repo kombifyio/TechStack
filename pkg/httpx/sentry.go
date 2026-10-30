@@ -1,3 +1,5 @@
+//go:build !kombify_full_local
+
 package httpx
 
 import (
@@ -5,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/secrets"
@@ -13,7 +14,6 @@ import (
 )
 
 const sentryServerErrorFlushTimeout = 2 * time.Second
-const sentryErrorDetailsMaxBytes = 16 * 1024
 
 type sentryCapturedContextKey struct{}
 
@@ -111,13 +111,4 @@ func redactSentryDetails(details any) any {
 		return structured
 	}
 	return clean
-}
-
-func truncateSentryDetails(value string) string {
-	if len(value) <= sentryErrorDetailsMaxBytes {
-		return value
-	}
-	omitted := len(value) - sentryErrorDetailsMaxBytes
-	return strings.TrimRight(value[:sentryErrorDetailsMaxBytes], "\x00\r\n\t ") +
-		fmt.Sprintf("... [truncated %d bytes]", omitted)
 }

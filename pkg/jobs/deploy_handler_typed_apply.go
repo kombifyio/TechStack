@@ -26,7 +26,7 @@ func (r *deployRollout) runTypedStackKitApply(ctx context.Context) (map[string]i
 	if r == nil || r.cfg == nil || r.cfg.StackKitCommander == nil || r.actionReq.TechStackEnrollment == nil {
 		return nil, fmt.Errorf("typed StackKits deploy dispatcher is not configured")
 	}
-	release, err := configuredTargetStackKitRelease()
+	release, err := TargetStackKitReleaseForStack(ctx, r.actionReq.TenantID, r.actionReq.StackID)
 	if err != nil {
 		return nil, err
 	}
@@ -722,7 +722,7 @@ func (r *deployRollout) runTypedStackKitVerify(ctx context.Context) (map[string]
 	if r == nil || r.cfg == nil || r.cfg.StackKitCommander == nil || r.actionReq.TechStackEnrollment == nil {
 		return nil, fmt.Errorf("typed StackKits verify dispatcher is not configured")
 	}
-	release, err := configuredTargetStackKitRelease()
+	release, err := TargetStackKitReleaseForStack(ctx, r.actionReq.TenantID, r.actionReq.StackID)
 	if err != nil {
 		return nil, err
 	}

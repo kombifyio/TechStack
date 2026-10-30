@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
@@ -69,6 +70,9 @@ func (h crudRouteHandlers) retryStackRollout(e *httpx.Event) error {
 }
 
 func writeRolloutRetryError(e *httpx.Event, err error) error {
+	if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+		return refusal
+	}
 	var notYet *orchestrator.RolloutRetryNotYetError
 	if errors.As(err, &notYet) {
 		retryAfter := notYet.RetryAfter.UTC()

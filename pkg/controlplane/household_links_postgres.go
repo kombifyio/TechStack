@@ -9,13 +9,13 @@ import (
 )
 
 const householdRefColumns = `tenant_id, stack_id, idp, username, role, owner_subject_id, cloud_subject,
-	email, display_name, status, invited_at, linked_at, updated_at`
+	email, display_name, status, invited_at, linked_at, updated_at, reference_id`
 
 func scanHouseholdRef(row rowScanner) (*HomelabIdentityRef, error) {
 	var ref HomelabIdentityRef
 	var linkedAt sql.NullTime
 	if err := row.Scan(&ref.TenantID, &ref.StackID, &ref.IdP, &ref.Username, &ref.Role, &ref.OwnerSubjectID,
-		&ref.CloudSubject, &ref.Email, &ref.DisplayName, &ref.Status, &ref.InvitedAt, &linkedAt, &ref.UpdatedAt); err != nil {
+		&ref.CloudSubject, &ref.Email, &ref.DisplayName, &ref.Status, &ref.InvitedAt, &linkedAt, &ref.UpdatedAt, &ref.ReferenceID); err != nil {
 		return nil, err
 	}
 	if linkedAt.Valid {
@@ -63,16 +63,21 @@ func (s *PostgresStore) UpsertHouseholdInvite(ctx context.Context, ref HomelabId
 		scanHouseholdRef, ref.StackID, ref.IdP, ref.Username, ref.Role, ref.OwnerSubjectID, ref.CloudSubject, ref.Email, ref.DisplayName)
 }
 
-func (s *PostgresStore) MarkHouseholdLinked(ctx context.Context, tenantID, stackID, cloudSubject string, at time.Time) (*HomelabIdentityRef, error) {
+func (s *PostgresStore) MarkHouseholdLinked(ctx context.Context, expected HomelabIdentityRef, at time.Time) (*HomelabIdentityRef, error) {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	return queryOneTenantRow(ctx, s, tenantID, `
+	if expected.ReferenceID == "" {
+		return nil, ErrNotFound
+	}
+	return queryOneTenantRow(ctx, s, expected.TenantID, `
 		UPDATE household_identity_refs
 		SET status = 'linked', linked_at = COALESCE(linked_at, $4)
 		WHERE tenant_id = $1 AND stack_id = $2 AND cloud_subject = $3
+          AND reference_id=$5::uuid AND owner_subject_id=$6 AND username=$7 AND idp=$8 AND email=$9
 		RETURNING `+householdRefColumns,
-		scanHouseholdRef, strings.TrimSpace(stackID), strings.TrimSpace(cloudSubject), at.UTC())
+		scanHouseholdRef, expected.StackID, expected.CloudSubject, at.UTC(), expected.ReferenceID,
+		expected.OwnerSubjectID, expected.Username, expected.IdP, expected.Email)
 }
 
 func (s *PostgresStore) DeleteHouseholdRef(ctx context.Context, tenantID, stackID, cloudSubject string) (*HomelabIdentityRef, error) {

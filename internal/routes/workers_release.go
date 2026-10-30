@@ -14,9 +14,13 @@ import (
 	"time"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardrelease"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/logger"
+	"github.com/google/uuid"
 )
 
 const (
@@ -126,7 +130,8 @@ func (h workerRouteHandlers) agentReleaseEvidence(e *httpx.Event) error {
 	if rawToken == "" {
 		return httpx.Unauthorized(e, "A valid agent download capability is required")
 	}
-	if _, authorized, err := h.authorizeAgentBinary(e, rawToken, time.Now().UTC()); err != nil || !authorized {
+	authorization, authorized, err := h.authorizeAgentBinary(e, rawToken, time.Now().UTC())
+	if err != nil || !authorized {
 		return err
 	}
 	dir := guardReleaseDir()
@@ -142,6 +147,9 @@ func (h workerRouteHandlers) agentReleaseEvidence(e *httpx.Event) error {
 		return unavailable(reason, err)
 	}
 	manifestRaw, manifestSig, manifest := served.raw, served.sig, served.manifest
+	if err := manifest.Fresh(time.Now().UTC()); err != nil {
+		return unavailable("manifest_stale", err)
+	}
 	entry, found := manifest.Artifact(requestedOS, requestedArch)
 	if !found {
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The deployed control plane does not publish a signed binary for the requested architecture", nil)
@@ -150,26 +158,64 @@ func (h workerRouteHandlers) agentReleaseEvidence(e *httpx.Event) error {
 	if err != nil {
 		return unavailable("artifact_bundle", err)
 	}
-	artifact, err := signedGuardBinaryArtifact(dir, requestedOS, requestedArch)
+	index, _, err := loadArtifactDeliveryIndex()
 	if err != nil {
-		return unavailable("artifact", err)
+		return unavailable("artifact_index", err)
 	}
-	if artifact.sha256 != entry.SHA256 {
+	artifact, indexed := index.artifact("guard_binary", requestedOS, requestedArch)
+	if !indexed || artifact.SHA256 != entry.SHA256 || artifact.Size != entry.Size {
 		// The manifest names other bytes than the ones this control plane serves.
 		// The Guard would refuse them; do not send evidence that cannot match.
-		return unavailable("manifest_artifact_mismatch", fmt.Errorf("manifest %s, file %s", entry.SHA256, artifact.sha256))
+		return unavailable("manifest_artifact_mismatch", fmt.Errorf("manifest %s, file %s", entry.SHA256, artifact.SHA256))
 	}
 	if !json.Valid(manifestSig) || !json.Valid(artifactSig) {
 		return unavailable("bundle_invalid", fmt.Errorf("a signature bundle is not JSON"))
 	}
 	e.Response.Header().Set("Cache-Control", "private, no-store")
-	return httpx.Success(e, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"version":         manifest.Version,
 		"sha256":          entry.SHA256,
 		"manifest":        base64.StdEncoding.EncodeToString(manifestRaw),
 		"manifest_bundle": json.RawMessage(manifestSig),
 		"artifact_bundle": json.RawMessage(artifactSig),
-	})
+	}
+	if manifest.StackKits != nil && manifest.StackKits.Candidate != nil {
+		auth := authorization.runtime
+		if auth == nil || auth.Worker == nil || auth.IdentityBinding != controlplane.IdentityBindingHostKey || credentialGeneration(*auth) <= 0 {
+			return unavailable("candidate_worker_authority", fmt.Errorf("candidate requires an enrolled host-key worker"))
+		}
+		resolver, configured, err := jobs.StageCandidateForStack(e.Request.Context(), auth.TenantID, auth.StackID)
+		if err != nil || !configured {
+			return unavailable("candidate_stage_assignment", err)
+		}
+		intent, err := resolver.InstallIntent()
+		if err != nil || intent.Arch != requestedArch {
+			return unavailable("candidate_runtime_identity", err)
+		}
+		servedIntent, err := manifest.CandidateIntent(requestedArch, intent.BundleSHA256)
+		if err != nil || servedIntent != intent {
+			return unavailable("candidate_manifest_identity", err)
+		}
+		digest, err := guardbinding.DigestOf(intent)
+		if err != nil {
+			return unavailable("candidate_intent", err)
+		}
+		now := time.Now().UTC()
+		expiry := now.Add(5 * time.Minute)
+		if authorization.resetAt.Before(expiry) {
+			expiry = authorization.resetAt
+		}
+		binding := &guardbinding.Binding{CommandID: "runtime-install-" + uuid.NewString(), TenantID: auth.TenantID, WorkerID: auth.RuntimeAgentID, ServerID: auth.ServerID, Operation: "runtime.install", PayloadDigest: digest, WorkerGeneration: credentialGeneration(*auth), CurrentGeneration: credentialGeneration(*auth), AuthorityExpiresAt: expiry, ContractVersion: guardbinding.ContractVersion}
+		signer, err := h.bindingSignerFor(e.Request.Context(), auth.TenantID, auth.RuntimeAgentID)
+		if err != nil || signer == nil {
+			return unavailable("candidate_signer", err)
+		}
+		if err = signer.Sign(binding); err != nil {
+			return unavailable("candidate_binding", err)
+		}
+		payload["candidate_intent"], payload["candidate_admission"] = intent, binding
+	}
+	return httpx.Success(e, http.StatusOK, payload)
 }
 
 // guardArtifactVersion is the release version of the binary being served.

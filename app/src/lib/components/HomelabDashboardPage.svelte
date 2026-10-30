@@ -106,6 +106,9 @@
   import {
     addServerHref as addServerRoute,
     addUseCasesHref,
+    placeUseCasesHref,
+    configureUseCasesHref,
+    removeUseCasesHref,
     serverDetailHref,
   } from "#lib/server-links.js";
   import {
@@ -2417,16 +2420,30 @@
           <Plus class="h-4 w-4" />
           {tr("ui.homelab.newNode")}
         </Button>
+        <!-- With several StackKits the owner first picks where the use
+             cases run; one StackKit goes straight to its Goals step. -->
+        <Button
+          variant="secondary"
+          testId="add-use-cases-button"
+          onclick={() =>
+            goto(
+              singleDeployment
+                ? addUseCasesHref(singleDeployment.id)
+                : placeUseCasesHref(),
+            )}
+        >
+          <Plus class="h-4 w-4" />
+          {tr("layout.addUseCases.entry")}
+        </Button>
         {#if singleDeployment}
           <Button
             variant="secondary"
-            testId="add-use-cases-button"
-            onclick={() =>
-              singleDeployment && goto(addUseCasesHref(singleDeployment.id))}
+            testId="configure-use-cases-button"
+            onclick={() => singleDeployment && goto(configureUseCasesHref(singleDeployment.id))}
           >
-            <Plus class="h-4 w-4" />
-            {tr("layout.addUseCases.entry")}
+            {tr("configure.entry")}
           </Button>
+          <Button variant="secondary" testId="remove-use-cases-button" onclick={() => singleDeployment && goto(removeUseCasesHref(singleDeployment.id))}>{tr("removeUseCase.entry")}</Button>
         {/if}
         {/if}
         {#if deployments.length > 0 && showReviewStart}

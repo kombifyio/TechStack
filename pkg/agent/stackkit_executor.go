@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,7 @@ var stackKitAddressPrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 type StackKitExecutor struct {
 	pinPath                  string
 	cacheRoot                string
+	candidateAdmission       func(stackkitrelease.Pin) error
 	preinstalledManifestPath string
 	// silenceLimit overrides stackKitApplySilenceLimit; zero keeps the default.
 	silenceLimit time.Duration
@@ -97,6 +99,14 @@ func NewStackKitExecutorFromConfig(pinPath, cacheRoot string) *StackKitExecutor 
 	}
 }
 
+// WithInternalCandidateAdmission returns a separate executor using the root
+// host's installed-candidate verifier. Default constructors stay public-only.
+func (executor *StackKitExecutor) WithInternalCandidateAdmission(admit func(stackkitrelease.Pin) error) *StackKitExecutor {
+	return &StackKitExecutor{pinPath: executor.pinPath, cacheRoot: executor.cacheRoot, preinstalledManifestPath: executor.preinstalledManifestPath, silenceLimit: executor.silenceLimit, candidateAdmission: admit}
+}
+func (executor *StackKitExecutor) releaseCache() stackkitrelease.Cache {
+	return stackkitrelease.Cache{Root: executor.cacheRoot, CandidateAdmission: executor.candidateAdmission}
+}
 func (executor *StackKitExecutor) Available() bool {
 	return executor != nil && executor.pinPath != "" && executor.cacheRoot != ""
 }
@@ -118,7 +128,7 @@ func (executor *StackKitExecutor) validate() error {
 	if !executor.Available() {
 		return fmt.Errorf("StackKits runtime is not configured")
 	}
-	_, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
+	_, err := executor.releaseCache().ResolvePin(executor.pinPath)
 	return err
 }
 
@@ -292,6 +302,16 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		runErr,
 		started,
 	)
+	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_REMOVE {
+		if err := attachUseCaseRemoveCandidate(command, finished, tempFiles); err != nil {
+			return finishStackKitResult(result, command, nil, &receipt, err, started)
+		}
+	}
+	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_CONFIGURE {
+		if err := attachUseCaseConfigureCandidate(command, finished, tempFiles); err != nil {
+			return finishStackKitResult(result, command, nil, &receipt, err, started)
+		}
+	}
 	if finished.Success && len(handoffDocument) != 0 {
 		finished.HandoffDocument = handoffDocument
 	}
@@ -302,7 +322,7 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		}
 		finished.AdvancedChangeSetSha256 = digest
 	}
-	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN && command.LocalSiteRef == "cloud" && command.StackkitInstanceId != "" {
+	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN && command.StackkitInstanceId != "" {
 		if command.SourceGenerationInspection {
 			if err := attachSourceGenerationInspection(finished); err != nil {
 				return finishStackKitResult(result, command, nil, &receipt, err, started)
@@ -498,7 +518,7 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 			stackKitReleaseCacheEnv,
 		)
 	}
-	release, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
+	release, err := executor.releaseCache().ResolvePin(executor.pinPath)
 	if err != nil {
 		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("resolve pinned StackKits release: %w", err)
 	}
@@ -551,7 +571,11 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 	}
 	var tempFiles []string
 	var operationArgs []string
-	if hostOperation {
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_REMOVE {
+		operationArgs, tempFiles, err = stackKitUseCaseRemoveArgs(workDir, command)
+	} else if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_CONFIGURE {
+		operationArgs, tempFiles, err = stackKitUseCaseConfigureArgs(workDir, command)
+	} else if hostOperation {
 		operationArgs, err = stackKitHostArgs(command)
 	} else if stackkitcommand.IsHandoffOperation(command.Operation) {
 		operationArgs, tempFiles, err = stackKitHandoffArgs(workDir, command)
@@ -569,6 +593,14 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 		return stackkitrelease.Release{}, nil, "", "", tempFiles, err
 	}
 	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER && command.OriginalRecoveryRelease != nil {
+		cache, cacheErr := executor.persistentReleaseCache()
+		if cacheErr != nil {
+			_ = os.Remove(eventPath)
+			return stackkitrelease.Release{}, nil, "", "", tempFiles, cacheErr
+		}
+		operationArgs = append(operationArgs, "--original-release-cache", cache)
+	}
+	if release.Receipt().Candidate != nil && (command.SourceGenerationInspection || command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION) {
 		cache, cacheErr := executor.persistentReleaseCache()
 		if cacheErr != nil {
 			_ = os.Remove(eventPath)
@@ -769,7 +801,8 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_STATUS, agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_ABORT:
 		return stackkitcommand.WorkloadRelocationArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND:
 		if !command.OwnerApproved {
@@ -784,6 +817,27 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		return []string{"user", "owner", "activate", "--owner-approve", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST:
 		return []string{"user", "list", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT:
+		if err := stackkitcommand.ValidateCommand(command); err != nil {
+			return nil, err
+		}
+		args := []string{"user", "project", command.HouseholdUsername,
+			"--projection-key", command.HouseholdProjectionKey, "--revision", strconv.FormatUint(command.HouseholdProjectionRevision, 10),
+			"--action", command.HouseholdProjectionAction, "--owner-approve", "--json"}
+		if command.HouseholdProjectionAction == "add" {
+			args = append(args, "--email", command.HouseholdEmail, "--display-name", command.HouseholdDisplayName)
+			switch {
+			case !command.HouseholdAppsSet:
+				args = append(args, "--all")
+			case len(command.HouseholdApps) == 0:
+				args = append(args, "--none")
+			default:
+				for _, app := range command.HouseholdApps {
+					args = append(args, "--app", app)
+				}
+			}
+		}
+		return args, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
 		return stackKitAdvancedTrustImportArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE:
@@ -869,7 +923,8 @@ func identityMutationCarriesTransientURL(command *agentpb.StackKitCommand) bool 
 		return false
 	}
 	return command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE ||
-		command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE
+		command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE ||
+		(command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT && command.HouseholdProjectionAction == "add")
 }
 
 func stackKitInitArgs(command *agentpb.StackKitCommand) ([]string, error) {

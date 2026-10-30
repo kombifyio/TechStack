@@ -129,6 +129,9 @@ func (h driftRouteHandlers) check(e *httpx.Event) error {
 		RequestContext: e.Request.Context(), TenantID: tenantID, OwnerID: ownerID, StackID: stack.ID, TriggerType: "manual",
 	})
 	if err != nil {
+		if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+			return refusal
+		}
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"Failed to start drift check", err)
 	}
@@ -182,6 +185,9 @@ func (h driftRouteHandlers) resolve(e *httpx.Event) error {
 		RequestContext: e.Request.Context(), TenantID: tenantID, OwnerID: ownerID, StackID: stack.ID,
 	})
 	if err != nil {
+		if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+			return refusal
+		}
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"Failed to start drift resolution", err)
 	}

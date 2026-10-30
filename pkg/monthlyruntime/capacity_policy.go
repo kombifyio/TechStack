@@ -47,6 +47,41 @@ var (
 	ErrCapacityPolicyAuthorityUnavailable = errors.New("monthlyruntime: capacity authority unavailable")
 )
 
+// CapacityPolicyDenialError is a verified account denial, never a missing
+// authority. Empty MissingFeatures means the signed budget explicitly has zero
+// managed-server capacity. It is returned before a native grant or reservation.
+type CapacityPolicyDenialError struct {
+	TenantID        string
+	OwnerSubjectID  string
+	ProviderID      string
+	MissingFeatures []string
+}
+
+func (d *CapacityPolicyDenialError) Error() string {
+	if len(d.MissingFeatures) != 0 {
+		return ManagedRuntimeEntitlementDeniedMessage
+	}
+	return "This account has no managed server slots included"
+}
+
+func (d *CapacityPolicyDenialError) Details() map[string]any {
+	required := RequiredFeatureKeysForProvider(d.ProviderID)
+	if len(d.MissingFeatures) != 0 {
+		return ManagedRuntimeEntitlementDenialDetails(d.ProviderID, EntitlementReasonFeatureDisabled, required, d.MissingFeatures)
+	}
+	return structuredFailureDetails(failureEnvelope{
+		phase: "managed_runtime_entitlement", phaseLabel: "Managed runtime availability",
+		errorCode: ManagedRuntimeMaxServersErrorCode, reasonCode: ReasonMaxServersReached,
+		capability: ManagedRuntimeCapability, providerID: d.ProviderID,
+		requiredFeatures: required,
+		guidance: map[string]any{
+			"title":      "No managed server slots included",
+			"body":       "This account's verified plan budget includes zero managed server slots. No managed-server capacity was granted.",
+			"next_steps": []string{"Use a user-owned server connection, or choose a plan or add-on with managed server capacity."},
+		},
+	}, map[string]any{"budget_key": CapacityBudgetCloudRuntimeCredits, "decision_source": CapacityDecisionSourceSignedRuntimeBudget, "limit": 0})
+}
+
 // CapacityGrant is the immutable input to a durable managed-runtime capacity
 // reservation. Unlimited is explicit (Mode=unlimited, Limit=0).
 type CapacityGrant struct {
@@ -138,22 +173,33 @@ func signedManagedRuntimeCapacity(
 	if !ok {
 		return CapacityGrant{}, fmt.Errorf("%w: verified edge decision is missing", ErrCapacityPolicyAuthorityUnavailable)
 	}
-	credits, binding, err := decisions.VerifiedCloudRuntimeCredits()
-	if err != nil {
-		return CapacityGrant{}, fmt.Errorf("%w: verified runtime-credit budget is invalid: %v", ErrCapacityPolicyAuthorityUnavailable, err)
+	binding, verified := decisions.VerifiedDecisionBinding()
+	if !verified {
+		return CapacityGrant{}, fmt.Errorf("%w: verified edge decision binding is missing", ErrCapacityPolicyAuthorityUnavailable)
 	}
 	if binding.SubjectID != grant.ScopeID || binding.TenantID != tenantID ||
 		binding.Audience != capacityDecisionAudience || binding.PublicPrefix != capacityDecisionPublicPrefix {
 		return CapacityGrant{}, fmt.Errorf("%w: runtime-credit decision binding does not match the managed-runtime operation", ErrCapacityPolicyAuthorityUnavailable)
 	}
+	missingFeatures := []string{}
 	for _, entitlement := range RequiredFeatureKeysForProvider(providerID) {
 		granted, err := entitlements(ctx, entitlement)
 		if err != nil {
 			return CapacityGrant{}, fmt.Errorf("%w: resolve signed entitlement %q: %v", ErrCapacityPolicyAuthorityUnavailable, entitlement, err)
 		}
 		if !granted {
-			return CapacityGrant{}, fmt.Errorf("%w: signed commercial entitlement %q is missing", ErrCapacityPolicyAuthorityUnavailable, entitlement)
+			missingFeatures = append(missingFeatures, entitlement)
 		}
+	}
+	if len(missingFeatures) != 0 {
+		return CapacityGrant{}, &CapacityPolicyDenialError{
+			TenantID: tenantID, OwnerSubjectID: grant.ScopeID, ProviderID: providerID,
+			MissingFeatures: missingFeatures,
+		}
+	}
+	credits, _, err := decisions.VerifiedCloudRuntimeCredits()
+	if err != nil {
+		return CapacityGrant{}, fmt.Errorf("%w: verified runtime-credit budget is invalid: %v", ErrCapacityPolicyAuthorityUnavailable, err)
 	}
 	grant.DecisionSource = CapacityDecisionSourceSignedRuntimeBudget
 	switch credits.ManagedServers.Mode {
@@ -161,6 +207,11 @@ func signedManagedRuntimeCapacity(
 		grant.Mode = CapacityModeUnlimited
 		return grant, nil
 	case edgeauth.ManagedServerCreditModeLimited:
+		if credits.ManagedServers.Limit == 0 {
+			return CapacityGrant{}, &CapacityPolicyDenialError{
+				TenantID: tenantID, OwnerSubjectID: grant.ScopeID, ProviderID: providerID,
+			}
+		}
 		grant.Mode = CapacityModeLimited
 		grant.Limit = credits.ManagedServers.Limit
 		return grant, nil

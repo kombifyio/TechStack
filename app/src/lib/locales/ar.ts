@@ -1076,21 +1076,6 @@ export const ar: Record<string, string> = {
     "اختر كيف يتصل هذا الجهاز. يبقى وصول Homelab والأشخاص وتسجيل الدخول كما هي.",
   "wizard.step.inherited": "مضبوط مسبقًا لـ Homelab الخاص بك",
   "wizard.step.existingOwner": "يبقى مالك Homelab كما هو",
-  "wizard.addApp.title": "إضافة تطبيق",
-  "wizard.addApp.intro":
-    "اختر تطبيقًا والخادم الذي يعمل عليه. يبقى الوصول والأشخاص وتسجيل الدخول كما هي في Homelab الخاص بك.",
-  "wizard.addApp.catalogEmpty":
-    "لا يقدم الكتالوج أي تطبيق لهذا الـ Homelab بعد.",
-  "wizard.addApp.recommended": "موصى به",
-  "wizard.addApp.about": "نبذة",
-  "wizard.addApp.nodeTitle": "أين يجب أن يعمل {name}؟",
-  "wizard.addApp.nodeUnsupported":
-    "لا يوفر StackKit الخاص بهذا الخادم التطبيق {name}.",
-  "wizard.addApp.nodeNotReady": "غير جاهز للنشر بعد",
-  "wizard.addApp.submit": "إضافة تطبيق",
-  "wizard.addApp.result": "تمت إضافة {name} إلى {node}.",
-  "wizard.addApp.resultStatus": "الحالة: {status}",
-  "wizard.addApp.done": "تم",
   "wizard.settings.title": "إعدادات Homelab",
   "wizard.settings.intro":
     "غيّر من يستخدم Homelab الخاص بك وكيف تسجّل الدخول. كل خطوة تؤثر فورًا على Homelab الذي يعمل.",
@@ -2064,6 +2049,8 @@ export const ar: Record<string, string> = {
   "ui.people.householdListUnavailableTheHomelab": "قائمة الأشخاص غير متاحة الآن. حاول مرة أخرى بعد قليل.",
   "ui.people.identityProviderNotReady": "خدمة تسجيل الدخول غير جاهزة",
   "ui.people.identityStatusUnavailable": "حالة تسجيل الدخول غير متاحة",
+  "ui.people.liveStatusNotReporting": "لا يُبلغ Homelab الخاص بك عن حالة تسجيل الدخول الآن، لذا قد يغيب بعض الأعضاء المدعوين. حاول مرة أخرى بعد قليل.",
+  "ui.people.liveStatusPending": "ستظهر حالة تسجيل الدخول والأعضاء المدعوون هنا بمجرد جاهزية خدمة تسجيل الدخول في Homelab.",
   "ui.people.member": "عضو",
   "ui.people.notInvitedYet": "لم تتم دعوته بعد",
   "ui.people.ownerAndHouseholdAppearOnce": "ستظهر أنت والأشخاص الذين تدعوهم هنا بمجرد جاهزية خدمة تسجيل الدخول في Homelab.",
@@ -2537,8 +2524,6 @@ export const ar: Record<string, string> = {
   "ui.serviceSheet.notPlaced": "غير موضوع",
   "ui.serviceSheet.ownership": "الملكية: {value}",
   "ui.serviceSheet.stackkit": "StackKit {version}",
-  "ui.services.aRegisteredNodeIsRequired":
-    "يلزم وجود Node مسجّل قبل إرفاق الخدمات.",
   "ui.services.aboutToMove":
     "أنت على وشك نقل هذا التطبيق من {slot} إلى {slot}.",
   "ui.services.action.freeze": "تجميد",
@@ -2555,7 +2540,6 @@ export const ar: Record<string, string> = {
     "اكتمل الإجراء؛ يجري تحديث المخزون.",
   "ui.services.actionTitle": "{action} {name}",
   "ui.services.addACatalogApplicationOr": "أضف تطبيقًا من الكتالوج أو استورد جرد الخوادم غير المُدارة.",
-  "ui.services.addANewApplication": "إضافة تطبيق جديد",
   "ui.services.addService": "إضافة خدمة",
   "ui.services.adoptIntoManagement": "ضمّ إلى الإدارة…",
   "ui.services.all": "الكل",
@@ -2584,7 +2568,6 @@ export const ar: Record<string, string> = {
   "ui.services.capacityTelemetryRefreshFailed":
     "فشل تحديث قياسات السعة عن بُعد",
   "ui.services.catalog": "الكتالوج",
-  "ui.services.catalogServiceCouldNotBe": "تعذّرت إضافة خدمة الكتالوج.",
   "ui.services.clearTheFilterToShow": "امسح المرشّح لعرض جميع التطبيقات.",
   "ui.services.cloudVps": "VPS سحابي",
   "ui.services.componentCount.one": "عدد المكوّنات: {count}",
@@ -2628,7 +2611,6 @@ export const ar: Record<string, string> = {
   "ui.services.moveToAnotherNode": "النقل إلى خادم آخر…",
   "ui.services.mutationsRequireOwnerApprovalA":
     "تتطلب التعديلات موافقة المالك؛ ويُجرى تمرير تحقق StackKits قبل أن تتغير الحالة المقيسة.",
-  "ui.services.newApplication": "تطبيق جديد",
   "ui.services.noApplicationsDeployed": "لا توجد تطبيقات منشورة",
   "ui.services.noApplicationsMatching": "لا توجد تطبيقات بالحالة {status}",
   "ui.services.noApplicationsReported": "لم يتم الإبلاغ عن أي تطبيقات",

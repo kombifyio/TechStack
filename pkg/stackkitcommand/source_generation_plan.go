@@ -69,7 +69,14 @@ func ManagedSourceGenerationBackupPlan(result *agentpb.StackKitResult, instance 
 		ApplyResultHash    string `json:"applyResultHash"`
 		EvidenceBundleHash string `json:"evidenceBundleHash"`
 	}
-	if json.Unmarshal(envelope.Data.Authority, &source) != nil || source.APIVersion != "stackkit.source-generation-inspection/v1" || source.Release.SchemaVersion != "stackkit.release-receipt/v1" || source.Release.Kit != "cloud-kit" || source.Release.Channel != "stable" || !versionPattern.MatchString(source.Release.Version) || ReleaseAtLeast(source.Release.Version, current) || !sha256Pattern.MatchString(source.Release.ArchiveSHA256) || !sha256Pattern.MatchString(source.Release.IndexSHA256) || source.Owner.OwnerRef == "" || source.Owner.KeyID == "" || source.Owner.PocketIDSubject == "" || !specHashPattern.MatchString(source.Owner.BindingDigest) || !specHashPattern.MatchString(source.ApplyResultHash) || !specHashPattern.MatchString(source.EvidenceBundleHash) {
+	if json.Unmarshal(envelope.Data.Authority, &source) != nil {
+		return nil, "", fmt.Errorf("source generation proof is invalid")
+	}
+	privateVersion, private, err := candidateSourceInspectionVersion(envelope.Data.Authority, current)
+	if err != nil {
+		return nil, "", err
+	}
+	if (!private && (source.APIVersion != "stackkit.source-generation-inspection/v1" || source.Release.SchemaVersion != "stackkit.release-receipt/v1" || source.Release.Kit != "cloud-kit" || source.Release.Channel != "stable" || !versionPattern.MatchString(source.Release.Version) || ReleaseAtLeast(source.Release.Version, current) || !sha256Pattern.MatchString(source.Release.ArchiveSHA256) || !sha256Pattern.MatchString(source.Release.IndexSHA256))) || source.Owner.OwnerRef == "" || source.Owner.KeyID == "" || source.Owner.PocketIDSubject == "" || !specHashPattern.MatchString(source.Owner.BindingDigest) || !specHashPattern.MatchString(source.ApplyResultHash) || !specHashPattern.MatchString(source.EvidenceBundleHash) {
 		return nil, "", fmt.Errorf("source generation proof is outside attested applied custody")
 	}
 	var historicalInspection any
@@ -79,7 +86,11 @@ func ManagedSourceGenerationBackupPlan(result *agentpb.StackKitResult, instance 
 	}
 	first, _ := json.Marshal(historicalInspection)
 	second, _ := json.Marshal(retainedInspection)
-	if string(first) != string(second) || inspection.Binding.CompilerVersion != "stackkits-resolver/"+source.Release.Version[1:] || inspection.Binding.Renderer.Version != source.Release.Version[1:] {
+	sourceVersion := source.Release.Version
+	if private {
+		sourceVersion = privateVersion
+	}
+	if string(first) != string(second) || inspection.Binding.CompilerVersion != "stackkits-resolver/"+sourceVersion[1:] || inspection.Binding.Renderer.Version != sourceVersion[1:] {
 		return nil, "", fmt.Errorf("source generation proof differs from its retained Plan")
 	}
 	return plan, hash, nil

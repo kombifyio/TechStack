@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/kombifyio/techstack/pkg/ril/actions"
 )
 
@@ -424,7 +425,7 @@ func (o *PostgresOutbox) beginTenant(ctx context.Context, tenantID string) (*sql
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantID); err != nil {
+	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
 		_ = tx.Rollback()
 		return nil, err
 	}

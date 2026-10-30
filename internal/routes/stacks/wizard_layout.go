@@ -122,6 +122,9 @@ func (h wizardRunHandlers) runWizardExtend(e *httpx.Event, run *wizardRunState) 
 				"wizard_projection_identity_requires_key", false, "Retry this attempt",
 				"Submit the attempt with its Idempotency-Key; nothing was changed."))
 	}
+	if strings.TrimSpace(stack.Status) == "running" || (run.priorFailed != nil && run.priorFailed.Result[wizardExtendCheckpointKey] != nil) {
+		return h.runWizardRunningExtend(e, run, stack, base)
+	}
 	if status := strings.TrimSpace(stack.Status); status == "provisioning" {
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
 			"The homelab is still being set up", wizardRunDetails(

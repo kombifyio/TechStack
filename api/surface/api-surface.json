@@ -3,7 +3,7 @@
   "product": "techstack",
   "source": {
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "bfc03cfe92a375331c59b6a82b248613eb5ddb166a2c154e96172f62df48dac0"
+    "sha256": "ab30fd283db3783fffa5149d9110fd34a16e69d6a9cf82c8cf32c9e34de0aced"
   },
   "envelope": "data",
   "cli": {
@@ -2428,6 +2428,471 @@
       "mcp": {
         "toolName": "get_enrollment_record",
         "title": "Get the local enrollment record",
+        "requiredCapability": "techstack.inventory.read",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "derived": true
+      }
+    },
+    {
+      "operationId": "listFailureOutcomes",
+      "method": "GET",
+      "path": "/api/v1/failures/outcomes",
+      "summary": "List the tenant's failure resolution outcomes",
+      "description": "Returns the caller tenant's own recorded resolution outcomes, newest\nfirst, and the succeeded and failed counts per resolution and\nsignature. Another tenant's outcomes are never visible.",
+      "tags": [
+        "Jobs"
+      ],
+      "arguments": [
+        {
+          "name": "resolution_id",
+          "in": "query",
+          "wireName": "resolution_id",
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "wireName": "limit",
+          "schema": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      ],
+      "output": {
+        "contentType": "application/json",
+        "envelope": "data",
+        "schema": {
+          "properties": {
+            "items": {
+              "items": {
+                "properties": {
+                  "completed_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "context": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Coarse context dimensions of the failure (stackkit_module, os, provider, ...); absent when unknown.",
+                    "type": "object"
+                  },
+                  "job_id": {
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "enum": [
+                      "succeeded",
+                      "failed"
+                    ],
+                    "type": "string"
+                  },
+                  "procedure": {
+                    "type": "string"
+                  },
+                  "recorded_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "resolution_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "stack_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "resolution_id",
+                  "signature",
+                  "procedure",
+                  "job_id",
+                  "outcome",
+                  "context",
+                  "completed_at",
+                  "recorded_at"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "resolutions": {
+              "items": {
+                "properties": {
+                  "failed": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "last_outcome": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "resolution_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "succeeded": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "resolution_id",
+                  "signature",
+                  "succeeded",
+                  "failed",
+                  "last_outcome"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "items",
+            "resolutions"
+          ],
+          "type": "object"
+        }
+      },
+      "cli": {
+        "command": [
+          "failures",
+          "outcomes"
+        ]
+      },
+      "mcp": {
+        "toolName": "list_failure_outcomes",
+        "title": "List the tenant's failure resolution outcomes",
+        "requiredCapability": "techstack.inventory.read",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "derived": true
+      }
+    },
+    {
+      "operationId": "recordFailureOutcome",
+      "method": "POST",
+      "path": "/api/v1/failures/outcomes",
+      "summary": "Record the outcome of an applied failure resolution",
+      "description": "Attributes a finished procedure job of the caller tenant to the\nfailure resolution it applied and the failure signature it was\napplied to. The outcome is the job's terminal state (completed is\nsucceeded, failed is failed), never a value the caller sends; a job\nthat is still running or was canceled is refused. The context is the\none of the tenant's own latest occurrence of that signature. The\nrecord stays in the tenant; repeating the call for the same\nresolution and job returns the stored record.",
+      "tags": [
+        "Jobs"
+      ],
+      "mutating": true,
+      "arguments": [
+        {
+          "name": "job_id",
+          "in": "body",
+          "wireName": "job_id",
+          "required": true,
+          "description": "The tenant's job that ran the procedure.",
+          "schema": {
+            "description": "The tenant's job that ran the procedure.",
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        {
+          "name": "procedure",
+          "in": "body",
+          "wireName": "procedure",
+          "required": true,
+          "description": "Product procedure reference of the applied fix step.",
+          "schema": {
+            "description": "Product procedure reference of the applied fix step.",
+            "pattern": "^(stackkits|techstack):[a-z0-9][a-z0-9._:/@#-]{1,199}$",
+            "type": "string"
+          }
+        },
+        {
+          "name": "resolution_id",
+          "in": "body",
+          "wireName": "resolution_id",
+          "required": true,
+          "description": "Id of the failure resolution that was applied (find_similar_failures).",
+          "schema": {
+            "description": "Id of the failure resolution that was applied (find_similar_failures).",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "name": "signature",
+          "in": "body",
+          "wireName": "signature",
+          "required": true,
+          "description": "Failure signature the resolution was applied to; the tenant must have an occurrence of it.",
+          "schema": {
+            "description": "Failure signature the resolution was applied to; the tenant must have an occurrence of it.",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        }
+      ],
+      "body": {
+        "contentType": "application/json",
+        "required": true,
+        "mode": "properties"
+      },
+      "output": {
+        "contentType": "application/json",
+        "envelope": "data",
+        "schema": {
+          "properties": {
+            "created": {
+              "type": "boolean"
+            },
+            "outcome": {
+              "properties": {
+                "completed_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "context": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Coarse context dimensions of the failure (stackkit_module, os, provider, ...); absent when unknown.",
+                  "type": "object"
+                },
+                "job_id": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "enum": [
+                    "succeeded",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "procedure": {
+                  "type": "string"
+                },
+                "recorded_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "resolution_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "signature": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "stack_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resolution_id",
+                "signature",
+                "procedure",
+                "job_id",
+                "outcome",
+                "context",
+                "completed_at",
+                "recorded_at"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "outcome",
+            "created"
+          ],
+          "type": "object"
+        }
+      },
+      "cli": {
+        "command": [
+          "failures",
+          "outcome",
+          "record"
+        ]
+      },
+      "mcp": {
+        "toolName": "record_failure_outcome",
+        "title": "Record the outcome of an applied failure resolution",
+        "requiredCapability": "techstack.inventory.write",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false
+        },
+        "derived": true
+      }
+    },
+    {
+      "operationId": "listFailureSignatures",
+      "method": "GET",
+      "path": "/api/v1/failures/signatures",
+      "summary": "List the tenant's failure signatures",
+      "description": "Returns the caller tenant's own failed operations normalized into\nfailure signatures, most recently seen first. A signature is the\nSHA-256 over the normalizer version, component, phase, error code and\na template in which every variable token (timestamps, IDs, addresses,\nhost names, paths, user names, quoted values, numbers) is replaced.\nNo raw error text is stored or returned, and another tenant's\noccurrences are never visible.",
+      "tags": [
+        "Jobs"
+      ],
+      "arguments": [
+        {
+          "name": "limit",
+          "in": "query",
+          "wireName": "limit",
+          "schema": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        {
+          "name": "window_days",
+          "in": "query",
+          "wireName": "window_days",
+          "description": "Length of the growth window; recent_occurrences counts the last window, previous_occurrences the one before it.",
+          "schema": {
+            "default": 7,
+            "maximum": 90,
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      ],
+      "output": {
+        "contentType": "application/json",
+        "envelope": "data",
+        "schema": {
+          "properties": {
+            "items": {
+              "items": {
+                "properties": {
+                  "component": {
+                    "description": "Failing capability, for example techstack.stackkit.deploy.",
+                    "type": "string"
+                  },
+                  "error_code": {
+                    "description": "Most specific recorded reason code; empty when unknown.",
+                    "type": "string"
+                  },
+                  "first_seen": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "last_seen": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "latest_exit_status": {
+                    "nullable": true,
+                    "type": "integer"
+                  },
+                  "latest_stackkit_module": {
+                    "description": "StackKit module of the most recent occurrence; empty when unknown.",
+                    "type": "string"
+                  },
+                  "latest_template": {
+                    "description": "Normalized error template of the most recent occurrence.",
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "normalizer_version": {
+                    "type": "string"
+                  },
+                  "occurrences": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "phase": {
+                    "description": "Step in which the operation failed; empty when unknown.",
+                    "type": "string"
+                  },
+                  "previous_occurrences": {
+                    "description": "Occurrences within the window_days before the last window.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "recent_occurrences": {
+                    "description": "Occurrences within the last window_days.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "signature": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "targets": {
+                    "description": "Distinct StackKit deployments with this signature.",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "signature",
+                  "normalizer_version",
+                  "component",
+                  "phase",
+                  "error_code",
+                  "latest_template",
+                  "latest_exit_status",
+                  "occurrences",
+                  "targets",
+                  "first_seen",
+                  "last_seen",
+                  "recent_occurrences",
+                  "previous_occurrences",
+                  "latest_stackkit_module"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "normalizer_version": {
+              "type": "string"
+            },
+            "window_days": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "items",
+            "normalizer_version"
+          ],
+          "type": "object"
+        }
+      },
+      "cli": {
+        "command": [
+          "failures",
+          "signatures"
+        ]
+      },
+      "mcp": {
+        "toolName": "list_failure_signatures",
+        "title": "List the tenant's failure signatures",
         "requiredCapability": "techstack.inventory.read",
         "annotations": {
           "readOnlyHint": true,
@@ -23377,6 +23842,64 @@
       "mcpExcluded": true
     },
     {
+      "operationId": "verifyWorkerTenantHandoff",
+      "method": "POST",
+      "path": "/api/v1/workers/tenant-handoffs/verify",
+      "summary": "Check a handoff confirmation before the server removes anything",
+      "description": "Called by `techstack agent handoff` before it moves or removes any command evidence. The request carries the one-time confirmation and a DPoP proof signed by the server's host key and bound to the confirmation. 200 only for an unconsumed, unexpired confirmation that the prior owner issued for exactly that key; otherwise 409 `tenant_handoff_invalid`. Nothing is consumed.",
+      "tags": [
+        "Workers"
+      ],
+      "mutating": true,
+      "arguments": [
+        {
+          "name": "confirmation",
+          "in": "body",
+          "wireName": "confirmation",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "body": {
+        "contentType": "application/json",
+        "required": true,
+        "mode": "properties"
+      },
+      "output": {
+        "contentType": "application/json",
+        "envelope": "data",
+        "schema": {
+          "properties": {
+            "disposition": {
+              "enum": [
+                "export",
+                "quarantine"
+              ],
+              "type": "string"
+            },
+            "handoff_id": {
+              "type": "string"
+            },
+            "verified": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "cli": {
+        "command": [
+          "workers",
+          "tenant-handoff",
+          "verify"
+        ],
+        "hidden": true
+      },
+      "mcpExcluded": true
+    },
+    {
       "operationId": "approveWorker",
       "method": "POST",
       "path": "/api/v1/workers/{id}/approve",
@@ -25840,6 +26363,94 @@
           "id"
         ],
         "hidden": true
+      },
+      "mcpExcluded": true
+    },
+    {
+      "operationId": "confirmWorkerTenantHandoff",
+      "method": "POST",
+      "path": "/api/v1/workers/{id}/tenant-handoff",
+      "summary": "Confirm the handoff of a retired server's command evidence",
+      "description": "The owner, as custodian of a detached or retired server, confirms that the command evidence its Guard still holds (journal entries, outcomes and identity state) may leave the server by `export` (an archive the operator takes off the server) or `quarantine` (a root-only directory outside the Guard state). The response shows a one-time `confirmation` exactly once and is valid for 72 hours. It is bound to the host key the worker used. The operator passes it to `techstack agent handoff --server --confirmation-file`, which has the control plane verify it for this server's key, then moves and securely removes the evidence and records a receipt. Pairing a server whose host key served another tenant, or that declares another tenant's evidence, is refused (409 `tenant_handoff_required`) until a receipt of that tenant is consumed. A receipt is consumed once, by the pairing that proves the confirmed key, before expiry; only that pairing may repeat it within 15 minutes (409 `tenant_handoff_invalid` otherwise). Requires the owner and a fresh multi-factor sign-in (at most 300 seconds old). 409 `tenant_handoff_worker_active` while the worker is not revoked or rejected, 409 `tenant_handoff_unbindable` for a worker that never bound a host key. A worker of another tenant or owner is 404.",
+      "tags": [
+        "Workers"
+      ],
+      "mutating": true,
+      "arguments": [
+        {
+          "name": "id",
+          "in": "path",
+          "wireName": "id",
+          "required": true,
+          "description": "Resource ID",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "disposition",
+          "in": "body",
+          "wireName": "disposition",
+          "required": true,
+          "schema": {
+            "enum": [
+              "export",
+              "quarantine"
+            ],
+            "type": "string"
+          }
+        }
+      ],
+      "body": {
+        "contentType": "application/json",
+        "required": true,
+        "mode": "properties"
+      },
+      "output": {
+        "contentType": "application/json",
+        "envelope": "data",
+        "schema": {
+          "properties": {
+            "confirmation": {
+              "type": "string"
+            },
+            "disposition": {
+              "enum": [
+                "export",
+                "quarantine"
+              ],
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "handoff_id": {
+              "type": "string"
+            },
+            "worker_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "handoff_id",
+            "worker_id",
+            "disposition",
+            "expires_at",
+            "confirmation"
+          ],
+          "type": "object"
+        }
+      },
+      "cli": {
+        "command": [
+          "workers",
+          "tenant-handoff",
+          "confirm"
+        ],
+        "args": [
+          "id"
+        ]
       },
       "mcpExcluded": true
     },

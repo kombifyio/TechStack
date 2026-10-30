@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/kombifyio/techstack/pkg/artifactdelivery"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/trustedproxy"
 )
@@ -19,10 +20,16 @@ import (
 const linuxInstallerArtifactSHA256 = "ee62708db4a2c74b2e52dc8e27865cf345e0e6e05d22674e3933f107e8fbc23e"
 
 func (h workerRouteHandlers) installScript(e *httpx.Event) error {
+	if err := artifactdelivery.RequireAllowed(e); err != nil {
+		return err
+	}
 	return serveLinuxInstallScript(e, h.installScriptPaths())
 }
 
 func serveLinuxInstallScript(e *httpx.Event, paths []string) error {
+	if err := artifactdelivery.RequireAllowed(e); err != nil {
+		return err
+	}
 	content, found := firstValidLinuxInstaller(paths)
 	e.Response.Header().Set("Cache-Control", "no-store")
 	if !found {
@@ -67,6 +74,9 @@ func (h workerRouteHandlers) installScriptPaths() []string {
 // kombify-Techstack-8as). Mirrors installScript: prefer the on-disk install.ps1,
 // fall back to an embedded minimal bootstrap.
 func (h workerRouteHandlers) installScriptPS(e *httpx.Event) error {
+	if err := artifactdelivery.RequireAllowed(e); err != nil {
+		return err
+	}
 	for _, p := range h.installScriptPSPaths() {
 		content, err := os.ReadFile(p)
 		if err == nil {

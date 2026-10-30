@@ -22,6 +22,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/originca"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
@@ -172,6 +173,10 @@ type Config struct {
 	Workers        int
 	WorkDir        string
 	RuntimeActions jobs.RuntimeActions
+	// JobTypeFilter partitions existing durable jobs between process profiles.
+	// Nil keeps the ordinary native combined runtime. SQL principals still own
+	// authorization; this filter never grants a database capability.
+	JobTypeFilter func(jobs.JobType) bool
 	// BackupScheduleProjector records the cadence a managed rollout selected.
 	// Without it the schedule projection stays empty and no backup is ever due.
 	BackupScheduleProjector jobs.BackupScheduleProjector
@@ -229,17 +234,20 @@ type ManagedRuntimeLeaseLister interface {
 }
 
 type ProvisionStackOptions struct {
-	AutoDeploy               bool
-	OwnerSpecBootstrap       *jobs.OwnerSpecBootstrap
-	IdempotencyKey           string
-	RequestContext           context.Context
-	TenantID                 string
-	OwnerID                  string
-	StackName                string
-	PreparedManagedLease     *jobs.ManagedLeaseRequest
-	CustomerGuest            *jobs.CustomerGuestBinding
-	RequiredLeaseID          string
-	RequiredServerID         string
+	AutoDeploy           bool
+	OwnerSpecBootstrap   *jobs.OwnerSpecBootstrap
+	IdempotencyKey       string
+	RequestContext       context.Context
+	TenantID             string
+	OwnerID              string
+	StackName            string
+	PreparedManagedLease *jobs.ManagedLeaseRequest
+	CustomerGuest        *jobs.CustomerGuestBinding
+	RequiredLeaseID      string
+	RequiredServerID     string
+	// ExistingServerID fences a first install to the enrolled server selected
+	// by the wizard; managed-runtime lease requirements remain independent.
+	ExistingServerID         string
 	RoutingRevision          int64
 	RoutingIdempotencyKey    string
 	OfflineRemoval           *OfflineRemovalRequest
@@ -382,6 +390,12 @@ func (o *Orchestrator) provisionConfig(actions jobs.RuntimeActions) *jobs.Provis
 }
 
 func (o *Orchestrator) claimDurableJobExecution(ctx context.Context, claim jobs.ExecutionClaim) error {
+	if !o.ownsJobType(claim.JobType) {
+		return jobs.ErrExecutionClaimFenced
+	}
+	if !releasechannel.AdmitsJobExecution(claim.TenantID) {
+		return releasechannel.ErrTenantNotOwned
+	}
 	if o.jobStore == nil || strings.TrimSpace(claim.TenantID) == "" {
 		return nil
 	}
@@ -489,6 +503,14 @@ func (o *Orchestrator) preparedEnrollmentAlreadyDispatched(job *jobs.Job, tenant
 // remaining provision-to-deploy handoff. It reuses the same native lease and
 // canonical Guard predicates as explicit and recovery deploys.
 func (o *Orchestrator) admitProvisionAutoDeploy(ctx context.Context, req jobs.AutoDeployAdmissionRequest) error {
+	if strings.TrimSpace(req.ExistingServerID) != "" {
+		stack, err := o.findControlPlaneStackForJob(ctx, req.StackID, ProvisionStackOptions{TenantID: req.TenantID, OwnerID: req.OwnerID})
+		if err != nil {
+			return err
+		}
+		_, err = o.deployJobPayload(ctx, req.StackID, stack, ProvisionStackOptions{ExistingServerID: req.ExistingServerID})
+		return err
+	}
 	stackID := strings.TrimSpace(req.StackID)
 	tenantID := strings.TrimSpace(req.TenantID)
 	ownerID := strings.TrimSpace(req.OwnerID)
@@ -831,6 +853,9 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 	if stackErr != nil {
 		return "", fmt.Errorf("stack not found: %w", stackErr)
 	}
+	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
+		return "", releasechannel.ErrTenantNotOwned
+	}
 
 	canonicalSpec, providerErr := canonicalizeProvisionProviderIdentity(spec, stack.config)
 	if providerErr != nil {
@@ -858,6 +883,17 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 	status := stack.status
 	if (status == persistentStateRunning || status == persistentStateProvisioning) && opts.CustomerGuest == nil {
 		return "", fmt.Errorf("stack is already %s", status)
+	}
+	var existingServerPayload map[string]any
+	if opts.ExistingServerID != "" {
+		if !opts.AutoDeploy || opts.PreparedManagedLease != nil || opts.CustomerGuest != nil {
+			return "", fmt.Errorf("existing server installation requires preparation and guarded rollout without provider admission")
+		}
+		var err error
+		existingServerPayload, err = o.deployJobPayload(ctx, stackID, stack, opts)
+		if err != nil {
+			return "", err
+		}
 	}
 	if opts.CustomerGuest != nil {
 		if idempotency == nil {
@@ -906,6 +942,12 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 	}
 	if preparedManagedLeaseRequest != nil {
 		job.Payload[jobs.PreparedManagedLeaseRequestPayloadKey] = preparedManagedLeaseRequest
+	}
+	for key, value := range existingServerPayload {
+		job.Payload[key] = value
+	}
+	if opts.ExistingServerID != "" {
+		job.Payload["existing_server_id"] = opts.ExistingServerID
 	}
 	if opts.CustomerGuest != nil {
 		job.Payload[jobs.CustomerGuestResultKey] = opts.CustomerGuest
@@ -958,6 +1000,9 @@ func (o *Orchestrator) deployStackWithOptionsLocked(ctx context.Context, stackID
 	stack, stackErr := o.findStackForJob(ctx, stackID, opts)
 	if stackErr != nil {
 		return "", fmt.Errorf("stack not found: %w", stackErr)
+	}
+	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
+		return "", releasechannel.ErrTenantNotOwned
 	}
 	idempotency, idempotencyErr := newDeployIdempotency(stack, opts.IdempotencyKey)
 	if idempotencyErr != nil {
@@ -1090,6 +1135,18 @@ func (o *Orchestrator) deployJobPayload(
 	approvedWorkers, err := o.approvedDeployWorkers(ctx, stackID, stack, runtimes, observedAt)
 	if err != nil {
 		return nil, err
+	}
+	if opts.ExistingServerID != "" {
+		selected := approvedWorkers[:0]
+		for _, worker := range approvedWorkers {
+			if stringFromAny(worker["server_id"]) == opts.ExistingServerID {
+				selected = append(selected, worker)
+			}
+		}
+		approvedWorkers = selected
+		if len(approvedWorkers) != 1 {
+			return nil, ErrNoAssignedWorkers
+		}
 	}
 	managedRuntime, managedRuntimeOK := managedRuntimeDeployEligibleRuntime(stack, managedPayload, opts, runtimes, observedAt)
 	if payloadHasManagedRuntimeLease(managedPayload) && !managedRuntimeOK {
@@ -1742,8 +1799,16 @@ func serverRuntimeAllowsStackDeploy(stack *orchestratorStack, runtime controlpla
 		strings.TrimSpace(stack.id) == "" ||
 		runtime.TenantID != stack.tenantID ||
 		runtime.StackID != stack.id ||
-		runtime.OwnerSubjectID != stack.ownerID ||
-		serverregistry.LifecycleState(strings.ToLower(strings.TrimSpace(runtime.LifecycleState))) != serverregistry.LifecycleActive ||
+		runtime.OwnerSubjectID != stack.ownerID {
+		return false
+	}
+	return GuardRuntimeDeployEligible(runtime, now)
+}
+
+// GuardRuntimeDeployEligible is the shared current Guard observation gate for
+// both unassigned first-install targets and assigned deployment admission.
+func GuardRuntimeDeployEligible(runtime controlplane.ServerRuntime, now time.Time) bool {
+	if serverregistry.LifecycleState(strings.ToLower(strings.TrimSpace(runtime.LifecycleState))) != serverregistry.LifecycleActive ||
 		runtime.LastHeartbeatAt == nil || runtime.LastHeartbeatAt.IsZero() {
 		return false
 	}
@@ -1855,6 +1920,9 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 	stack, err := o.findStackForJob(ctx, stackID, opts)
 	if err != nil {
 		return "", fmt.Errorf("stack not found: %w", err)
+	}
+	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
+		return "", releasechannel.ErrTenantNotOwned
 	}
 	managedRuntimeDecommissionRequired, err := o.managedRuntimeDecommissionRequired(ctx, stack)
 	if err != nil {

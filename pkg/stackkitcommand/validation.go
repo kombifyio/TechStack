@@ -123,8 +123,13 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE &&
 		command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE &&
 		command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS &&
+		command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT &&
 		(strings.TrimSpace(command.HouseholdUsername) != "" || strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "" || command.HouseholdAppsSet || len(command.HouseholdApps) != 0) {
 		return fmt.Errorf("StackKit household identity fields are only valid for household operations")
+	}
+	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT &&
+		(command.HouseholdProjectionKey != "" || command.HouseholdProjectionRevision != 0 || command.HouseholdProjectionAction != "") {
+		return fmt.Errorf("StackKit household projection identity is only valid for a fenced projection")
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_INIT && strings.TrimSpace(command.OwnerEmail) != "" {
 		return fmt.Errorf("StackKit owner_email is only valid for init")
@@ -139,6 +144,12 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return err
 	}
 	if err := validateWalletItemDeliveryFields(command); err != nil {
+		return err
+	}
+	if err := ValidateUseCaseConfigurationFields(command); err != nil {
+		return err
+	}
+	if err := ValidateUseCaseRemovalFields(command); err != nil {
 		return err
 	}
 	if err := validateWorkloadRelocationFields(command); err != nil {
@@ -160,6 +171,8 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return fmt.Errorf("StackKit federation hand-off fields are only valid for federation hand-off")
 	}
 	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_CONFIGURE, agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_REMOVE:
+		return nil // Strict fields and typed payload were admitted above.
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION:
 		if command.Stackkit != "cloud-kit" || command.LocalSiteRef != "cloud" || command.StackkitInstanceId == "" || len(command.InventoryJson) != 0 || len(command.CandidateSpecJson) != 0 || command.DryRun || command.Offline || command.TargetRelease != "" || command.ExpectedPlanHash != "" {
 			return fmt.Errorf("source cache preparation requires canonical managed Cloud custody without replacement intent")
@@ -229,6 +242,8 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return validateHouseholdRemoveCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS:
 		return validateHouseholdUpdateAppsCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT:
+		return validateHouseholdProjectionCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
 		return validateAdvancedTrustImportCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE,
@@ -253,7 +268,8 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_STATUS, agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_ABORT:
 		return validateWorkloadRelocationCommand(command)
 	default:
 		return fmt.Errorf("unsupported StackKit operation %s", command.Operation.String())
@@ -308,6 +324,20 @@ func ParseAdvancedTrustImportEvidence(command *agentpb.StackKitCommand, result *
 		return AdvancedTrustImportEvidence{}, fmt.Errorf("StackKit advanced trust import evidence does not pin the dispatched bundle")
 	}
 	return evidence, nil
+}
+
+func validateHouseholdProjectionCommand(command *agentpb.StackKitCommand) error {
+	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(command.HouseholdProjectionKey) || command.HouseholdProjectionRevision == 0 {
+		return fmt.Errorf("StackKit household projection requires the owner/person digest and a positive generation")
+	}
+	switch command.HouseholdProjectionAction {
+	case "add":
+		return validateHouseholdInviteCommand(command)
+	case "remove":
+		return validateHouseholdRemoveCommand(command)
+	default:
+		return fmt.Errorf("StackKit household projection action must be add or remove")
+	}
 }
 
 func validateHouseholdInviteCommand(command *agentpb.StackKitCommand) error {
@@ -681,6 +711,8 @@ func RequiresWorkspaceInstanceBinding(command *agentpb.StackKitCommand) bool {
 		return true
 	}
 	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_CONFIGURE, agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_REMOVE:
+		return true
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION:
 		return true
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_START,
@@ -800,6 +832,14 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 			}
 		}
 		switch command.Operation {
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_REMOVE:
+			if _, err := ParseUseCaseRemovalEvidence(command, result); err != nil {
+				return err
+			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_CONFIGURE:
+			if _, err := ParseUseCaseConfigurationEvidence(command, result); err != nil {
+				return err
+			}
 		case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN:
 			if _, err := ParseBackupRunEvidence(command, result); err != nil {
 				return err
@@ -846,7 +886,8 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN,
 			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN,
 			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND,
-			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE:
+			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_STATUS, agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_ABORT:
 			if err := validateWorkloadRelocationResult(command, result); err != nil {
 				return err
 			}
@@ -872,7 +913,8 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 
 func validateSensitiveIdentityResult(result *agentpb.StackKitResult, command *agentpb.StackKitCommand) error {
 	wantsSensitive := command.OwnerApproved && result.Success && (command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE ||
-		command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE)
+		command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE ||
+		(command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT && command.HouseholdProjectionAction == "add"))
 	if !wantsSensitive {
 		if len(result.SensitiveResultJson) != 0 {
 			return fmt.Errorf("StackKit sensitive result is not allowed for this operation")
@@ -960,6 +1002,10 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return name
 	}
 	switch operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_CONFIGURE:
+		return "stackkit use-cases configure"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_USE_CASE_REMOVE:
+		return "stackkit remove"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_INIT:
 		return "stackkit init"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_VALIDATE:
@@ -1018,6 +1064,8 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit user remove"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS:
 		return "stackkit user apps"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT:
+		return "stackkit user project"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
 		return "stackkit advanced trust import"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_FEDERATION_HANDOFF:

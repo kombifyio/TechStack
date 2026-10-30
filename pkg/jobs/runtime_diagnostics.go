@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 	"github.com/kombifyio/techstack/pkg/secrets"
 	"golang.org/x/crypto/ssh"
 )
@@ -138,24 +139,14 @@ func (c *SSHRuntimeDiagnosticsCollector) dial(ctx context.Context, target *Runti
 		Timeout:         minDuration(c.timeout, 10*time.Second),
 	}
 	addr := net.JoinHostPort(target.Host, strconv.Itoa(target.Port))
-	type dialResult struct {
-		client *ssh.Client
-		err    error
-	}
-	done := make(chan dialResult, 1)
-	go func() {
-		client, err := ssh.Dial("tcp", addr, config)
-		done <- dialResult{client: client, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case result := <-done:
-		if result.err != nil {
-			return nil, fmt.Errorf("ssh diagnostics dial %s@%s failed: %w", target.User, addr, result.err)
+	client, err := fulllocal.DialSSH(ctx, addr, config)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
-		return result.client, nil
+		return nil, fmt.Errorf("ssh diagnostics dial %s@%s failed: %w", target.User, addr, err)
 	}
+	return client, nil
 }
 
 func (c *SSHRuntimeDiagnosticsCollector) runCommand(ctx context.Context, client *ssh.Client, name, command string, outputLimit int) RuntimeDiagnosticsCommand {

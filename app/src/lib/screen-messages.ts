@@ -793,6 +793,10 @@ export const screenMessages = {
     "ui.people.identityProviderNotReady": "Sign-in service not ready",
     "ui.people.identityStatusUnavailable": "Sign-in status unavailable",
     "ui.people.member": "Member",
+    "ui.people.liveStatusNotReporting":
+      "Your homelab is not reporting sign-in status right now, so invited members may be missing. Try again in a moment.",
+    "ui.people.liveStatusPending":
+      "Sign-in status and invited members appear here once your homelab's sign-in service is ready.",
     "ui.people.notInvitedYet": "Not invited yet",
     "ui.people.ownerAndHouseholdAppearOnce":
       "You and the people you invite appear here once your homelab's sign-in service is ready.",
@@ -1291,8 +1295,6 @@ export const screenMessages = {
     "ui.serviceSheet.notPlaced": "not placed",
     "ui.serviceSheet.ownership": "Ownership: {value}",
     "ui.serviceSheet.stackkit": "StackKit {version}",
-    "ui.services.aRegisteredNodeIsRequired":
-      "A registered Node is required before services can be attached.",
     "ui.services.aboutToMove":
       "You are about to move this application from {slot} to {slot}.",
     "ui.services.action.freeze": "Freeze",
@@ -1310,7 +1312,6 @@ export const screenMessages = {
     "ui.services.actionTitle": "{action} {name}",
     "ui.services.addACatalogApplicationOr":
       "Add a catalog application or import unmanaged server inventory.",
-    "ui.services.addANewApplication": "Add a new application",
     "ui.services.addService": "Add Service",
     "ui.services.adoptIntoManagement": "Adopt into management…",
     "ui.services.all": "All",
@@ -1338,8 +1339,6 @@ export const screenMessages = {
     "ui.services.capacityTelemetryRefreshFailed":
       "Capacity telemetry refresh failed",
     "ui.services.catalog": "Catalog",
-    "ui.services.catalogServiceCouldNotBe":
-      "Catalog service could not be added.",
     "ui.services.clearTheFilterToShow":
       "Clear the filter to show all applications.",
     "ui.services.cloudVps": "Cloud VPS",
@@ -1387,7 +1386,6 @@ export const screenMessages = {
     "ui.services.moveToAnotherNode": "Move to another server…",
     "ui.services.mutationsRequireOwnerApprovalA":
       "Mutations require owner approval; a StackKits verify pass runs before measured state changes.",
-    "ui.services.newApplication": "New Application",
     "ui.services.noApplicationsDeployed": "No applications deployed",
     "ui.services.noApplicationsMatching": "No applications matching {status}",
     "ui.services.noApplicationsReported": "No applications reported",
@@ -3535,6 +3533,10 @@ export const screenMessages = {
     "ui.people.identityProviderNotReady": "Anmeldedienst nicht bereit",
     "ui.people.identityStatusUnavailable": "Anmeldestatus nicht verfügbar",
     "ui.people.member": "Mitglied",
+    "ui.people.liveStatusNotReporting":
+      "Dein Homelab meldet den Anmeldestatus gerade nicht, deshalb fehlen eventuell eingeladene Mitglieder. Versuche es gleich noch einmal.",
+    "ui.people.liveStatusPending":
+      "Anmeldestatus und eingeladene Mitglieder erscheinen hier, sobald der Anmeldedienst deines Homelabs bereit ist.",
     "ui.people.notInvitedYet": "Noch nicht eingeladen",
     "ui.people.ownerAndHouseholdAppearOnce":
       "Du und die Personen, die du einlädst, erscheinen hier, sobald der Anmeldedienst deines Homelabs bereit ist.",
@@ -4055,8 +4057,6 @@ export const screenMessages = {
     "ui.serviceSheet.notPlaced": "nicht platziert",
     "ui.serviceSheet.ownership": "Eigentümer: {value}",
     "ui.serviceSheet.stackkit": "StackKit {version}",
-    "ui.services.aRegisteredNodeIsRequired":
-      "Ein registrierter Node ist erforderlich, bevor Services angebunden werden können.",
     "ui.services.aboutToMove":
       "Du bist dabei, diese Anwendung von {slot} nach {slot} zu verschieben.",
     "ui.services.action.freeze": "Einfrieren",
@@ -4074,7 +4074,6 @@ export const screenMessages = {
     "ui.services.actionTitle": "{action} {name}",
     "ui.services.addACatalogApplicationOr":
       "Füge eine Katalog-Anwendung hinzu oder importiere nicht verwaltetes Serverinventar.",
-    "ui.services.addANewApplication": "Neue Anwendung hinzufügen",
     "ui.services.addService": "Service hinzufügen",
     "ui.services.adoptIntoManagement": "In die Verwaltung übernehmen…",
     "ui.services.all": "Alle",
@@ -4103,8 +4102,6 @@ export const screenMessages = {
     "ui.services.capacityTelemetryRefreshFailed":
       "Aktualisierung der Kapazitäts-Telemetrie fehlgeschlagen",
     "ui.services.catalog": "Katalog",
-    "ui.services.catalogServiceCouldNotBe":
-      "Katalog-Service konnte nicht hinzugefügt werden.",
     "ui.services.clearTheFilterToShow":
       "Setze den Filter zurück, um alle Anwendungen anzuzeigen.",
     "ui.services.cloudVps": "Cloud-VPS",
@@ -4156,7 +4153,6 @@ export const screenMessages = {
     "ui.services.moveToAnotherNode": "Auf anderen Server verschieben…",
     "ui.services.mutationsRequireOwnerApprovalA":
       "Änderungen erfordern die Freigabe des Owners; vor jeder Änderung des gemessenen Zustands läuft ein StackKits-Verifizierungsdurchlauf.",
-    "ui.services.newApplication": "Neue Anwendung",
     "ui.services.noApplicationsDeployed": "Keine Anwendungen deployt",
     "ui.services.noApplicationsMatching":
       "Keine Anwendungen mit Status {status}",

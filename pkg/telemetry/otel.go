@@ -1,6 +1,6 @@
 // Package telemetry provides OpenTelemetry initialization for kombify services.
 // It reads OTEL_* environment variables (standard OTel SDK config) and sets up
-// trace exporters. When OTEL_EXPORTER_OTLP_ENDPOINT is not set, telemetry is a no-op.
+// trace exporters. Export is disabled only when neither OTLP endpoint is set.
 package telemetry
 
 import (
@@ -8,8 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/fulllocal"
+
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -17,13 +18,13 @@ import (
 )
 
 // Init sets up OpenTelemetry tracing. Returns a shutdown function.
-// When OTEL_EXPORTER_OTLP_ENDPOINT is empty, returns a no-op shutdown.
+// The trace-specific endpoint takes precedence over the general endpoint.
+// When neither is configured, local tracing stays active without an exporter.
 func Init(ctx context.Context, serviceName, serviceVersion string) (func(context.Context) error, error) {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		return func(context.Context) error { return nil }, nil
+	endpoint, _, err := fulllocal.OTLPTraceEndpoint(os.Getenv, fullLocalOTelBuild || fulllocal.Active())
+	if err != nil {
+		return nil, err
 	}
-
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
@@ -34,15 +35,15 @@ func Init(ctx context.Context, serviceName, serviceVersion string) (func(context
 		return nil, err
 	}
 
-	exporter, err := otlptracehttp.New(ctx)
-	if err != nil {
-		return nil, err
+	options := []sdktrace.TracerProviderOption{sdktrace.WithResource(res)}
+	if endpoint != "" {
+		exporter, err := newOTLPExporter(ctx)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(5*time.Second)))
 	}
-
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(5*time.Second)),
-		sdktrace.WithResource(res),
-	)
+	tp := sdktrace.NewTracerProvider(options...)
 
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(

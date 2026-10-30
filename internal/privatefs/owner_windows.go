@@ -9,8 +9,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var reopenFile = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReOpenFile")
-
 // Windows file modes do not express directory access. Inspect the ACL of the
 // admitted handle instead; the user, system and administrators retain custody.
 func validateOwner(directory *os.File, _ os.FileInfo) error {
@@ -93,13 +91,23 @@ func setPrivateACL(file *os.File) error {
 	if err != nil {
 		return err
 	}
-	// Go file handles do not request WRITE_DAC. ReOpenFile obtains that
-	// permission for the same inode without resolving a mutable pathname.
-	// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-reopenfile
-	value, _, callErr := reopenFile.Call(file.Fd(), windows.WRITE_DAC|windows.READ_CONTROL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_FLAG_BACKUP_SEMANTICS)
-	handle := windows.Handle(value)
-	if handle == windows.InvalidHandle {
-		return callErr
+	// Go handles do not request WRITE_DAC, and ReOpenFile refuses directory
+	// handles. An empty NT name reopens the admitted object itself, so a
+	// replaced ancestor pathname cannot redirect the ACL write.
+	name, err := windows.NewNTUnicodeString("")
+	if err != nil {
+		return err
+	}
+	attributes := windows.OBJECT_ATTRIBUTES{RootDirectory: windows.Handle(file.Fd()), ObjectName: name}
+	attributes.Length = uint32(unsafe.Sizeof(attributes))
+	var handle windows.Handle
+	err = windows.NtCreateFile(&handle, windows.WRITE_DAC|windows.READ_CONTROL, &attributes,
+		&windows.IO_STATUS_BLOCK{}, nil, 0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_OPEN, windows.FILE_OPEN_REPARSE_POINT, 0, 0)
+	runtime.KeepAlive(file)
+	if err != nil {
+		return err
 	}
 	defer windows.CloseHandle(handle)
 	return windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)

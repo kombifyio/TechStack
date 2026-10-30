@@ -93,7 +93,16 @@ func BuildProfileSignaturePayload(
 	}, "\n")
 }
 
-// SignProfileHeaders signs a profile for one upstream request.
+// supportsProfileIdentitySignature admits profile bindings, not identity trust.
+// AI Platform authenticates v6 itself before checking its separate profile HMAC.
+func supportsProfileIdentitySignature(signature string) bool {
+	signature = strings.TrimSpace(signature)
+	return strings.HasPrefix(signature, "v2=") || strings.HasPrefix(signature, "v6=") ||
+		strings.HasPrefix(signature, "v7=") || strings.HasPrefix(signature, "v9=")
+}
+
+// SignProfileHeaders signs a profile for one upstream request. It binds the
+// existing identity signature; the receiver must authenticate that identity.
 func SignProfileHeaders(input ProfileSignInput) (http.Header, error) {
 	secret := strings.TrimSpace(input.Secret)
 	if secret == "" {
@@ -109,7 +118,7 @@ func SignProfileHeaders(input ProfileSignInput) (http.Header, error) {
 			return nil, fmt.Errorf("edge_profile_binding_missing: %s", name)
 		}
 	}
-	if !supportsEntitlementIdentitySignature(input.EdgeSignature) {
+	if !supportsProfileIdentitySignature(input.EdgeSignature) {
 		return nil, fmt.Errorf("edge_profile_identity_version_invalid")
 	}
 	encoded, err := input.Profile.Encode()
@@ -132,6 +141,9 @@ func SignProfileHeaders(input ProfileSignInput) (http.Header, error) {
 
 // VerifyProfileHeaders verifies the profile with keys from cfg, falling back
 // only to EDGE_PROFILE_SECRET[_NEXT] and EDGE_PROFILE_KEY_ID[_NEXT].
+// It authenticates the identity through the generic verifier, which does not
+// support v6. A v6-capable origin must verify identity first, then validate the
+// separate profile HMAC with BuildProfileSignaturePayload and the shared codec.
 func VerifyProfileHeaders(r *http.Request, cfg ProfileVerifyConfig) (dataprofile.Profile, ProfileBinding, error) {
 	cfg.PrimarySecret = firstNonEmpty(cfg.PrimarySecret, os.Getenv("EDGE_PROFILE_SECRET"))
 	cfg.NextSecret = firstNonEmpty(cfg.NextSecret, os.Getenv("EDGE_PROFILE_SECRET_NEXT"))
@@ -140,7 +152,8 @@ func VerifyProfileHeaders(r *http.Request, cfg ProfileVerifyConfig) (dataprofile
 	return VerifyProfileHeadersWithKeys(r, cfg)
 }
 
-// VerifyProfileHeadersWithKeys verifies with only the keys in cfg.
+// VerifyProfileHeadersWithKeys verifies with only the keys in cfg. Like
+// VerifyProfileHeaders, its generic identity verifier does not support v6.
 func VerifyProfileHeadersWithKeys(r *http.Request, cfg ProfileVerifyConfig) (dataprofile.Profile, ProfileBinding, error) {
 	if r == nil {
 		return dataprofile.Profile{}, ProfileBinding{}, fmt.Errorf("edge_profile_request_missing")
@@ -260,7 +273,7 @@ func profileEnvelopeShape(r *http.Request, e profileEnvelope, cfg ProfileVerifyC
 		return fmt.Errorf("edge_profile_path_mismatch")
 	case e.timestamp != e.edgeTimestamp:
 		return fmt.Errorf("edge_profile_timestamp_mismatch")
-	case !supportsEntitlementIdentitySignature(e.edgeSignature):
+	case !supportsProfileIdentitySignature(e.edgeSignature):
 		return fmt.Errorf("edge_profile_identity_version_invalid")
 	}
 	return nil

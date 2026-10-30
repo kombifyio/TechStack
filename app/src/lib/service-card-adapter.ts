@@ -13,7 +13,16 @@ import {
   type ServiceCatalogRef,
   type ServiceVersionInfo,
 } from "#lib/api/services.js";
-import { brandDomainForTool, localBrandLogoUrl } from "#lib/brand-logo.js";
+import {
+  brandDomainForTool,
+  pickAppLogo,
+  type LogoTheme,
+} from "#lib/brand-logo.js";
+import {
+  appLogoKey,
+  getAppLogoOverride,
+} from "#lib/app-logo-overrides.svelte.js";
+import { logoTheme } from "#lib/stores/logo-theme.svelte.js";
 
 import { tr } from "#lib/i18n.svelte.js";
 export type TechStackServiceCardSource = {
@@ -508,15 +517,72 @@ export function serviceCardLogoDomain(
   );
 }
 
-/** Bundled logo URL for a vendor domain; empty falls back to the logo scope. */
-export function serviceCardLogoSrc(domain: string): string | undefined {
-  return localBrandLogoUrl(domain) || undefined;
+/**
+ * The logo to draw, or undefined for the monogram or glyph: this viewer's
+ * override of the application first, then the recognition's own logo (the
+ * light or dark variant of the theme), then the mirrored icon of the vendor
+ * domain. Every URL points at our own asset host. `theme` defaults to the
+ * current UI theme; pass "light" for a plate that stays light in every theme.
+ */
+export function serviceCardLogoSrc(
+  domain: string,
+  source: {
+    catalog?: ServiceCatalogRef | null;
+    applicationKey?: string | null;
+    theme?: LogoTheme;
+  } = {},
+): string | undefined {
+  return pickAppLogo({
+    override: getAppLogoOverride(appLogoKey(source.applicationKey)),
+    logo: source.catalog?.logo,
+    removed: source.catalog?.logo_removed,
+    domain,
+    theme: source.theme ?? logoTheme(),
+  });
 }
 
 /**
+ * Domain and logo of one application with this viewer's override applied. A
+ * hidden logo also empties the domain, so the logo scope draws no mirrored
+ * icon behind it either. `names` are the identity candidates of the domain
+ * lookup, as for `serviceCardLogoDomain`.
+ */
+export function serviceCardLogo(
+  catalog: ServiceCatalogRef | null | undefined,
+  applicationKey: string | null | undefined,
+  names: Array<string | undefined | null>,
+  theme?: LogoTheme,
+): { domain: string; src: string | undefined } {
+  const override = getAppLogoOverride(appLogoKey(applicationKey));
+  const hidden =
+    override?.mode === "hidden" ||
+    (catalog?.logo_removed === true && override?.mode !== "icon");
+  const domain = hidden ? "" : serviceCardLogoDomain(catalog, ...names);
+  return {
+    domain,
+    src: serviceCardLogoSrc(domain, { catalog, applicationKey, theme }),
+  };
+}
+
+/**
+ * Ports that conventionally speak plain HTTP. Mirrors the agent's
+ * `webContainerPorts` (pkg/agent/httpguard/discovery_ports.go; keep both in
+ * step). The agent emits an explicit scheme whenever it proves a web UI, so a
+ * schemeless internal `host:port` is opened only when its port is one of these;
+ * a DNS, MQTT, database or TLS port without a proven scheme gets no Open link.
+ * The address carries the host port, the agent's list is keyed by container
+ * port: an unusual mapping can still land on either side of this check.
+ */
+const CONVENTIONAL_HTTP_PORTS: ReadonlySet<number> = new Set([
+  80, 3000, 3001, 3456, 4533, 5000, 5055, 6767, 7878, 8000, 8080, 8081, 8096,
+  8123, 8181, 8384, 8686, 8787, 8888, 8989, 9000, 9090, 9696, 13378,
+]);
+
+/**
  * The address "Open" navigates to, or undefined. Only http(s) URLs are ever
- * opened; an internal `host:port` address is lifted to http, which is how a
- * service on the Node network is reached from the browser.
+ * opened. A schemeless internal `host:port` address is lifted to http only when
+ * its port is a conventional HTTP port (see `CONVENTIONAL_HTTP_PORTS`); any
+ * other schemeless address stays text, never a guessed, broken link.
  */
 export function serviceOpenUrl(access?: {
   kind?: string;
@@ -536,11 +602,9 @@ export function serviceOpenUrl(access?: {
   if (access.open_url && isHttp(access.open_url)) return access.open_url;
   if (access.address && isHttp(access.address)) return access.address;
   const address = access.address?.trim();
-  if (
-    access.kind === "internal" &&
-    address &&
-    /^[A-Za-z0-9.-]+:\d{1,5}(\/[^\s]*)?$/.test(address)
-  ) {
+  if (access.kind !== "internal" || !address) return undefined;
+  const match = /^[A-Za-z0-9.-]+:(\d{1,5})(\/[^\s]*)?$/.exec(address);
+  if (match && CONVENTIONAL_HTTP_PORTS.has(Number(match[1]))) {
     return `http://${address}`;
   }
   return undefined;

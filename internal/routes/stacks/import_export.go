@@ -14,6 +14,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/artifactdelivery"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -73,6 +74,9 @@ type stackExport struct {
 }
 
 func (h importExportRouteHandlers) exportStack(e *httpx.Event) error {
+	if err := artifactdelivery.RequireAllowed(e); err != nil {
+		return err
+	}
 	if h.create.stackStore == nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
 			"Stack export authority is temporarily unavailable", map[string]any{
@@ -106,6 +110,9 @@ func (h importExportRouteHandlers) writeStackExport(e *httpx.Event, export stack
 }
 
 func (h importExportRouteHandlers) exportStackYAML(e *httpx.Event, export stackExport) error {
+	if err := artifactdelivery.RequireAllowed(e); err != nil {
+		return err
+	}
 	yamlBytes, err := marshalToYAML(export.Spec)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to generate YAML", nil)

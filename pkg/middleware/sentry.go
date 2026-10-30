@@ -1,3 +1,5 @@
+//go:build !kombify_full_local
+
 package middleware
 
 import (

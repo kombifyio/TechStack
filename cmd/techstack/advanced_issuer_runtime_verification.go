@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kombifyio/techstack/internal/advancedissuer"
+	"github.com/kombifyio/techstack/internal/executioncustody"
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/db"
 
@@ -24,9 +25,14 @@ func verifyAdvancedIssuerRuntime(ctx context.Context) error {
 }
 
 func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[string]any) error {
-	if os.Getenv(db.EnvMigrationDatabaseURL) != "" ||
+	mode, modeErr := advancedIssuerCustodyMode()
+	if modeErr != nil {
+		return modeErr
+	}
+	remote := mode == advancedIssuerCustodyRemote
+	if os.Getenv(db.EnvMigrationDatabaseURL) != "" || os.Getenv("TECHSTACK_MANAGED_TEST_ADMIN_DATABASE_URL") != "" ||
 		os.Getenv(db.EnvDatabaseMigrationMode) != "verify" || os.Getenv("TECHSTACK_ALLOW_DB_GENESIS") != "false" ||
-		strings.TrimSpace(os.Getenv("TECHSTACK_EXPECTED_DATABASE_IDENTITY")) == "" || len(os.Getenv("TECHSTACK_ENCRYPTION_KEY")) != 32 {
+		strings.TrimSpace(os.Getenv("TECHSTACK_EXPECTED_DATABASE_IDENTITY")) == "" || (!remote && len(os.Getenv("TECHSTACK_ENCRYPTION_KEY")) != 32) {
 		return errors.New("runtime verification requires physical identity, preserved wrapping custody, verify mode and no administrative credential or genesis")
 	}
 	cfg, err := db.ConfigFromEnv()
@@ -44,6 +50,13 @@ func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[s
 	defer application.Close()
 	if err = db.VerifyExpectedDatabaseIdentity(ctx, application.DB); err != nil {
 		return err
+	}
+	// Governed managed preparation uses the same app-only connection guard as
+	// HTTP boot. Customer-owned self-hosted principal names retain their policy.
+	if appURL.User.Username() == db.HostedApplicationRole {
+		if err = db.VerifyRuntimeRolePosture(ctx, application.DB, db.RuntimeRoleHosted); err != nil {
+			return err
+		}
 	}
 	var login string
 	var privileged, keyRead, elevatedMembership bool
@@ -64,6 +77,32 @@ func verifyAdvancedIssuerRuntimeWithEvidence(ctx context.Context, evidence map[s
 	}
 	if err = application.Migrate(ctx); err != nil { // verify mode only
 		return err
+	}
+	if remote {
+		if err := checkAdvancedIssuerProcessCustody(); err != nil {
+			return err
+		}
+		owner, err := db.ApplicationAuthorityOwner(ctx, application.DB)
+		if err != nil {
+			return err
+		}
+		if err := db.VerifyApplicationPrivileges(ctx, application.DB, db.ApplicationPrincipal{Role: login, AuthorityOwner: owner}, true); err != nil {
+			return err
+		}
+		issuer, err := executioncustody.OpenRemote(ctx)
+		if err != nil {
+			return err
+		}
+		receipt := map[string]any{
+			"schema": "techstack.credential-preparation/v1", "operation": "verify", "status": "acknowledged", "source_sha": buildRevision,
+			"application_role": login, "database_identity": os.Getenv("TECHSTACK_EXPECTED_DATABASE_IDENTITY"),
+			"application_admin": false, "application_key_read": false, "application_wrapping_custody": false,
+			"genesis": false, "migration_mode": "verify", "issuer_id": issuer.IssuerID(), "key_id": issuer.KeyID(), "issuer_custody": "execution-process",
+		}
+		for key, value := range evidence {
+			receipt[key] = value
+		}
+		return json.NewEncoder(os.Stdout).Encode(receipt)
 	}
 	// Authenticate the signing role and prove that a key already exists before
 	// OpenBound: the verifier cannot initialize a new installation identity.

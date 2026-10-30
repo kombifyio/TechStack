@@ -105,7 +105,7 @@ func normalizeDriftCheckConfig(cfg *DriftCheckConfig) *DriftCheckConfig {
 
 // driftLifecycleRequest reads the managed node binding the orchestrator
 // resolved into the drift job and the pinned release.
-func driftLifecycleRequest(cfg *DriftCheckConfig, job *Job, operation string) (StackKitLifecycleRequest, *stackkitrelease.Release, error) {
+func driftLifecycleRequest(ctx context.Context, cfg *DriftCheckConfig, job *Job, operation string) (StackKitLifecycleRequest, *stackkitrelease.Release, error) {
 	if cfg.Sender == nil {
 		return StackKitLifecycleRequest{}, nil, fmt.Errorf("typed StackKits dispatcher is not configured")
 	}
@@ -121,7 +121,9 @@ func driftLifecycleRequest(cfg *DriftCheckConfig, job *Job, operation string) (S
 	}
 	resolve := cfg.releaseResolver
 	if resolve == nil {
-		resolve = configuredTargetStackKitRelease
+		resolve = func() (*stackkitrelease.Release, error) {
+			return TargetStackKitReleaseForStack(ctx, request.TenantID, request.StackID)
+		}
 	}
 	release, err := resolve()
 	if err == nil && release == nil {
@@ -135,7 +137,7 @@ func driftLifecycleRequest(cfg *DriftCheckConfig, job *Job, operation string) (S
 
 // detectManagedStackKitDrift runs DRIFT_DETECT on the managed node.
 func detectManagedStackKitDrift(ctx context.Context, cfg *DriftCheckConfig, job *Job) (stackkitcommand.DriftReport, error) {
-	request, release, err := driftLifecycleRequest(cfg, job, StackKitLifecycleDriftDetect)
+	request, release, err := driftLifecycleRequest(ctx, cfg, job, StackKitLifecycleDriftDetect)
 	if err != nil {
 		return stackkitcommand.DriftReport{}, err
 	}
@@ -309,7 +311,7 @@ func DriftResolveHandler(cfg *DriftCheckConfig) JobHandler {
 
 		job.setStep(StepDriftInitialize)
 		q.UpdateProgress(job.ID, 20, "Preparing StackKits Advanced drift reconcile...")
-		request, release, err := driftLifecycleRequest(cfg, job, StackKitLifecycleDriftReconcile)
+		request, release, err := driftLifecycleRequest(ctx, cfg, job, StackKitLifecycleDriftReconcile)
 		if err != nil {
 			return NewConfigError(err)
 		}
@@ -341,7 +343,7 @@ func RegisterDriftHandlers(q *Queue, cfg *DriftCheckConfig) {
 
 func wrapDriftError(step, message, details string) error {
 	return &JobError{
-		Original:  fmt.Errorf("%s: %s", step, message),
+		Original:  fmt.Errorf("%s: %s%s", step, message, driftErrorCause(details)),
 		Category:  ErrorCategoryTransient,
 		Retryable: true,
 		Context: map[string]interface{}{
@@ -350,6 +352,20 @@ func wrapDriftError(step, message, details string) error {
 			"details": details,
 		},
 	}
+}
+
+// driftErrorCause appends the first line of the failure details to the error
+// text so the Sentry title names the cause instead of a generic message.
+func driftErrorCause(details string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(details), "\n")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	if len(line) > 160 {
+		line = line[:160]
+	}
+	return " (" + line + ")"
 }
 
 func resourceChangesFromDriftReport(report stackkitcommand.DriftReport) []ResourceChange {

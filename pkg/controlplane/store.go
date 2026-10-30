@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/failureknowledge"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
@@ -286,6 +287,9 @@ type SyncJobSnapshotRequest struct {
 	ObservedState    string
 	AttemptStartedAt *time.Time
 	CompletedAt      *time.Time
+	// FailureOccurrence is recorded once, when this snapshot moves the job
+	// to failed (migration 171). Stores without that table ignore it.
+	FailureOccurrence *failureknowledge.Occurrence
 }
 
 // RestoreActivationAdmissionResultKey binds the original node, plan, staged

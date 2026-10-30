@@ -640,6 +640,7 @@ func openProviderControlRuntimeDatabase(ctx context.Context, migrationDatabase *
 		_ = opened.Close()
 		return nil, err
 	}
+
 	return opened, nil
 }
 

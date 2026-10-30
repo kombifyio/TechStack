@@ -9,10 +9,21 @@
   Answers survive a reload (draftKey): the non-secret part of the config is
   kept in sessionStorage for this tab and ends when the creation is accepted
   or the person chooses to leave. Passwords and passphrases are never stored.
+
+  The step is part of the address (`?step=goals`), one history entry per step:
+  the browser's back and forward buttons move between steps, and every step
+  already reached opens from the stepper. Moving forward past a step that is
+  not complete stops on that step and shows what is missing.
 -->
 <script lang="ts">
   import { onDestroy, tick, untrack, type Snippet } from "svelte";
-  import { beforeNavigate, goto } from "$app/navigation";
+  import {
+    beforeNavigate,
+    goto,
+    pushState,
+    replaceState,
+  } from "$app/navigation";
+  import { page } from "$app/state";
   import { Stepper } from "./index";
   import GoalsStep from "./steps/GoalsStep.svelte";
   import LayoutRecommendationPanel from "./LayoutRecommendationPanel.svelte";
@@ -67,7 +78,11 @@
     loadUseCaseCatalog,
     type UseCaseCatalogView,
   } from "#lib/api/useCaseCatalog.js";
-  import { creationGoals } from "#lib/wizard/creationGoals.js";
+  import {
+    creationGoals,
+    creationGoalContextFacts,
+  } from "#lib/wizard/creationGoals.js";
+  import { useViewContextOverlay } from "#lib/stores/viewContext.svelte.js";
   import { features, getDefaultEnabled } from "#lib/stores/features.js";
   import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
   import {
@@ -182,6 +197,8 @@
   }
   let config = $state<StackConfig>(untrack(initialWizardConfig));
   let step = $state(restoredDraft?.step ?? 1);
+  // The furthest step reached; every active step up to it opens directly.
+  let furthestStep = $state(restoredDraft?.furthest ?? restoredDraft?.step ?? 1);
   let draftRestored = $state(Boolean(restoredDraft));
   // Protect entered answers against accidental departure (reload, tab close,
   // in-app navigation). The config carries SSH passwords and recovery
@@ -199,6 +216,14 @@
     if (!hasUnsavedAnswers || navigation.willUnload || leaveConfirmed) return;
     const target = navigation.to;
     if (!target) return;
+    // Back and forward between steps and targets stay on this page: the
+    // history entries differ only in `?step=` and `?target=`. A link to this
+    // page still asks, since it starts the flow over.
+    if (
+      navigation.type === "popstate" &&
+      target.url.pathname === page.url.pathname
+    )
+      return;
     navigation.cancel();
     void confirmInApp({
       title: tr("wizard.leave.title"),
@@ -225,11 +250,26 @@
     const key = draftKey;
     const answers = $state.snapshot(config) as StackConfig;
     const position = step;
+    const furthest = furthestStep;
     const timer = setTimeout(
-      () => saveWizardDraft(key, { step: position, config: answers }),
+      () => saveWizardDraft(key, { step: position, furthest, config: answers }),
       300,
     );
     return () => clearTimeout(timer);
+  });
+
+  // A step change is kept at once, so a reload right after it opens the
+  // same step; typed answers follow with the debounce above.
+  $effect(() => {
+    const position = step;
+    const furthest = furthestStep;
+    if (!draftKey || isDeploying) return;
+    if (position === 1 && furthest === 1 && !restoredDraft) return;
+    saveWizardDraft(draftKey, {
+      step: position,
+      furthest,
+      config: untrack(() => $state.snapshot(config)) as StackConfig,
+    });
   });
 
   // An accepted submission ends the draft; a failed one keeps it.
@@ -634,11 +674,15 @@
   // are hints unless a later step needs a concrete host/admin value.
   let serverSelectionReady = $state(true);
   let stepContent = $state<HTMLDivElement>();
-  const canGoNext = $derived(() => {
+  // Whether a step lets the person continue past it. The Server step reports
+  // its own readiness while it is shown; that value stays when it is left.
+  function stepCanContinue(key: string): boolean {
     // A failed or unfinished catalog read must not read as "nothing to install".
-    if (currentStepKey === "goals")
-      return useCaseCatalogState === "ready" && (!requireGoal || hasSelectedGoal);
-    if (currentStepKey === "server") {
+    if (key === "goals")
+      return (
+        useCaseCatalogState === "ready" && (!requireGoal || hasSelectedGoal)
+      );
+    if (key === "server") {
       if (!serverSelectionReady) return false;
       if (config.serverProvisioning.mode === "hypervisor") {
         return isValidSubstrateGuest(config.serverProvisioning.substrate);
@@ -653,20 +697,31 @@
         return false;
       return config.serverProvisioning.remote.host.trim().length > 0;
     }
-    if (currentStepKey === "login") return ownerState.adminIsValid();
-    if (currentStepKey === "users" && !joinExistingDeployment)
+    if (key === "login") return ownerState.adminIsValid();
+    if (key === "users" && !joinExistingDeployment)
       return !config.network.publicAccess;
-    if (currentStepKey === "access")
+    if (key === "access")
       return !(
         config.serverProvisioning.mode === "kombify-cloud" &&
         config.network.accessMode === "home"
       );
     return true;
-  });
+  }
+  const canGoNext = $derived(() => stepCanContinue(currentStepKey));
+  const stepKeyOf = (id: number) =>
+    surfaceSteps.find((item) => item.id === id)?.key ?? "";
+  // The first active step before `target` that is not complete (steps can be
+  // changed again after they were passed).
+  const firstIncompleteBefore = (target: number) =>
+    activeStepIds.find((id) => id < target && !stepCanContinue(stepKeyOf(id)));
+  const earlierStepIncomplete = $derived(
+    firstIncompleteBefore(step) !== undefined,
+  );
 
   const canDeploy = $derived(
     () =>
       step === lastActiveStep &&
+      !earlierStepIncomplete &&
       canGoNext() &&
       (config.serverProvisioning.mode !== "hypervisor" ||
         isValidSubstrateGuest(config.serverProvisioning.substrate)),
@@ -675,8 +730,13 @@
   // The first thing in the way, shown beside the blocked forward button.
   const blockedReason = $derived(
     (step === lastActiveStep ? !canDeploy() : !canGoNext())
-      ? (stepIssues[0]?.message ?? tr("wizard.validation.stepIncomplete"))
+      ? step === lastActiveStep && earlierStepIncomplete
+        ? tr("wizard.stepper.locked")
+        : (stepIssues[0]?.message ?? tr("wizard.validation.stepIncomplete"))
       : "",
+  );
+  const reachableSteps = $derived(
+    activeStepIds.filter((id) => id <= furthestStep && id !== step),
   );
 
   // A blocked attempt moves to the list of what is missing, so a press on a
@@ -705,11 +765,71 @@
     });
   }
 
+  // The step in the address: shallow history entries keep the page mounted,
+  // so moving between steps is no navigation and never asks to leave.
+  const currentUrl = $derived(page.shallow?.url ?? page.url);
+  function writeStep(id: number, replace: boolean) {
+    const url = new URL(currentUrl.href);
+    url.searchParams.set("step", stepKeyOf(id));
+    if (url.href === currentUrl.href) return;
+    const write = replace ? replaceState : pushState;
+    write(`${url.pathname}${url.search}${url.hash}`, page.state);
+  }
+
+  function moveTo(id: number) {
+    step = id;
+    if (id > furthestStep) furthestStep = id;
+    writeStep(id, false);
+  }
+
+  // Back and forward in the browser, a reload or a link that names a step:
+  // a step already reached opens; anything else keeps the current step.
+  let urlStepSynced = false;
+  $effect(() => {
+    const key = currentUrl.searchParams.get("step");
+    untrack(() => {
+      const requested = surfaceSteps.find((item) => item.key === key)?.id;
+      const reachable =
+        requested !== undefined &&
+        activeStepIds.includes(requested) &&
+        requested <= furthestStep;
+      if (!urlStepSynced) {
+        urlStepSynced = true;
+        if (reachable) step = requested;
+        writeStep(step, true);
+        return;
+      }
+      if (requested === step) return;
+      if (!reachable) {
+        writeStep(step, true);
+        return;
+      }
+      // Forward through history checks the steps on the way like a click.
+      const blocked =
+        requested > step
+          ? activeStepIds.find(
+              (id) =>
+                id >= step && id < requested && !stepCanContinue(stepKeyOf(id)),
+            )
+          : undefined;
+      if (blocked !== undefined) {
+        step = blocked;
+        writeStep(blocked, true);
+        hasAttemptedNext = true;
+        void revealIssues();
+        return;
+      }
+      step = requested;
+      hasAttemptedNext = false;
+      void revealStep();
+    });
+  });
+
   async function goNext() {
     hasAttemptedNext = true;
     const next = activeStepIds.find((id) => id > step);
     if (next && canGoNext()) {
-      step = next;
+      moveTo(next);
       // The next step starts calm; its hints appear after its own attempt.
       hasAttemptedNext = false;
       draftRestored = false;
@@ -722,10 +842,30 @@
   async function goPrev() {
     const previous = activeStepIds.findLast((id) => id < step);
     if (previous) {
-      step = previous;
+      moveTo(previous);
       hasAttemptedNext = false;
       await revealStep();
     }
+  }
+
+  // A click on a reached step. Forward, every step on the way must still be
+  // complete; the first one that is not opens with what is missing.
+  async function goTo(target: number) {
+    if (target === step || !reachableSteps.includes(target)) return;
+    if (target > step) {
+      const blocked = activeStepIds.find(
+        (id) => id >= step && id < target && !stepCanContinue(stepKeyOf(id)),
+      );
+      if (blocked !== undefined) {
+        if (blocked !== step) moveTo(blocked);
+        hasAttemptedNext = true;
+        await revealIssues();
+        return;
+      }
+    }
+    moveTo(target);
+    hasAttemptedNext = false;
+    await revealStep();
   }
 
   // Derive services from goals
@@ -741,6 +881,13 @@
   async function handleCreate() {
     hasAttemptedNext = true;
     enforceExistingOwnerReuse();
+    // A step changed after it was passed opens again with what is missing.
+    const incomplete = firstIncompleteBefore(step);
+    if (incomplete !== undefined) {
+      moveTo(incomplete);
+      await revealIssues();
+      return;
+    }
     if (!canDeploy()) {
       if (stepIssues.length > 0) await revealIssues();
       return;
@@ -766,6 +913,21 @@
   // Loading, failed and ready are different answers. A failed read is never
   // shown as "Coming soon" and never lets the person continue without it.
   let useCaseCatalogState = $state<"loading" | "ready" | "error">("loading");
+  useViewContextOverlay(() => ({
+    state: `wizard_${currentStepKey}`,
+    facts: {
+      wizardStep: currentStepKey,
+      catalogState: useCaseCatalogState,
+      ...creationGoalContextFacts(
+        creationGoals(
+          [...primaryGoalQuestions, ...advancedGoalQuestions],
+          useCaseCatalogState === "ready" ? useCaseCatalog : new Map(),
+        ),
+        config,
+        useCaseCatalog,
+      ),
+    },
+  }));
   let catalogAttempt = $state(0);
   $effect(() => {
     void catalogAttempt;
@@ -876,7 +1038,7 @@
   }
 
   function openRecommendation(_recommendation: WizardRecommendation) {
-    step = 2;
+    moveTo(2);
     hasAttemptedNext = false;
   }
 </script>
@@ -959,6 +1121,8 @@
     onprev={goPrev}
     onnext={goNext}
     ondeploy={handleCreate}
+    {reachableSteps}
+    onselect={goTo}
   />
 
   <div

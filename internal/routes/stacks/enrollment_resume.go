@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -148,6 +149,9 @@ func decodeStrictJSONBody(body io.Reader, target any) error {
 }
 
 func writeEnrollmentResumeError(e *httpx.Event, err error) error {
+	if refusal := tenantguard.ExecutionRefusal(err); refusal != nil {
+		return refusal
+	}
 	switch {
 	case errors.Is(err, orchestrator.ErrDeployRuntimeEvidenceUnavailable):
 		return enrollmentResumeUnavailable(e, "Canonical Guard runtime evidence is temporarily unavailable")

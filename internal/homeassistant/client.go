@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 type Observation struct {
@@ -59,10 +61,11 @@ func NewLocalClient(ctx context.Context, endpoint, token string) (*Client, error
 			port = "80"
 		}
 	}
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	// The pinned address is checked, not the name, so no second lookup can differ.
+	pinned := fulllocal.Dial((&net.Dialer{Timeout: 5 * time.Second}).DialContext)
 	transport := &http.Transport{Proxy: nil, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 10 * time.Second,
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+			return pinned(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 		},
 	}
 	u.Path = ""

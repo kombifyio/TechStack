@@ -1,8 +1,9 @@
 export const LOCAL_DEMO_ANCHOR_PROFILE = "local-demo-anchor";
 
+// Service and server ids are read back from the connected server at run time:
+// a fresh Wizard connect creates new ids, so none is pinned here.
 export interface RuntimeInventoryServiceExpectation {
   key: string;
-  id: string;
   url: string;
   health: "healthy" | "reachable";
 }
@@ -10,7 +11,11 @@ export interface RuntimeInventoryServiceExpectation {
 export interface RuntimeInventoryExpectation {
   profile: typeof LOCAL_DEMO_ANCHOR_PROFILE;
   server: {
-    id: string;
+    // The declared Runtime Inventory id of the protected local server.
+    targetId: string;
+    // The product server id: TECHSTACK_RUNTIME_E2E_INVENTORY_SERVER_ID, else
+    // the one server the owner's inventory holds.
+    id: string | null;
     domain: string;
     os: string;
     stackkit: string;
@@ -53,66 +58,9 @@ export interface RuntimeInventoryAssertionResult {
 }
 
 const localBasementServices: RuntimeInventoryServiceExpectation[] = [
-  {
-    key: "base",
-    id: "service_dab7e8c1a39876fab631f848",
-    url: "https://base.home",
-    health: "healthy",
-  },
-  {
-    key: "home",
-    id: "service_efd223188d464c3fbb4ecedd",
-    url: "https://home.home",
-    health: "reachable",
-  },
-  {
-    key: "id",
-    id: "service_f890052679b10856421a0da9",
-    url: "https://id.home",
-    health: "reachable",
-  },
-  {
-    key: "auth",
-    id: "service_f4e4047891f15cbde7049e81",
-    url: "https://auth.home",
-    health: "reachable",
-  },
-  {
-    key: "kuma",
-    id: "service_5835ee5520c07dbb47b381bf",
-    url: "https://kuma.home",
-    health: "reachable",
-  },
-  {
-    key: "whoami",
-    id: "service_464ad6c8fdc09fe86681ed49",
-    url: "https://whoami.home",
-    health: "reachable",
-  },
-  {
-    key: "vault",
-    id: "service_3c7dbafe175ee4f7e080a897",
-    url: "https://vault.home",
-    health: "reachable",
-  },
-  {
-    key: "photos",
-    id: "service_ce38f692813891aa3debc763",
-    url: "https://photos.home",
-    health: "reachable",
-  },
-  {
-    key: "files",
-    id: "service_6dd57908432b0432a4904df7",
-    url: "https://files.home/stackkit/files/session",
-    health: "reachable",
-  },
-  {
-    key: "coolify",
-    id: "service_b2db4dc8ba989e036867c460",
-    url: "https://coolify.home",
-    health: "reachable",
-  },
+  { key: "base", url: "https://base.home", health: "healthy" },
+  { key: "id", url: "https://id.home", health: "reachable" },
+  { key: "auth", url: "https://auth.home", health: "reachable" },
 ];
 
 export function runtimeInventoryExpectation(
@@ -128,7 +76,8 @@ export function runtimeInventoryExpectation(
   return {
     profile: LOCAL_DEMO_ANCHOR_PROFILE,
     server: {
-      id: "proxmox-vm-200-demo-anchor",
+      targetId: "esprimo-local-demo-anchor",
+      id: clean(env.TECHSTACK_RUNTIME_E2E_INVENTORY_SERVER_ID) || null,
       domain: "home",
       os: clean(env.TECHSTACK_RUNTIME_E2E_EXPECTED_OS) || "ubuntu",
       stackkit: "basement-kit",
@@ -149,13 +98,14 @@ export function assertRuntimeInventoryExpectation(
 ): RuntimeInventoryAssertionResult {
   const servers = inventoryItems(serverResponse, "servers");
   const services = inventoryItems(serviceResponse, "services");
-  assertExactStrings(
-    servers.map((server, index) =>
-      requiredString(server.id, `servers[${index}].id`),
-    ),
-    [expectation.server.id],
-    `${expectation.profile} REST server ids`,
+  invariant(
+    servers.length === 1,
+    `${expectation.profile} expects exactly one server, got ${servers.length}`,
   );
+  const serverId = requiredString(servers[0].id, "servers[0].id");
+  if (expectation.server.id) {
+    assertEqual(serverId, expectation.server.id, `${expectation.profile} REST server id`);
+  }
 
   const server = servers[0];
   const addresses = requiredRecord(server.addresses, "servers[0].addresses");
@@ -223,67 +173,63 @@ export function assertRuntimeInventoryExpectation(
   );
   assertFreshInventoryEvidence(server.freshness, "servers[0].freshness");
 
-  const expectedServiceIds = expectation.services.map((service) => service.id);
-  assertExactStrings(
-    services.map((service, index) =>
-      requiredString(service.id, `services[${index}].id`),
-    ),
-    expectedServiceIds,
-    `${expectation.profile} REST service ids`,
+  const observed = services.map((service, index) => ({
+    id: requiredString(service.id, `services[${index}].id`),
+    key: requiredString(service.key, `services[${index}].key`),
+    service,
+  }));
+  for (const item of observed) {
+    assertEqual(item.service.server_id, serverId, `${item.id}.server_id`);
+  }
+  invariant(
+    new Set(observed.map((item) => item.key)).size === observed.length,
+    `${expectation.profile} service keys must be unique`,
   );
-  const servicesById = new Map(
-    services.map((service) => [
-      requiredString(service.id, "service.id"),
-      service,
-    ]),
-  );
+  const servicesByKey = new Map(observed.map((item) => [item.key, item]));
+  const observedServiceIds = observed.map((item) => item.id);
   const semanticServices: RuntimeInventoryAssertionResult["semantic"]["services"] =
     [];
   for (const expected of expectation.services) {
-    const service = servicesById.get(expected.id);
-    invariant(service, `services omitted expected id ${expected.id}`);
+    const item = servicesByKey.get(expected.key);
+    invariant(item, `services omitted expected key ${expected.key}`);
+    const { service, id } = item;
+    assertEqual(service.key, expected.key, `${id}.key`);
     assertEqual(
-      service.server_id,
-      expectation.server.id,
-      `${expected.id}.server_id`,
-    );
-    assertEqual(service.key, expected.key, `${expected.id}.key`);
-    assertEqual(
-      requiredRecord(service.health, `${expected.id}.health`).state,
+      requiredRecord(service.health, `${id}.health`).state,
       expected.health,
-      `${expected.id}.health.state`,
+      `${id}.health.state`,
     );
-    const links = requiredArray(service.links, `${expected.id}.links`);
+    const links = requiredArray(service.links, `${id}.links`);
     invariant(
       links.length === 1,
-      `${expected.id}.links length = ${links.length}, expected 1`,
+      `${id}.links length = ${links.length}, expected 1`,
     );
-    const link = requiredRecord(links[0], `${expected.id}.links[0]`);
-    assertEqual(link.mode, "direct", `${expected.id}.links[0].mode`);
+    const link = requiredRecord(links[0], `${id}.links[0]`);
+    assertEqual(link.mode, "direct", `${id}.links[0].mode`);
     assertExactStrings(
       links.map((candidate, index) =>
         requiredString(
-          requiredRecord(candidate, `${expected.id}.links[${index}]`).url,
-          `${expected.id}.links[${index}].url`,
+          requiredRecord(candidate, `${id}.links[${index}]`).url,
+          `${id}.links[${index}].url`,
         ),
       ),
       [expected.url],
-      `${expected.id} link urls`,
+      `${id} link urls`,
     );
-    assertEqual(service.source, "stackkits-inventory", `${expected.id}.source`);
+    assertEqual(service.source, "stackkits-inventory", `${id}.source`);
     assertEqual(
-      requiredRecord(service.stackkit, `${expected.id}.stackkit`).version,
+      requiredRecord(service.stackkit, `${id}.stackkit`).version,
       expectation.server.version,
-      `${expected.id}.stackkit.version`,
+      `${id}.stackkit.version`,
     );
     assertPositiveInventoryRevision(
       service.inventory_revision,
-      `${expected.id}.inventory_revision`,
+      `${id}.inventory_revision`,
     );
-    assertFreshInventoryEvidence(service.freshness, `${expected.id}.freshness`);
+    assertFreshInventoryEvidence(service.freshness, `${id}.freshness`);
     semanticServices.push({
-      id: expected.id,
-      serverId: expectation.server.id,
+      id,
+      serverId,
       key: expected.key,
       health: expected.health,
       url: expected.url,
@@ -294,11 +240,11 @@ export function assertRuntimeInventoryExpectation(
   }
 
   return {
-    serverIds: [expectation.server.id],
-    serviceIds: [...expectedServiceIds].sort(),
+    serverIds: [serverId],
+    serviceIds: [...observedServiceIds].sort(),
     semantic: {
       server: {
-        id: expectation.server.id,
+        id: serverId,
         // The registry id is target authority. The address is current Guard
         // evidence only and may change without changing the protected target.
         privateIp: observedPrivateIPs[0],

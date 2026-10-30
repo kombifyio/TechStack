@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
+	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +14,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth/edgeauthtest"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
@@ -72,7 +71,7 @@ func TestSignedEdgeDemoFirstLoginBootstrapsEmptyAuthProjection(t *testing.T) {
 		req.Header.Set(commonedgeauth.HeaderUserRoles, "user")
 		req.Header.Set(commonedgeauth.HeaderEntitlements, "techstack.inventory.read")
 		req.Header.Set(commonedgeauth.HeaderKnowledgeTier, "standard")
-		signV2EdgeRequestForConfigWiringTestWithNonce(req, edgeSecret, nonce)
+		signV2EdgeRequestForConfigWiringTestWithNonce(t, req, edgeSecret, nonce)
 		return req
 	}
 
@@ -196,7 +195,7 @@ func TestGlobalMiddlewareUsesTechstackEdgeAuthConfigForLegacyAndV2(t *testing.T)
 				req.Header.Set(commonedgeauth.HeaderEdgeAuth, commonedgeauth.EdgeAuthValueJWT)
 				req.Header.Set(commonedgeauth.HeaderEntitlements, "techstack.inventory.read")
 				req.Header.Set(commonedgeauth.HeaderKnowledgeTier, "standard")
-				signV2EdgeRequestForConfigWiringTest(req, secret)
+				signV2EdgeRequestForConfigWiringTest(t, req, secret)
 			},
 		},
 		{
@@ -207,7 +206,7 @@ func TestGlobalMiddlewareUsesTechstackEdgeAuthConfigForLegacyAndV2(t *testing.T)
 				req.Header.Set(commonedgeauth.HeaderPublicPrefix, "/v1/techstack")
 				req.Header.Set(commonedgeauth.HeaderRequestID, "request-config-wiring")
 				req.Header.Set(commonedgeauth.HeaderEntitlements, "techstack.managed.runtime,techstack.managed.runtime.cloudkit,techstack.managed.runtime.ionos")
-				signV2EdgeRequestForConfigWiringTest(req, secret)
+				signV2EdgeRequestForConfigWiringTest(t, req, secret)
 				decision, err := commonedgeauth.SignDecisionHeaders(commonedgeauth.DecisionSignInput{
 					Secret: flagsNextSecret, KeyID: "flags-next",
 					Method: req.Method, SignedPath: req.URL.RequestURI(),
@@ -251,45 +250,17 @@ func TestGlobalMiddlewareUsesTechstackEdgeAuthConfigForLegacyAndV2(t *testing.T)
 	}
 }
 
-func signV2EdgeRequestForConfigWiringTest(req *http.Request, secret string) {
-	signV2EdgeRequestForConfigWiringTestWithNonce(req, secret, "config-wiring-v2")
+func signV2EdgeRequestForConfigWiringTest(t testing.TB, req *http.Request, secret string) {
+	signV2EdgeRequestForConfigWiringTestWithNonce(t, req, secret, "config-wiring-v2")
 }
 
-func signV2EdgeRequestForConfigWiringTestWithNonce(req *http.Request, secret, nonce string) {
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce += "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+func signV2EdgeRequestForConfigWiringTestWithNonce(t testing.TB, req *http.Request, secret, nonce string) {
+	t.Helper()
+	nonce += "-" + rand.Text()
 	if req.Header.Get(commonedgeauth.HeaderEdgeService) == "" {
 		req.Header.Set(commonedgeauth.HeaderEdgeService, "capabilities")
 	}
-	signedPath := req.URL.RequestURI()
-	keyID := "primary"
-	payload := strings.Join([]string{
-		"v2",
-		keyID,
-		req.Method,
-		signedPath,
-		req.Header.Get(commonedgeauth.HeaderEdgeAuth),
-		req.Header.Get(commonedgeauth.HeaderEdgeService),
-		req.Header.Get(commonedgeauth.HeaderPublicPrefix),
-		req.Header.Get(commonedgeauth.HeaderUserID),
-		req.Header.Get(commonedgeauth.HeaderOrgID),
-		req.Header.Get(commonedgeauth.HeaderUserEmail),
-		req.Header.Get(commonedgeauth.HeaderUserTier),
-		req.Header.Get(commonedgeauth.HeaderUserRoles),
-		req.Header.Get(commonedgeauth.HeaderUserScope),
-		req.Header.Get(commonedgeauth.HeaderEntitlements),
-		req.Header.Get(commonedgeauth.HeaderKnowledgeTier),
-		timestamp,
-		nonce,
-	}, "\n")
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(payload))
-
-	req.Header.Set(commonedgeauth.HeaderEdgeTimestamp, timestamp)
-	req.Header.Set(commonedgeauth.HeaderEdgeNonce, nonce)
-	req.Header.Set(commonedgeauth.HeaderEdgeSignedPath, signedPath)
-	req.Header.Set(commonedgeauth.HeaderEdgeKeyID, keyID)
-	req.Header.Set(commonedgeauth.HeaderEdgeSignature, "v2="+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
+	edgeauthtest.Sign(t, req, edgeauthtest.Config{Version: "v2", Secret: secret, At: time.Now(), Nonce: nonce})
 }
 
 // D-2026-10-22-02: through the whole global middleware chain, a signed edge
@@ -351,7 +322,7 @@ func TestSignedEdgeRequestsKeepTestIdentitiesInTestTenants(t *testing.T) {
 		req.Header.Set(commonedgeauth.HeaderUserRoles, "user")
 		req.Header.Set(commonedgeauth.HeaderEntitlements, "techstack.inventory.read")
 		req.Header.Set(commonedgeauth.HeaderKnowledgeTier, "standard")
-		signV2EdgeRequestForConfigWiringTestWithNonce(req, edgeSecret, "test-identity-boundary-"+strconv.Itoa(i))
+		signV2EdgeRequestForConfigWiringTestWithNonce(t, req, edgeSecret, "test-identity-boundary-"+strconv.Itoa(i))
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, req)
 		if recorder.Code != tc.want {

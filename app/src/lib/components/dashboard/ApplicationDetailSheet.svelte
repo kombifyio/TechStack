@@ -19,6 +19,11 @@
     type ServiceTone,
   } from "#lib/dashboard/homelab-model.js";
   import ConnectDevicesGuide from "./ConnectDevicesGuide.svelte";
+  import AppLogoControl from "./AppLogoControl.svelte";
+  import {
+    canonicalServiceLogo,
+    canonicalServiceLogoKey,
+  } from "#lib/application-logo.js";
 
   /*
    * The detail view of an application, bound to Brand's EntityDetailSheet
@@ -45,6 +50,7 @@
   };
 
   const catalog = $derived(service.catalog);
+  const logoUrl = $derived(canonicalServiceLogo(service).src);
   const url = $derived(applicationOpenUrl(members));
   const status = $derived(applicationState(service, [...members]));
   const stacked = $derived(isStackedApp(members));
@@ -165,6 +171,7 @@
   {onclose}
   kind="application"
   name={serviceDisplayName(service)}
+  imageUrl={logoUrl}
   appIcon
   presence={presenceByTone[status.tone]}
   statusLabel={status.label || undefined}
@@ -179,4 +186,5 @@
   {#if connect}
     <ConnectDevicesGuide {...connect} />
   {/if}
+  <AppLogoControl applicationKey={canonicalServiceLogoKey(service)} />
 </EntityDetailSheet>

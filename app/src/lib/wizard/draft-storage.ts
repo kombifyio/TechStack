@@ -14,6 +14,8 @@ const STORAGE_PREFIX = "techstack.wizardDraft.v1.";
 
 export interface WizardDraft {
   step: number;
+  /** The furthest step reached; every step up to it opens directly. */
+  furthest?: number;
   config: StackConfig;
 }
 
@@ -55,6 +57,7 @@ export function saveWizardDraft(
       STORAGE_PREFIX + scope,
       JSON.stringify({
         step: draft.step,
+        furthest: Math.max(draft.furthest ?? draft.step, draft.step),
         config: withoutSecrets(draft.config),
       }),
     );
@@ -72,9 +75,14 @@ export function loadWizardDraft(
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || !isRecord(parsed.config)) return null;
-    const step = Number(parsed.step);
+    const parsedStep = Number(parsed.step);
+    const step =
+      Number.isInteger(parsedStep) && parsedStep >= 1 ? parsedStep : 1;
+    const furthest = Number(parsed.furthest);
     return {
-      step: Number.isInteger(step) && step >= 1 ? step : 1,
+      step,
+      furthest:
+        Number.isInteger(furthest) && furthest >= step ? furthest : step,
       config: parsed.config as unknown as StackConfig,
     };
   } catch {

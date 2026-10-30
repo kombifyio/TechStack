@@ -7,12 +7,19 @@ name: Guard release
 # what each Guard's privileged executor pins (pkg/guardrelease.DefaultIdentity).
 # There is no signing key to custody.
 #
-#   workflow_dispatch  mode "publish": builds and signs the binaries of a
-#                      version once from the exact commit it runs on, publishes
+#   workflow_dispatch  mode "publish": builds and signs a version's published
+#                      binaries once from the exact commit it runs on, publishes
 #                      them as assets of the release guard-v<version> and signs a
 #                      fresh manifest. Runs in the GitHub Environment
 #                      guard-release; stable releases require reviewers,
 #                      while fast pre-1.0 publication is automatic.
+#   workflow_dispatch  mode "candidate": builds and signs the exact main source
+#                      and its pinned runtime into a run-scoped Actions artifact.
+#                      Uses the same guard-release Environment and identity;
+#                      never publishes a release, replaces assets or delivers.
+#                      Retains the declared version; identify it by source/run/
+#                      artifact digests. Never serve it on Stable/Early Access;
+#                      revoke an individual candidate by its binary digest.
 #   schedule           mode "refresh": re-signs the manifest of the Guard version
 #                      pinned in the Dockerfile from its published binaries, so
 #                      the freshness window never lapses and revocations in
@@ -40,12 +47,24 @@ name: Guard release
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "publish a prepared release, or sign a nonpublishing Preview/Stage candidate"
+        required: false
+        type: choice
+        options:
+          - publish
+          - candidate
+        default: publish
       version:
         description: "Declared Guard product version X.Y.Z (must match the exact source)"
         required: false
         type: string
       expected_source_sha:
-        description: "Exact prepared source admitted by Delivery (required for publication; historical private sources may only reuse verified assets)"
+        description: "Required full source SHA: candidate must equal this main run; publication admits prepared source and historical private asset reuse only"
+        required: false
+        type: string
+      stackkits_candidate:
+        description: "Internal candidate only: exact sourceSha/runId/runAttempt/artifactId/artifactSha256/indexSha256 JSON; never a public release"
         required: false
         type: string
       deliver_after_publish:
@@ -68,14 +87,14 @@ permissions: {}
 # shared lane and starved every later release). The nightly refresh keeps its
 # own lane. Same-source dispatches still serialise.
 concurrency:
-  group: guard-release-${{ github.event_name == 'workflow_dispatch' && (inputs.expected_source_sha || inputs.version || github.run_id) || 'refresh' }}
+  group: guard-release-${{ github.event_name == 'workflow_run' && format('recheck-{0}', github.event.workflow_run.id) || github.event_name == 'workflow_dispatch' && inputs.mode == 'candidate' && format('candidate-{0}', inputs.expected_source_sha || github.run_id) || github.event_name == 'workflow_dispatch' && (inputs.expected_source_sha || inputs.version || github.run_id) || 'refresh' }}
   cancel-in-progress: false
 
 jobs:
   release:
     # A run from any ref other than main cannot produce evidence Guards accept;
     # do not start it at all.
-    if: github.ref == 'refs/heads/main' && (github.repository == 'kombifyio/TechStack' || github.repository == 'kombifyio/TechStack')
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' && (github.repository == 'kombifyio/TechStack' || github.repository == 'kombifyio/TechStack')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: ${{ github.event_name == 'workflow_dispatch' && 'guard-release' || 'guard-release-refresh' }}
@@ -84,12 +103,14 @@ jobs:
       id-token: write
       actions: read
     env:
-      RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'publish' || 'refresh' }}
+      RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && (inputs.mode || 'publish') || 'refresh' }}
       RELEASE_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && 'guard-release' || 'guard-release-refresh' }}
-      # cosign is built from source at this exact version; the Go module
-      # checksum database authenticates the source. Bump it in a reviewed pull
-      # request (the dependency automation proposes it).
+      # cosign is the upstream release binary at this exact version, pinned by
+      # its SHA-256 (cosign_checksums.txt of that release). Building it from
+      # source took about 5 of the 6.5 minutes this job adds to every Techstack
+      # rollout. Bump both values together in a reviewed pull request.
       COSIGN_VERSION: v3.1.3
+      COSIGN_LINUX_AMD64_SHA256: 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
       GH_TOKEN: ${{ github.token }}
     steps:
       # Resolve maturity from the exact product source, never a caller-selected
@@ -105,11 +126,41 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          STACKKITS_CANDIDATE_BINDING: ${{ inputs.stackkits_candidate }}
           EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          DELIVER_AFTER_PUBLISH: ${{ inputs.deliver_after_publish }}
+          DATABASE_GATE: ${{ inputs.database_gate }}
         run: |
           set -euo pipefail
+          if [ -n "${STACKKITS_CANDIDATE_BINDING:-}" ]; then
+            [ ! -f .techstack-public-export.json ] || {
+              echo '::error::Private StackKits candidates are unavailable in the public export profile.' >&2; exit 1;
+            }
+            [ "$RELEASE_MODE" = candidate ] && [ "$GITHUB_REPOSITORY" = kombifyio/TechStack ] || {
+              echo '::error::Private StackKits candidate input is allowed only in the existing private Guard candidate mode.' >&2; exit 1;
+            }
+          fi
           source_sha="$GITHUB_SHA"
           reuse_private=false
+          case "$GITHUB_EVENT_NAME:$RELEASE_MODE" in workflow_dispatch:publish|workflow_dispatch:candidate|schedule:refresh) ;; *) echo '::error::Unknown Guard release event/mode.' >&2; exit 1 ;; esac
+          if [ "$RELEASE_MODE" = candidate ]; then
+            [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] &&
+              [ "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA" ] && [ "$GITHUB_SHA" = "$(git rev-parse HEAD)" ] || {
+              echo '::error::A Guard candidate must build the exact authenticated main run source; historical and PR sources are refused.' >&2
+              exit 1
+            }
+            # Delayed jobs and reruns retain their original GITHUB_SHA. Read
+            # current main with the job token, before the later read-token swap.
+            current_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+            [ "$current_main" = "$GITHUB_SHA" ] || {
+              echo '::error::Main moved since this candidate run was selected; dispatch the current main source.' >&2
+              exit 1
+            }
+            [ "${DELIVER_AFTER_PUBLISH:-false}" != true ] && [ -z "${DATABASE_GATE:-}" ] || {
+              echo '::error::A Guard candidate cannot request Delivery or a database leg.' >&2
+              exit 1
+            }
+          fi
           if [ "$RELEASE_MODE" = publish ]; then
             [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$GITHUB_SHA" = "$(git rev-parse HEAD)" ] || {
               echo '::error::Guard publication requires an exact admitted source and authenticated main checkout.' >&2
@@ -181,9 +232,9 @@ jobs:
           tags="$(gh api "${api}/deployment-branch-policies" --jq '[.branch_policies[] | select(.type == "tag")] | length')"
           [ "$branches" = "main" ] && [ "$tags" = "0" ] \
             || fail "Environment '${RELEASE_ENVIRONMENT}' must allow exactly the branch 'main' and no tag (found branches '${branches}', ${tags} tag policies)."
-          if [ "$RELEASE_MODE" = "publish" ] && [ "${PRODUCT_VERSION%%.*}" != "0" ]; then
+          if { [ "$RELEASE_MODE" = publish ] || [ "$RELEASE_MODE" = candidate ]; } && [ "${PRODUCT_VERSION%%.*}" != "0" ]; then
             jq -e '[.protection_rules[]? | select(.type == "required_reviewers")] | length > 0' <<<"$environment" >/dev/null \
-              || fail "Environment '${RELEASE_ENVIRONMENT}' must require reviewers before a stable release is published."
+              || fail "Environment '${RELEASE_ENVIRONMENT}' must require reviewers before stable-version Guard publication or candidate signing."
           fi
 
       # No build or module cache may flow into a job that holds a signing token.
@@ -206,8 +257,50 @@ jobs:
             kombify-runtime-contracts-go
           permission-contents: read
 
+      - name: Use read-only App access for private candidate reads
+        if: env.RELEASE_MODE == 'candidate' && steps.version.outputs.public != 'true'
+        shell: bash
+        env:
+          READ_TOKEN: ${{ steps.modules-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          test -n "$READ_TOKEN"
+          printf 'GH_TOKEN=%s\n' "$READ_TOKEN" >> "$GITHUB_ENV"
+
       # The token lives only in this step's environment and a temporary git
       # config the script removes; later steps build from the verified cache.
+      # Separate least-privilege token: never widen the module token. Contents
+      # read fetches only the canonical trust policy at the expected source.
+      - name: Mint the exact StackKits candidate read token
+        id: stackkits-candidate-token
+        if: env.RELEASE_MODE == 'candidate' && inputs.stackkits_candidate != '' && steps.version.outputs.public != 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.KOMBIFY_CI_APP_ID }}
+          private-key: ${{ secrets.KOMBIFY_CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: kombify-StackKits
+          permission-actions: read
+          permission-contents: read
+
+      - name: Authenticate the exact private StackKits candidate
+        id: stackkits-candidate
+        if: env.RELEASE_MODE == 'candidate' && inputs.stackkits_candidate != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.stackkits-candidate-token.outputs.token }}
+          STACKKITS_CANDIDATE_BINDING: ${{ inputs.stackkits_candidate }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          # Same checksum-pinned client as canonical StackKits attestation verification.
+          work="$(mktemp -d)"
+          curl --fail --silent --show-error --location https://github.com/cli/cli/releases/download/v2.92.0/gh_2.92.0_linux_amd64.tar.gz --output "$work/gh.tar.gz"
+          echo "b57848131bdf0c229cd35e1f2a51aa718199858b2e728410b37e89a428943ec4  $work/gh.tar.gz" | sha256sum -c -
+          tar -xzf "$work/gh.tar.gz" -C "$work"
+          PATH="$work/gh_2.92.0_linux_amd64/bin:$PATH" python3 scripts/verify-stackkits-preview-candidate.py
+          rm -rf "$work"
+
       - name: Download Go modules
         shell: bash
         env:
@@ -233,15 +326,19 @@ jobs:
           set -euo pipefail
           bin="${RUNNER_TEMP}/guard-release-bin"
           mkdir -p "$bin"
-          # Built from source at a pinned version: no unpinned action and no
+          # Checksum-pinned upstream binary: no unpinned action and no
           # unverified download runs in this job.
-          GOBIN="$bin" CGO_ENABLED=0 go install -trimpath -buildvcs=false "github.com/sigstore/cosign/v3/cmd/cosign@${COSIGN_VERSION}"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" --output "$bin/cosign"
+          echo "${COSIGN_LINUX_AMD64_SHA256}  $bin/cosign" | sha256sum -c -
+          chmod 0755 "$bin/cosign"
           CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o "$bin/guard-release-tool" ./cmd/guard-release-tool
           echo "$bin" >> "$GITHUB_PATH"
 
-      # A version's binaries are signed once. Published binaries are reused
+      # A version's published binaries are signed once. Published binaries are reused
       # byte for byte, and a release whose binaries cannot all be fetched is an
-      # error: nothing is ever rebuilt under a published version.
+      # error: nothing is ever rebuilt into a published version. A candidate
+      # builds fresh bytes into a separate run artifact and never reads a release.
       - name: Fetch published binaries or build them
         id: binaries
         shell: bash
@@ -255,12 +352,14 @@ jobs:
           tag="guard-v${VERSION}"
           binary_assets="techstack-linux-amd64 techstack-linux-amd64.sigstore.json techstack-linux-arm64 techstack-linux-arm64.sigstore.json"
           release_state=absent
-          if out="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" 2>&1)"; then
-            release_state=present
-            names="$(jq -r '.assets[].name' <<<"$out")"
-          elif ! grep -q 'HTTP 404' <<<"$out"; then
-            echo "::error::cannot read release ${tag}: ${out}" >&2
-            exit 1
+          if [ "$RELEASE_MODE" != candidate ]; then
+            if out="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" 2>&1)"; then
+              release_state=present
+              names="$(jq -r '.assets[].name' <<<"$out")"
+            elif ! grep -q 'HTTP 404' <<<"$out"; then
+              echo "::error::cannot read release ${tag}: ${out}" >&2
+              exit 1
+            fi
           fi
           have=0
           if [ "$release_state" = present ]; then
@@ -333,7 +432,7 @@ jobs:
             echo "::error::release ${tag} holds only some of its signed binaries; it is never rebuilt. Remove the incomplete release and its tag by hand, then run again." >&2
             exit 1
           fi
-          if [ "$RELEASE_MODE" != "publish" ]; then
+          if [ "$RELEASE_MODE" != "publish" ] && [ "$RELEASE_MODE" != candidate ]; then
             echo "::error::the scheduled refresh only re-signs a manifest for a release that already holds signed binaries; release ${tag} has none. Dispatch the release first." >&2
             exit 1
           fi
@@ -378,6 +477,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILT: ${{ steps.binaries.outputs.built }}
+          STACKKITS_CANDIDATE_DIR: ${{ steps.stackkits-candidate.outputs.directory }}
         run: |
           set -euo pipefail
           # The policy file carries the minimum admitted version and the
@@ -439,9 +539,26 @@ jobs:
           runtime_for_arch() {
             local arch="$1" dir="$work/$1"
             mkdir -p "$dir/release" "$dir/out"
-            curl --fail --silent --show-error --location \
-              "${base}/stackkits-${sk_bootstrap_kit}_${sk_tag#v}_linux_${arch}.tar.gz" --output "$dir/release.tar.gz"
+            local candidate_args=()
+            if [ -n "${STACKKITS_CANDIDATE_DIR:-}" ]; then
+              test "$RELEASE_MODE" = candidate
+              local candidate_name
+              candidate_name="$(jq -er --arg arch "$arch" '.archives[$arch].name' "$STACKKITS_CANDIDATE_DIR/verified.json")"
+              sk_archive_sha[$arch]="$(jq -er --arg arch "$arch" '.archives[$arch].sha256' "$STACKKITS_CANDIDATE_DIR/verified.json")"
+              sk_index_sha="$(jq -er '.candidate.indexSha256' "$STACKKITS_CANDIDATE_DIR/verified.json")"
+              test "$(jq -er '.declaredVersion' "$STACKKITS_CANDIDATE_DIR/verified.json")" = "${sk_tag#v}"
+              cp "$STACKKITS_CANDIDATE_DIR/package/$candidate_name" "$dir/release.tar.gz"
+              candidate_args=("$STACKKITS_CANDIDATE_DIR")
+            else
+              curl --fail --silent --show-error --location \
+                "${base}/stackkits-${sk_bootstrap_kit}_${sk_tag#v}_linux_${arch}.tar.gz" --output "$dir/release.tar.gz"
+            fi
             echo "${sk_archive_sha[$arch]}  $dir/release.tar.gz" | sha256sum -c - >&2
+            if [ -n "${STACKKITS_CANDIDATE_DIR:-}" ]; then
+              # Only ordinary bounded paths were extracted by the authenticated
+              # candidate importer. No GNU tar extraction of candidate input.
+              cp -R "$STACKKITS_CANDIDATE_DIR/extracted/$arch/." "$dir/release/"
+            else
             tar --extract --gzip --file "$dir/release.tar.gz" --directory "$dir/release" stackkit stackkit-server stackkit-mcp tofu terramate
             listing="$(tar --list --gzip --file "$dir/release.tar.gz")"
             # Some release archives contain only individual provider entries,
@@ -451,9 +568,10 @@ jobs:
             if grep -qx 'docs/data/advanced-operations/latest.json' <<<"$listing"; then
               tar --extract --gzip --file "$dir/release.tar.gz" --directory "$dir/release" docs/data/advanced-operations/latest.json
             fi
+            fi
             STACKKIT_RELEASE_KIT="$sk_kit" STACKKIT_RELEASE_TAG="$sk_tag" \
               STACKKIT_RELEASE_ARCHIVE_SHA256="${sk_archive_sha[$arch]}" STACKKIT_RELEASE_INDEX_SHA256="$sk_index_sha" \
-              sh scripts/stackkit-runtime-tree.sh "$arch" "$dir/release" "$work/compat.json" "$work/catalog.json" "$dir/out" >&2
+              sh scripts/stackkit-runtime-tree.sh "$arch" "$dir/release" "$work/compat.json" "$work/catalog.json" "$dir/out" "${candidate_args[@]}" >&2
             local tree archive
             tree="$(guard-release-tool tree-digest "$dir/out/.stackkit")"
             # The image ships the same tree as a tar.gz; its archive digest must
@@ -471,6 +589,10 @@ jobs:
           arm64_runtime="$(runtime_for_arch arm64)"
           stackkits="$(jq -cn --arg version "$sk_tag" --argjson amd64 "$amd64_runtime" --argjson arm64 "$arm64_runtime" \
             '{version:$version} + $amd64 + {linuxArm64:$arm64}')"
+          fi
+          if [ -n "${STACKKITS_CANDIDATE_DIR:-}" ]; then
+            test "$RELEASE_MODE" = candidate && test "$BUILT" = true
+            stackkits="$(jq -c --slurpfile candidate "$STACKKITS_CANDIDATE_DIR/candidate.provenance.json" '. + {candidate:$candidate[0]}' <<<"$stackkits")"
           fi
 
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -498,6 +620,11 @@ jobs:
           RUNTIME_ASSETS: ${{ steps.binaries.outputs.runtime_assets }}
         run: |
           set -euo pipefail
+          if [ "$RELEASE_MODE" = candidate ]; then
+            [ "$RUNTIME_ASSETS" = 2 ]
+            guard-release-tool verify dist --expected-source "$GITHUB_SHA" --require-runtime-bundles --require-current-policy
+            exit 0
+          fi
           expected=()
           if [ "$RELEASE_MODE" = publish ]; then expected=(--expected-source "$GITHUB_SHA"); fi
           if [ "$RUNTIME_ASSETS" = 2 ]; then
@@ -505,6 +632,17 @@ jobs:
           else
             guard-release-tool verify dist "${expected[@]}"
           fi
+
+      # Only a new signed publication creates the immutable transport index
+      # and seed. Candidate and refresh runs preserve the published bytes.
+      - name: Prepare immutable file-delivery metadata
+        if: env.RELEASE_MODE == 'publish' && steps.binaries.outputs.built == 'true' && steps.binaries.outputs.runtime_assets == '2'
+        shell: bash
+        run: |
+          set -euo pipefail
+          guard-release-tool artifact-index dist --expected-source "$GITHUB_SHA" > dist/artifact-index.json
+          cp dist/release-manifest.json dist/release-manifest-seed.json
+          cp dist/release-manifest.sigstore.json dist/release-manifest-seed.sigstore.json
 
       # Creating the guard-v<version> release creates its tag, and the
       # repository now refuses a tag from any token without the workflows
@@ -516,16 +654,20 @@ jobs:
       # repository or owner literal: the public export rewrites or rejects those.
       - name: Mint the release publication token
         id: publish-token
-        if: steps.version.outputs.reuse-private != 'true' && steps.version.outputs.public != 'true'
+        if: env.RELEASE_MODE != 'candidate' && steps.version.outputs.reuse-private != 'true' && steps.version.outputs.public != 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.KOMBIFY_CI_APP_ID }}
           private-key: ${{ secrets.KOMBIFY_CI_APP_PRIVATE_KEY }}
+          # The publication token is pinned to this repository. The App
+          # installation covers the whole organization, so an unscoped mint
+          # would reach every repository of the installation.
+          repositories: kombify-Techstack
           permission-contents: write
           permission-workflows: write
 
       - name: Publish
-        if: steps.version.outputs.reuse-private != 'true'
+        if: env.RELEASE_MODE != 'candidate' && steps.version.outputs.reuse-private != 'true'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -563,10 +705,100 @@ jobs:
               gh release upload "$tag" "dist/$asset"
             fi
           done
+          metadata_count="$(grep -Ec '^(artifact-index.json|release-manifest-seed.json|release-manifest-seed.sigstore.json)$' <<<"$names" || true)"
+          if [ "$metadata_count" -ne 0 ] && [ "$metadata_count" -ne 3 ]; then
+            echo '::error::Guard release has only part of the immutable file-delivery metadata set' >&2
+            exit 1
+          fi
+          for asset in artifact-index.json release-manifest-seed.json release-manifest-seed.sigstore.json; do
+            if [ ! -f "dist/$asset" ]; then continue; fi
+            if grep -qx "$asset" <<<"$names"; then
+              check="$(mktemp -d)"
+              gh release download "$tag" --dir "$check" --pattern "$asset"
+              cmp -s "$check/$asset" "dist/$asset" || { echo "::error::${asset} of ${tag} exists with different bytes; immutable delivery metadata cannot be replaced" >&2; exit 1; }
+            else
+              gh release upload "$tag" "dist/$asset"
+            fi
+          done
           # Only the manifest pair is replaced: a fresh window is the point of a
           # nightly run, and the Guard accepts only a manifest newer than the
           # newest it has seen.
           gh release upload "$tag" --clobber dist/release-manifest.json dist/release-manifest.sigstore.json
+
+      - name: Record the verified candidate
+        if: env.RELEASE_MODE == 'candidate'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          files='[]'
+          for asset in release-manifest.json release-manifest.sigstore.json \
+                       techstack-linux-amd64 techstack-linux-amd64.sigstore.json \
+                       techstack-linux-arm64 techstack-linux-arm64.sigstore.json \
+                       stackkit-runtime-linux-amd64.tar.gz stackkit-runtime-linux-arm64.tar.gz; do
+            test -s "dist/$asset"
+            files="$(jq -c --arg name "$asset" --arg sha "$(sha256sum "dist/$asset" | cut -d' ' -f1)" \
+              --argjson size "$(stat -c %s "dist/$asset")" '. + [{name:$name,sha256:$sha,size:$size}]' <<<"$files")"
+          done
+          for arch in amd64 arm64; do
+            tar -xOf "dist/stackkit-runtime-linux-${arch}.tar.gz" .stackkit/stackkits-release-pin.json > "${RUNNER_TEMP}/candidate-pin-${arch}.json"
+          done
+          artifact="guard-candidate-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          jq -n --arg source "$GITHUB_SHA" --arg tree "$(git rev-parse 'HEAD^{tree}')" \
+            --arg workflow "$GITHUB_WORKFLOW_REF" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
+            --arg version "$VERSION" --arg artifact "$artifact" --arg dockerfile "$(sha256sum Dockerfile | cut -d' ' -f1)" \
+            --argjson files "$files" --slurpfile manifest dist/release-manifest.json \
+            --slurpfile amd64 "${RUNNER_TEMP}/candidate-pin-amd64.json" --slurpfile arm64 "${RUNNER_TEMP}/candidate-pin-arm64.json" \
+            '{schemaVersion:"guard.candidate-receipt/v1",mode:"candidate",published:false,
+              sourceSha:$source,sourceTree:$tree,workflowRef:$workflow,runId:$run,runAttempt:$attempt,runUrl:$url,
+              productVersion:$version,artifactName:$artifact,dockerfileSha256:$dockerfile,
+              stackkits:$manifest[0].stackkits,runtimePins:{amd64:$amd64[0],arm64:$arm64[0]},files:$files}' \
+            > dist/candidate-receipt.json
+          {
+            echo "Signed nonpublishing Guard candidate: ${artifact}"
+            echo "Source ${GITHUB_SHA}; declared product ${VERSION}; StackKits $(jq -r '.stackkits.version' dist/release-manifest.json)."
+            echo 'No release, tag or Delivery was requested. Native Stage acceptance remains pending.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the verified candidate
+        id: candidate-upload
+        if: env.RELEASE_MODE == 'candidate'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: guard-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/release-manifest.json
+            dist/release-manifest.sigstore.json
+            dist/techstack-linux-amd64
+            dist/techstack-linux-amd64.sigstore.json
+            dist/techstack-linux-arm64
+            dist/techstack-linux-arm64.sigstore.json
+            dist/stackkit-runtime-linux-amd64.tar.gz
+            dist/stackkit-runtime-linux-arm64.tar.gz
+            dist/candidate-receipt.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 14
+
+      - name: Record the uploaded candidate artifact
+        if: env.RELEASE_MODE == 'candidate'
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ steps.candidate-upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.candidate-upload.outputs.artifact-digest }}
+          ARTIFACT_URL: ${{ steps.candidate-upload.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          test -n "$ARTIFACT_URL"
+          {
+            printf 'Candidate artifact ID: %s\n\n' "$ARTIFACT_ID"
+            printf 'Artifact SHA-256: `%s`\n\n' "$ARTIFACT_DIGEST"
+            printf 'Artifact URL: %s\n' "$ARTIFACT_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Continuous delivery of a prepared pre-1.0 release. Only the dispatch from
   # guard-release-on-release.yml asks for it, so a Delivery that later reuses
@@ -585,6 +817,7 @@ jobs:
     if: >-
       github.repository == 'kombifyio/TechStack' &&
       github.event_name == 'workflow_dispatch' &&
+      inputs.mode != 'candidate' &&
       inputs.deliver_after_publish &&
       vars.TECHSTACK_AUTO_DELIVERY != 'off'
     runs-on: ubuntu-24.04
@@ -644,7 +877,7 @@ jobs:
                 exit 1
               fi
               published="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${database_run}/jobs?per_page=100" \
-                --jq '.jobs[] | select((.name | startswith("delivery / Publish")) and (.name | contains("techstack-database")) and .conclusion == "success") | .id' | wc -l | tr -d '[:space:]')"
+                --jq '.jobs[] | select((.name | test("^delivery / (Deliver · techstack-database / )?Publish · techstack-database")) and .conclusion == "success") | .id' | wc -l | tr -d '[:space:]')"
               if [ "$published" = 0 ]; then
                 echo "::error::Database Delivery ${database_run} succeeded without publishing the techstack-database group; the service leg is not dispatched." >&2
                 exit 1
@@ -681,3 +914,4 @@ jobs:
             echo "Requested Delivery v2 (scope=${SCOPE}, execute=true) for Techstack ${version} at ${RELEASE_SHA}."
             echo "Dispatch acceptance is not deployment evidence; inspect the resulting Delivery run."
           } >> "$GITHUB_STEP_SUMMARY"
+

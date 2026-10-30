@@ -13,10 +13,11 @@ type PrivilegeQuerier interface {
 }
 
 type ApplicationPolicy struct {
-	Tables     map[int64]map[string]bool
-	TableNames map[int64]string
-	Sequences  map[int64]string
-	Functions  map[int64]string
+	Tables        map[int64]map[string]bool
+	TableNames    map[int64]string
+	Sequences     map[int64]string
+	Functions     map[int64]string
+	ContextSchema bool
 }
 
 // Principal names are explicit purpose inputs, never a legacy DSN alias.
@@ -29,7 +30,12 @@ func (p ApplicationPrincipal) validate() error {
 	return nil
 }
 
+// The invoker capacity trigger calls this pure digest while the application
+// inserts a reservation (migration 055). It needs EXECUTE, never owner authority.
+const applicationCapacityPolicyDigest = "managed_runtime_capacity_policy_digest(text,text,text,text,text,integer,text)"
+
 var applicationCapabilityFunctions = []string{
+	applicationCapacityPolicyDigest,
 	"techstack_lookup_subject_directory(text)", "techstack_forget_subject_directory(text,text)",
 	"techstack_list_job_execution_reclaim_tenants(text,timestamp with time zone,integer)", "techstack_compact_job_execution_reclaim_tenant(text)",
 	"techstack_list_pending_job_tenants(text,integer)", "techstack_compact_pending_job_tenant(text)",
@@ -37,6 +43,15 @@ var applicationCapabilityFunctions = []string{
 	"techstack_list_ril_workflow_tenants(text,integer)", "provider_control_runtime_authority()", "provider_incident_list_tenant_ids()",
 	"techstack_list_due_guard_reach(timestamp with time zone,text,text,integer)", "techstack_find_guard_reach_by_connect(text,text)",
 	"techstack_list_due_backup_schedules(timestamp with time zone,text,text,integer)", "techstack_list_due_backup_wipes(timestamp with time zone,text,text,integer)",
+	// The cross-tenant handoff key lookup (migration 170), called only after a
+	// pairing proved possession of the key.
+	"techstack_find_guard_key_custody(text,text)",
+}
+
+// These are the only callable functions in the canonical Common schema.
+// Internal MAC/decode helpers and keys are not application capabilities.
+var applicationContextFunctions = []string{
+	"kombify_ctx.verified_context()", "kombify_ctx.subject()", "kombify_ctx.org_id()",
 }
 
 // This is the single application capability selection used both by installation
@@ -139,6 +154,36 @@ func loadApplicationPolicy(ctx context.Context, q PrivilegeQuerier, requireFunct
 		}
 		p.Functions[oid.Int64] = signature
 	}
+	var contextSchema sql.NullInt64
+	if err := q.QueryRowContext(ctx, `SELECT to_regnamespace('kombify_ctx')::oid::bigint`).Scan(&contextSchema); err != nil {
+		return p, err
+	}
+	if !contextSchema.Valid {
+		if requireFunctions {
+			return p, fmt.Errorf("assigned Common context schema is absent")
+		}
+		return p, nil
+	}
+	p.ContextSchema = true
+	var roleClass sql.NullInt64
+	if err := q.QueryRowContext(ctx, `SELECT to_regclass('kombify_ctx.role_class')::oid::bigint`).Scan(&roleClass); err != nil {
+		return p, err
+	}
+	if !roleClass.Valid {
+		return p, fmt.Errorf("assigned Common role classification is absent")
+	}
+	p.Tables[roleClass.Int64] = map[string]bool{"SELECT": true}
+	p.TableNames[roleClass.Int64] = "kombify_ctx.role_class"
+	for _, signature := range applicationContextFunctions {
+		var oid sql.NullInt64
+		if err := q.QueryRowContext(ctx, `SELECT to_regprocedure($1)::oid::bigint`, signature).Scan(&oid); err != nil {
+			return p, err
+		}
+		if !oid.Valid {
+			return p, fmt.Errorf("assigned Common verifier is absent: %s", signature)
+		}
+		p.Functions[oid.Int64] = signature
+	}
 	return p, nil
 }
 
@@ -155,7 +200,7 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 	if err := VerifyApplicationPrincipalPosture(ctx, q, principal); err != nil {
 		return err
 	}
-	p, err := loadApplicationPolicy(ctx, q, requireCapabilities)
+	p, err := loadPrincipalPolicy(ctx, q, principal, requireCapabilities)
 	if err != nil {
 		return err
 	}
@@ -164,7 +209,8 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 	 OR has_database_privilege($1,current_database(),'CONNECT WITH GRANT OPTION')
 	 OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname<>'information_schema' AND n.nspname NOT LIKE 'pg_%'
 	 AND (has_schema_privilege($1,n.oid,'CREATE') OR has_schema_privilege($1,n.oid,'USAGE WITH GRANT OPTION')
-	 OR (n.nspname<>'public' AND has_schema_privilege($1,n.oid,'USAGE'))))`, principal.Role).Scan(&unsafe); err != nil {
+	 OR (n.nspname<>'public' AND NOT ($2 AND n.nspname='kombify_ctx')
+	 AND has_schema_privilege($1,n.oid,'USAGE'))))`, principal.Role, p.ContextSchema).Scan(&unsafe); err != nil {
 		return err
 	}
 	if !unsafe {
@@ -175,6 +221,11 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 	}
 	if unsafe {
 		return fmt.Errorf("managed test app has excess database/schema authority")
+	}
+	if p.ContextSchema {
+		if err := verifyApplicationContextSchema(ctx, q, principal, requireCapabilities); err != nil {
+			return err
+		}
 	}
 	if requireCapabilities {
 		var connected bool
@@ -285,28 +336,99 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 		return err
 	}
 	functionRows.Close()
-	for oid := range p.Functions {
+	for oid, signature := range p.Functions {
+		if strings.HasPrefix(signature, "kombify_ctx.") {
+			if err := verifyApplicationContextFunction(ctx, q, principal, oid, signature); err != nil {
+				return err
+			}
+			continue
+		}
 		var safe bool
 		// Migration authority may provision roles; it never becomes an app login.
 		// Definers remain exact, non-super/non-bypass, with fixed search path.
-		if err := q.QueryRowContext(ctx, `SELECT f.prosecdef AND owner.rolname=$2
+		definer := signature != applicationCapacityPolicyDigest
+		searchPath := "search_path=pg_catalog,public,pg_temp"
+		if !definer {
+			searchPath = "search_path=pg_catalog"
+		}
+		if err := q.QueryRowContext(ctx, `SELECT f.prosecdef=$3 AND owner.rolname=$2
 		 AND NOT(owner.rolsuper OR owner.rolbypassrls OR owner.rolreplication)
 		 AND EXISTS(SELECT 1 FROM unnest(f.proconfig) configuration
-		 WHERE replace(configuration,' ','')='search_path=pg_catalog,public,pg_temp')
-		 FROM pg_proc f JOIN pg_roles owner ON owner.oid=f.proowner WHERE f.oid=$1`, oid, principal.AuthorityOwner).Scan(&safe); err != nil {
+		 WHERE replace(configuration,' ','')=$4)
+		 AND ($3 OR (f.provolatile='i' AND f.proisstrict AND f.prorettype='text'::regtype
+		 AND f.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+		 AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(f.proacl,acldefault('f',f.proowner))) acl
+		 WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE')))
+		 FROM pg_proc f JOIN pg_roles owner ON owner.oid=f.proowner WHERE f.oid=$1`, oid, principal.AuthorityOwner, definer, searchPath).Scan(&safe); err != nil {
 			return err
 		}
 		if !safe {
-			return fmt.Errorf("managed test application definer owner/search path is unsafe")
+			return fmt.Errorf("managed test application routine owner/execution posture is unsafe")
 		}
 	}
 	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_default_acl d JOIN pg_roles r ON r.oid=d.defaclrole
 	 CROSS JOIN LATERAL aclexplode(d.defaclacl) acl WHERE r.rolname=$1
-	 AND acl.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$2)))`, principal.AuthorityOwner, principal.Role).Scan(&unsafe); err != nil {
+	 AND acl.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$2)))
+	 OR EXISTS(SELECT 1 FROM pg_roles owner
+	 CROSS JOIN LATERAL aclexplode(COALESCE(
+	   (SELECT d.defaclacl FROM pg_default_acl d WHERE d.defaclrole=owner.oid
+	    AND d.defaclnamespace=0 AND d.defaclobjtype='f'),acldefault('f',owner.oid))) acl
+	 WHERE owner.rolname=$1 AND acl.grantee=0 AND acl.privilege_type='EXECUTE')`, principal.AuthorityOwner, principal.Role).Scan(&unsafe); err != nil {
 		return err
 	}
 	if unsafe {
 		return fmt.Errorf("managed test app has unassigned future-object default authority")
+	}
+	return nil
+}
+
+// Only the newly installed Common namespace is admitted outside public.
+// Check its protected ownership and closed PUBLIC surface as well as the exact
+// per-application ACLs checked by the ordinary table/column/function loops.
+func verifyApplicationContextSchema(ctx context.Context, q PrivilegeQuerier, principal ApplicationPrincipal, requireCapabilities bool) error {
+	var safe bool
+	class := "runtime"
+	if principal.Role == BackupWorkerRole {
+		class = "system"
+	}
+	err := q.QueryRowContext(ctx, `SELECT n.nspowner=(SELECT oid FROM pg_roles WHERE rolname=$2)
+	 AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) a WHERE a.grantee=0)
+	 AND (SELECT count(*)=2 AND bool_and(c.relkind='r' AND c.relowner=n.nspowner)
+	      FROM pg_class c WHERE c.oid IN (to_regclass('kombify_ctx.keys'),to_regclass('kombify_ctx.role_class')))
+	 AND NOT EXISTS(SELECT 1 FROM pg_class c
+	      CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl,acldefault('r',c.relowner))) a
+	      WHERE c.relnamespace=n.oid AND a.grantee=0)
+	 AND NOT EXISTS(SELECT 1 FROM pg_proc f
+	      CROSS JOIN LATERAL aclexplode(COALESCE(f.proacl,acldefault('f',f.proowner))) a
+	      WHERE f.pronamespace=n.oid AND a.grantee=0)
+	 AND NOT EXISTS(SELECT 1 FROM kombify_ctx.role_class WHERE role_name=$1 AND class<>$4)
+	 AND (NOT $3 OR has_schema_privilege($1,n.oid,'USAGE'))
+	 AND ($1 NOT IN ('techstack_application','techstack_backup_worker') OR EXISTS(SELECT 1 FROM kombify_ctx.role_class WHERE role_name=$1 AND class=$4))
+	 FROM pg_namespace n WHERE n.nspname='kombify_ctx'`, principal.Role, principal.AuthorityOwner, requireCapabilities, class).Scan(&safe)
+	if err != nil || !safe {
+		return fmt.Errorf("Common context namespace ownership, classification or PUBLIC authority is unsafe")
+	}
+	return nil
+}
+
+func verifyApplicationContextFunction(ctx context.Context, q PrivilegeQuerier, principal ApplicationPrincipal, oid int64, signature string) error {
+	definer := signature == "kombify_ctx.verified_context()"
+	language, result := "sql", "text"
+	if definer {
+		language, result = "plpgsql", "kombify_ctx.context"
+	}
+	var safe bool
+	err := q.QueryRowContext(ctx, `SELECT f.prosecdef=$3 AND owner.rolname=$2
+	 AND NOT(owner.rolsuper OR owner.rolbypassrls OR owner.rolreplication)
+	 AND f.provolatile='s' AND NOT f.proisstrict AND f.prorettype=to_regtype($5)
+	 AND f.prolang=(SELECT oid FROM pg_language WHERE lanname=$4)
+	 AND EXISTS(SELECT 1 FROM unnest(f.proconfig) configuration
+	            WHERE replace(configuration,' ','')='search_path=pg_catalog,pg_temp')
+	 AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(f.proacl,acldefault('f',f.proowner))) a WHERE a.grantee=0)
+	 FROM pg_proc f JOIN pg_roles owner ON owner.oid=f.proowner
+	 WHERE f.oid=$1 AND f.pronamespace=to_regnamespace('kombify_ctx')`, oid, principal.AuthorityOwner, definer, language, result).Scan(&safe)
+	if err != nil || !safe {
+		return fmt.Errorf("Common context verifier owner/execution posture is unsafe")
 	}
 	return nil
 }

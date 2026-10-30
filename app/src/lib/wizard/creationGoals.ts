@@ -7,6 +7,11 @@ import type {
   BundleQuestionDefinition,
   GoalConfigKey,
 } from "./standardBundle.js";
+import type { StackConfig } from "./types.js";
+import type {
+  ViewContextDetails,
+  ViewContextFactKey,
+} from "#lib/view-context.js";
 
 export type CreationVariant = "discover" | "focus";
 
@@ -101,4 +106,61 @@ export function selectedBackend(
     choices.find((entry) => entry.role === "primary") ??
     choices[0]
   );
+}
+
+/** Catalog ids and finite choices only; never wizard text or owner credentials. */
+export function creationGoalContextFacts(
+  cards: CreationGoal[],
+  config: StackConfig,
+  catalog: Map<string, UseCaseCatalogView>,
+): NonNullable<ViewContextDetails["facts"]> {
+  const available = cards.filter((card) => card.availability === "available");
+  const selected = cards.filter(
+    (card) => card.question && config.goals?.[card.question.configKey] === true,
+  );
+  const facts: NonNullable<ViewContextDetails["facts"]> = {
+    availableUseCases: available.map((card) => card.id).join("+") || "none",
+    selectedUseCases: selected.map((card) => card.id).join("+") || "none",
+  };
+  const code = /^[a-z][a-z0-9_-]{0,63}$/;
+  for (const card of available) {
+    const values = config.useCaseSettings?.[card.id] ?? {};
+    const backend = selectedBackend(card.catalog, values.backend);
+    const tokens: string[] = [];
+    const apps = [...(card.catalog?.components ?? [])];
+    if (backend && code.test(backend.id)) tokens.push(`backend:${backend.id}`);
+    for (const setting of card.catalog?.settings ?? []) {
+      // Installing optional workloads explain choices such as Paperless for
+      // invoices. Ignore arbitrary text, recorded choices and secret fields.
+      if (
+        setting.kind !== "toggle" ||
+        setting.realization !== "install" ||
+        !setting.workloadRef ||
+        !code.test(setting.id)
+      )
+        continue;
+      const value = values[setting.id] ?? setting.default;
+      if (typeof value === "boolean") tokens.push(`${setting.id}:${value}`);
+      apps.push(...(catalog.get(setting.workloadRef)?.components ?? []));
+    }
+    for (const app of apps) {
+      if (
+        app.kind === "application" &&
+        app.realization !== "recorded" &&
+        installsService(app) &&
+        code.test(app.id)
+      )
+        tokens.push(`app:${app.id}`);
+    }
+    // Facts have the bridge's existing 160-character bound. Keep whole ids;
+    // current decisions precede additional catalog options within that bound.
+    const bounded: string[] = [];
+    for (const token of [...new Set(tokens)]) {
+      if ([...bounded, token].join("+").length <= 160) bounded.push(token);
+    }
+    const key: ViewContextFactKey =
+      card.id === "smart-home" ? "smartHomeOptions" : `${card.id}Options`;
+    if (bounded.length) facts[key] = bounded.join("+");
+  }
+  return facts;
 }

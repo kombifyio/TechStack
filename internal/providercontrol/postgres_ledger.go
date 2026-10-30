@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -612,7 +613,7 @@ func advanceOperationHeadTx(
 			phase = $5,
 			head_sequence = $6,
 			head_receipt_digest = $7,
-			updated_at = $8
+			updated_at = GREATEST(updated_at, $8)
 		WHERE tenant_id = $1
 		  AND operation_id = $2
 		  AND head_sequence = $3
@@ -669,6 +670,10 @@ func (l *PostgresLedger) AcquireExecutionClaim(
 	owner, token string,
 	ttl time.Duration,
 ) (ExecutionClaim, error) {
+	if !releasechannel.AdmitsJobExecution(command.TenantID) ||
+		(access == ExecutionClaimSideEffecting && !releasechannel.OwnsTenant(command.TenantID)) {
+		return ExecutionClaim{}, releasechannel.ErrTenantNotOwned
+	}
 	if l == nil || l.db == nil {
 		return ExecutionClaim{}, fmt.Errorf("%w: ledger database is not configured", ErrInvalidRequest)
 	}
@@ -697,6 +702,9 @@ func (l *PostgresLedger) AcquireProvisionDispatchClaim(
 	owner, token string,
 	ttl time.Duration,
 ) (ProvisionDispatchGrant, error) {
+	if !releasechannel.OwnsTenant(command.TenantID) {
+		return ProvisionDispatchGrant{}, releasechannel.ErrTenantNotOwned
+	}
 	if l == nil || l.db == nil {
 		return ProvisionDispatchGrant{}, fmt.Errorf("%w: ledger database is not configured", ErrInvalidRequest)
 	}

@@ -42,6 +42,14 @@ func prepareApplicationPrincipal(ctx context.Context, authority *db.DB, cfg adva
 	if err = db.InstallApplicationCapabilities(ctx, tx, principal); err != nil {
 		return err
 	}
+	// Login creation and password custody stay with the existing governed
+	// infrastructure bootstrap. Product preparation grants only its finite
+	// capabilities, without receiving the worker credential.
+	if cfg.appRole == db.HostedApplicationRole {
+		if err = db.InstallApplicationCapabilities(ctx, tx, db.ApplicationPrincipal{Role: db.BackupWorkerRole, AuthorityOwner: owner}); err != nil {
+			return err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}

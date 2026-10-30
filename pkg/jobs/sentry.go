@@ -1,3 +1,5 @@
+//go:build !kombify_full_local
+
 package jobs
 
 import (
@@ -34,16 +36,6 @@ var (
 	sentrySSHUserPattern      = regexp.MustCompile(`(?i)\bdial ([A-Za-z0-9._-]+)@`)
 	sentryHealthTargetPattern = regexp.MustCompile(`(?i)\bhealth:([A-Za-z0-9._:-]+)`)
 )
-
-// jobPanicError carries a panic recovered from a job handler to the finisher of
-// withJobSentryScope. recover() works only in the deferred function itself, so the
-// caller recovers and passes the panic on as this error value.
-type jobPanicError struct {
-	value any
-	stack []byte
-}
-
-func (p *jobPanicError) Error() string { return fmt.Sprintf("job panic: %v", p.value) }
 
 // withJobSentryScope clones a Sentry hub for the duration of one job execution,
 // sets job-specific tags, and returns a finisher that captures any returned error

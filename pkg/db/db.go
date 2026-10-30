@@ -7,14 +7,23 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/netip"
 	"os"
 	"path"
 	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/kombifyio/techstack/internal/gocommon/dataprofile"
+
+	"github.com/kombifyio/techstack/pkg/fulllocal"
 )
 
 //go:embed migrations/*.sql
@@ -141,7 +150,7 @@ func OpenContext(ctx context.Context, cfg Config) (*DB, error) {
 		driverName = PostgresDriverName
 	}
 
-	db, err := sql.Open(driverName, cfg.DSN)
+	db, err := openSQLDatabase(driverName, cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -167,7 +176,7 @@ func OpenContext(ctx context.Context, cfg Config) (*DB, error) {
 
 	// sql.Open connects lazily: the probe holds a connection only once a
 	// health check uses it.
-	probe, err := sql.Open(driverName, cfg.DSN)
+	probe, err := openSQLDatabase(driverName, cfg.DSN)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to open database probe: %w", err)
@@ -182,6 +191,122 @@ func OpenContext(ctx context.Context, cfg Config) (*DB, error) {
 		backend: cfg.Backend,
 		probe:   probe,
 	}, nil
+}
+
+// openSQLDatabase consumes only the existing operator pg-egress routing map.
+// The parsed DSN, TLS server name/CA and credentials stay unchanged; only DNS
+// resolution of mapped hosts enters the canonical loopback SSH listeners.
+func openSQLDatabase(driverName, dsn string) (*sql.DB, error) {
+	if driverName == PostgresDriverName {
+		config, err := operatorEgressConfig(dsn, os.Getenv("PG_EGRESS_MAP"))
+		if err != nil {
+			return nil, err
+		}
+		if config == nil && fulllocal.Active() {
+			if config, err = pgx.ParseConfig(dsn); err != nil {
+				return nil, errors.New("invalid PostgreSQL config")
+			}
+		}
+		if config != nil {
+			if fulllocal.Active() {
+				// Under Full Local the database must be a homelab address; pgx
+				// dials with its own dialer, not the shared HTTP transport.
+				config.DialFunc = dataprofile.GuardDial(config.DialFunc)
+			}
+			return stdlib.OpenDB(*config), nil
+		}
+	}
+	return sql.Open(driverName, dsn)
+}
+
+func operatorEgressConfig(dsn, raw string) (*pgx.ConnConfig, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	// A duplicate key or trailing JSON must not silently select another route.
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return nil, errors.New("invalid operator PG_EGRESS_MAP")
+	}
+	mapping := map[string]string{}
+	for decoder.More() {
+		key, err := decoder.Token()
+		host, ok := key.(string)
+		if err != nil || !ok || !operatorEgressHostname(host) {
+			return nil, errors.New("invalid operator PG_EGRESS_MAP hostname")
+		}
+		if _, duplicate := mapping[host]; duplicate {
+			return nil, errors.New("duplicate operator PG_EGRESS_MAP hostname")
+		}
+		var address string
+		if decoder.Decode(&address) != nil {
+			return nil, errors.New("invalid operator PG_EGRESS_MAP address")
+		}
+		ip, err := netip.ParseAddr(address)
+		// These are the listeners owned by scripts/pg-egress.mjs, never a
+		// new remote destination, wildcard listener or TLS fallback.
+		if err != nil || !ip.Is4() || address != ip.String() ||
+			(address != "127.0.0.2" && address != "127.0.0.3" && address != "127.0.0.4" && address != "127.0.0.5") {
+			return nil, errors.New("unsafe operator PG_EGRESS_MAP address")
+		}
+		mapping[host] = address
+	}
+	if end, err := decoder.Token(); err != nil || end != json.Delim('}') {
+		return nil, errors.New("invalid operator PG_EGRESS_MAP")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, errors.New("trailing operator PG_EGRESS_MAP data")
+	}
+	if len(mapping) == 0 {
+		return nil, nil
+	}
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, errors.New("invalid PostgreSQL config for operator egress")
+	}
+	_, mapped := mapping[strings.ToLower(config.Host)]
+	for _, fallback := range config.Fallbacks {
+		if _, ok := mapping[strings.ToLower(fallback.Host)]; ok {
+			mapped = true
+		}
+	}
+	if !mapped {
+		return nil, nil // Retain sql.Open semantics for every unmapped connection.
+	}
+	if config.TLSConfig == nil || config.TLSConfig.InsecureSkipVerify || config.TLSConfig.ServerName != config.Host {
+		return nil, errors.New("operator egress requires verified PostgreSQL TLS hostname")
+	}
+	for _, fallback := range config.Fallbacks {
+		if fallback.TLSConfig == nil || fallback.TLSConfig.InsecureSkipVerify || fallback.TLSConfig.ServerName != fallback.Host {
+			return nil, errors.New("operator egress refuses unverified PostgreSQL fallback")
+		}
+	}
+	originalLookup := config.LookupFunc
+	config.LookupFunc = func(ctx context.Context, host string) ([]string, error) {
+		if address, ok := mapping[strings.ToLower(host)]; ok {
+			return []string{address}, nil
+		}
+		return originalLookup(ctx, host)
+	}
+	return config, nil
+}
+
+func operatorEgressHostname(host string) bool {
+	if len(host) == 0 || len(host) > 253 || net.ParseIP(host) != nil {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, char := range label {
+			if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Probe returns the handle health checks use to prove the database answers,
@@ -398,7 +523,7 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 			return fmt.Errorf("failed to begin transaction: %w", beginErr)
 		}
 
-		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
+		if err := executePendingMigration(ctx, tx, version, content); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("failed to execute migration %s: %w", version, err)
 		}

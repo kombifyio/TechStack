@@ -5,6 +5,7 @@
   import NodeMessageLine from "#lib/components/dashboard/NodeMessageLine.svelte";
   import NodeRow from "#lib/components/dashboard/NodeRow.svelte";
   import PeoplePanel from "#lib/components/dashboard/PeoplePanel.svelte";
+  import TrademarkNotice from "#lib/components/TrademarkNotice.svelte";
   import {
     groupNodesByDeployment,
     type NodeView,
@@ -191,6 +192,8 @@
         />
       {/if}
       </div>
+
+      <TrademarkNotice class="shrink-0" />
     </section>
 
     <div

@@ -136,6 +136,21 @@ const ROLE_SECRET_CANDIDATES: Record<
   ],
 };
 
+// The explicit Centron lifecycle uses the canonical ephemeral managed owner.
+// Other cloud duties retain their existing Pro fixture and fallback contract.
+export function getTechStackTestUserSecretCandidates(
+  role: TechStackTestUserRole,
+  env: EnvSource = process.env,
+): { email: string; password: string }[] {
+  if (role === "cloud" && env.TECHSTACK_RUNTIME_E2E_PROVIDER_ID?.trim().toLowerCase() === "centron") {
+    return [{
+      email: "TEST_ALL_YOU_NEED_USER_EMAIL",
+      password: "TEST_ALL_YOU_NEED_USER_PASSWORD",
+    }];
+  }
+  return ROLE_SECRET_CANDIDATES[role];
+}
+
 function readSecret(env: EnvSource, name: string): string {
   return env[name]?.trim() ?? "";
 }
@@ -174,8 +189,9 @@ function getLocalBootstrapUser(
 function describeCandidates(
   role: TechStackTestUserRole,
   field: "email" | "password",
+  env: EnvSource,
 ): string {
-  return ROLE_SECRET_CANDIDATES[role]
+  return getTechStackTestUserSecretCandidates(role, env)
     .map((candidate) => candidate[field])
     .join(" or ");
 }
@@ -184,7 +200,7 @@ function candidateUsers(
   role: TechStackTestUserRole,
   env: EnvSource,
 ): TechStackTestUser[] {
-  const users = ROLE_SECRET_CANDIDATES[role].map((candidate) => ({
+  const users = getTechStackTestUserSecretCandidates(role, env).map((candidate) => ({
     email: readSecret(env, candidate.email),
     password: readSecret(env, candidate.password),
   }));
@@ -238,8 +254,8 @@ export function buildTechStackTestUserReadiness(
             emailConfigured,
             passwordConfigured,
             missingSecrets: [
-              emailConfigured ? "" : describeCandidates(role, "email"),
-              passwordConfigured ? "" : describeCandidates(role, "password"),
+              emailConfigured ? "" : describeCandidates(role, "email", env),
+              passwordConfigured ? "" : describeCandidates(role, "password", env),
             ].filter(Boolean),
           },
         ];

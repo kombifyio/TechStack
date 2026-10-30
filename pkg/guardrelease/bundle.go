@@ -29,12 +29,47 @@ const treeDigestHeader = "kombify.guard.runtime-tree/v1\n"
 // into the manifest; the privileged executor computes it over the extracted
 // bundle before root reads or runs any file of it.
 func TreeDigest(root string) (string, error) {
+	return treeDigest(root, "")
+}
+
+// InstalledTreeDigest checks an activated runtime. The installer adds exactly
+// one local archive-digest marker after authenticating the extracted tree; it
+// is not a release member and cannot be included in the signed tree digest.
+func InstalledTreeDigest(root string) (string, error) {
+	const marker = ".techstack-bundle-sha256"
+	info, err := os.Lstat(filepath.Join(root, marker))
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() != 65 {
+		return "", errors.New("installed runtime archive marker is invalid")
+	}
+	file, err := os.Open(filepath.Join(root, marker))
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return "", errors.New("installed runtime archive marker changed")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, 66))
+	if err != nil || len(raw) != 65 || raw[64] != '\n' || !digestPattern.Match(raw[:64]) {
+		return "", errors.New("installed runtime archive marker is invalid")
+	}
+	return treeDigest(root, marker)
+}
+
+func treeDigest(root, ignoredRootFile string) (string, error) {
 	var entries []treeEntry
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if p == root {
+			return nil
+		}
+		if ignoredRootFile != "" && p == filepath.Join(root, ignoredRootFile) {
 			return nil
 		}
 		info, err := d.Info()

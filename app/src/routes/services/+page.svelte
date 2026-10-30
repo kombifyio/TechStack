@@ -40,6 +40,7 @@
   } from "#lib/api/services.js";
   import {
     openServiceUrl,
+    serviceCardLogo,
     serviceCardLogoDomain,
     serviceCardLogoSrc,
     serviceCardUpdate,
@@ -79,8 +80,9 @@
     type ServiceListItem,
   } from "#lib/components/inventory/ServiceList.svelte";
   import ServiceMoveDialog from "#lib/components/inventory/ServiceMoveDialog.svelte";
+  import TrademarkNotice from "#lib/components/TrademarkNotice.svelte";
   import PlacementBoard from "#lib/components/inventory/PlacementBoard.svelte";
-  import AddApplicationWizard from "#lib/components/wizard/AddApplicationWizard.svelte";
+  import { placeUseCasesHref } from "#lib/server-links.js";
   import ServiceAdoptionDialog from "#lib/components/inventory/ServiceAdoptionDialog.svelte";
   import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
   import {
@@ -133,7 +135,6 @@
   });
   let servicesPageActive = false;
   let statusFilter = $state<string>("all");
-  let showNewService = $state(false);
   let adoptionService = $state<CanonicalService | null>(null);
   let releaseAdoption = $state(false);
   let selectedKitDeploymentId = $state("");
@@ -399,6 +400,8 @@
         placement: cardPlacement,
         operation_state: migration ? "running" : undefined,
       };
+      // A component keeps its own recognition: the viewer's logo override
+      // belongs to the application, not to each of its parts.
       const runtimeLogoDomain = serviceCardLogoDomain(
         runtime.catalog,
         runtime.application_key,
@@ -453,7 +456,9 @@
           observed: stateLabel(runtime.observed_state),
         }),
         logoDomain: runtimeLogoDomain,
-        logoSrc: serviceCardLogoSrc(runtimeLogoDomain),
+        logoSrc: serviceCardLogoSrc(runtimeLogoDomain, {
+          catalog: runtime.catalog,
+        }),
         version: serviceCardVersion(runtime.version),
         update: serviceCardUpdate(runtime.version),
         locked: serviceIsLocked(runtime.mutation_lock),
@@ -641,10 +646,10 @@
         );
         const version = applicationVersion(application);
         const ownership = applicationOwnership(application);
-        const logoDomain = serviceCardLogoDomain(
+        const logo = serviceCardLogo(
           application.catalog ?? application.components[0]?.catalog,
           application.application_key,
-          application.display_name,
+          [application.application_key, application.display_name],
         );
         const status = resolveServiceCardStatus({ status: application.status });
         const actions = cardActionsForApplication(application);
@@ -690,8 +695,8 @@
           freshnessLabel:
             application.observed_at || tr("ui.serviceCards.notObserved"),
           sourceLabel: tr("ui.services.stackkitsApplicationModel"),
-          logoDomain,
-          logoSrc: serviceCardLogoSrc(logoDomain),
+          logoDomain: logo.domain,
+          logoSrc: logo.src,
           version: serviceCardVersion(version),
           update: serviceCardUpdate(version),
           locked: applicationLocked(application),
@@ -956,14 +961,11 @@
     }
   }
 
+  // New applications arrive as use cases on a target the owner picks: one
+  // of the existing StackKits or servers first, a new server last.
   function openNewService() {
     actionError = null;
-    showNewService = true;
-  }
-
-  function closeNewService() {
-    showNewService = false;
-    void refreshRegistryQuietly();
+    void goto(placeUseCasesHref());
   }
 
   function upsertService(service: RegistryService) {
@@ -1339,16 +1341,16 @@
             disabled={loading || registryError !== null}
             ariaLabel={registryError
               ? tr("ui.services.applicationManagementIsUnavailableUntil")
-              : tr("ui.services.addANewApplication")}
+              : tr("layout.addUseCases.entry")}
           >
-            {tr("ui.services.newApplication")}
+            {tr("layout.addUseCases.entry")}
           </Button>
         {/if}
       </div>
     {/snippet}
   </PageHeader>
 
-  {#if actionError && !showNewService}
+  {#if actionError}
     <ErrorCallout
       class="mb-4"
       testId="services-action-error"
@@ -1540,6 +1542,8 @@
           />
         </div>
       {/if}
+
+      <TrademarkNotice class="mt-6" />
     {/if}
 
     {#if registryError}
@@ -1597,14 +1601,6 @@
   />
 {/if}
 
-{#if showNewService}
-  <AddApplicationWizard
-    {registry}
-    initialServerId={selectedServerId}
-    onclose={closeNewService}
-    onadded={upsertService}
-  />
-{/if}
 
 {#if detailOpen}
   {@const detailRuntime = detailRow?.runtime}

@@ -6,7 +6,7 @@
  */
 
 import { get as readStore } from "svelte/store";
-import { getClientBootstrap } from "#lib/client/bootstrap.js";
+import { getClientBootstrap, loadClientBootstrap } from "#lib/client/bootstrap.js";
 import { deploymentMode } from "#lib/stores/deploymentMode.js";
 import { getGatewayToken } from "#lib/auth/gateway-auth.js";
 import {
@@ -582,7 +582,18 @@ export async function fetchApi<T>(
 
   // SaaS data-plane calls must go through the Cloudflare gateway with a real
   // Auth0 API token so the edge signs identity and entitlement flags.
-  const gatewayUrl = gatewayUrlFor(endpoint, method);
+  let gatewayUrl = gatewayUrlFor(endpoint, method);
+  if (gatewayUrl) {
+    // The first request must know its deployment channel before it can reach
+    // the shared Gateway. An empty bootstrap must never select Stable.
+    const bootstrap = await loadClientBootstrap();
+    gatewayUrl = gatewayUrlFor(endpoint, method);
+    if (gatewayUrl && !["stable", "preview", "early-access"].includes(bootstrap.releaseChannel)) {
+      throw new ApiRequestError(tr("ui.client.networkError"), {
+        status: 503, code: "gateway_channel_unavailable", url: gatewayUrl, method,
+      });
+    }
+  }
   const gatewayToken = gatewayUrl
     ? await resolveGatewayBearer(gatewayUrl, method)
     : "";
@@ -599,6 +610,9 @@ export async function fetchApi<T>(
   );
   for (const [key, value] of Object.entries(authHeader)) {
     if (!headers.has(key)) headers.set(key, value);
+  }
+  if (gatewayUrl && getClientBootstrap().releaseChannel === "preview") {
+    headers.set("x-kombify-release-channel", "preview");
   }
   const authorizationHeader = headers.get("Authorization") ?? "";
   const hasBearerAuth = authorizationHeader.startsWith("Bearer ");

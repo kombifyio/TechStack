@@ -94,7 +94,6 @@ func RegisterRegistryRoutesWithStores(r *httpx.Router, stores RegistryRouteStore
 		allowLocalHomeAssistant: stores.AllowLocalHomeAssistant,
 	}
 	r.GET("/api/v1/registry/services", h.services)
-	r.POST("/api/v1/registry/services/attach", h.attachService)
 	r.POST("/api/v1/registry/services/import", h.importUnmanagedService)
 	r.POST("/api/v1/registry/services/home-assistant/import", h.importHomeAssistant)
 	r.POST("/api/v1/registry/services/migrate", h.migrateService)
@@ -220,45 +219,6 @@ func (h registryRouteHandlers) services(e *httpx.Event) error {
 		return err
 	}
 	return httpx.ConditionalSuccess(e, payload, nil)
-}
-
-func (h registryRouteHandlers) attachService(e *httpx.Event) error {
-	ownerID, err := requireAuth(e)
-	if err != nil {
-		return err
-	}
-	req, err := readRegistryServiceRequest(e)
-	if err != nil {
-		return httpx.BadRequest(e, err.Error(), nil)
-	}
-
-	catalogService, ok := registryCatalogServiceByID(req.ServiceID)
-	if !ok {
-		return httpx.BadRequest(e, "Unknown catalog service", map[string]any{"service_id": req.ServiceID})
-	}
-
-	tenantID, err := h.requireRegistryMutationTenant(e, ownerID, "techstack.registry.services.attach")
-	if err != nil {
-		return err
-	}
-	stack, node, ok, err := h.ownedRegistryNode(e, tenantID, ownerID, req.StackID, req.ServerID)
-	if err != nil || !ok {
-		return err
-	}
-	serviceKey := normalizeServiceKey(catalogService.ID)
-	service, err := h.registryStore.UpsertService(e.Request.Context(), controlplane.Service{
-		ID: runtimeidentity.ServiceID(stack.ID, node.ID, serviceKey, "default"), TenantID: tenantID,
-		InstanceID: stack.InstanceID, StackID: stack.ID, NodeID: node.ID, ServiceKey: serviceKey,
-		Name: serviceKey, Status: preCheckStatusPending, Source: serviceregistry.SourceTechstackRegistry,
-		Metadata: map[string]any{"display_name": catalogService.DisplayName, "type": catalogService.Type},
-	})
-	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to attach service", nil)
-	}
-
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		"service": serviceRegistryRecordFromStore(*service, *stack, *node),
-	})
 }
 
 func (h registryRouteHandlers) importUnmanagedService(e *httpx.Event) error {
@@ -1013,16 +973,6 @@ func registryServiceCatalog() []registryCatalogService {
 		catalog[i].IconURL = appcatalog.IconURL(catalog[i].ID)
 	}
 	return catalog
-}
-
-func registryCatalogServiceByID(id string) (registryCatalogService, bool) {
-	id = normalizeServiceKey(id)
-	for _, service := range registryServiceCatalog() {
-		if normalizeServiceKey(service.ID) == id {
-			return service, true
-		}
-	}
-	return registryCatalogService{}, false
 }
 
 func (h registryRouteHandlers) migrateService(e *httpx.Event) error {

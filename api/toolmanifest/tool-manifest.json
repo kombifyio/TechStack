@@ -9481,6 +9481,274 @@
       }
     },
     {
+      "name": "list_failure_outcomes",
+      "title": "List the tenant's failure resolution outcomes",
+      "description": "Returns the caller tenant's own recorded resolution outcomes, newest first, and the succeeded and failed counts per resolution and signature. Another tenant's outcomes are never visible.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "listFailureOutcomes",
+      "http": {
+        "method": "GET",
+        "path": "/api/v1/failures/outcomes"
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "resolution_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "completed_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "context": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Coarse context dimensions of the failure (stackkit_module, os, provider, ...); absent when unknown.",
+                  "type": "object"
+                },
+                "job_id": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "enum": [
+                    "succeeded",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "procedure": {
+                  "type": "string"
+                },
+                "recorded_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "resolution_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "signature": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "stack_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resolution_id",
+                "signature",
+                "procedure",
+                "job_id",
+                "outcome",
+                "context",
+                "completed_at",
+                "recorded_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "resolutions": {
+            "items": {
+              "properties": {
+                "failed": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "last_outcome": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "resolution_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "signature": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "succeeded": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "resolution_id",
+                "signature",
+                "succeeded",
+                "failed",
+                "last_outcome"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "resolutions"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_failure_signatures",
+      "title": "List the tenant's failure signatures",
+      "description": "Returns the caller tenant's own failed operations normalized into failure signatures, most recently seen first. A signature is the SHA-256 over the normalizer version, component, phase, error code and a template in which every variable token (timestamps, IDs, addresses, host names, paths, user names, quoted values, numbers) is replaced. No raw error text is stored or returned, and another tenant's occurrences are never visible.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "listFailureSignatures",
+      "http": {
+        "method": "GET",
+        "path": "/api/v1/failures/signatures"
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "window_days": {
+            "default": 7,
+            "description": "Length of the growth window; recent_occurrences counts the last window, previous_occurrences the one before it.",
+            "maximum": 90,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "component": {
+                  "description": "Failing capability, for example techstack.stackkit.deploy.",
+                  "type": "string"
+                },
+                "error_code": {
+                  "description": "Most specific recorded reason code; empty when unknown.",
+                  "type": "string"
+                },
+                "first_seen": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "last_seen": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "latest_exit_status": {
+                  "nullable": true,
+                  "type": "integer"
+                },
+                "latest_stackkit_module": {
+                  "description": "StackKit module of the most recent occurrence; empty when unknown.",
+                  "type": "string"
+                },
+                "latest_template": {
+                  "description": "Normalized error template of the most recent occurrence.",
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "normalizer_version": {
+                  "type": "string"
+                },
+                "occurrences": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "phase": {
+                  "description": "Step in which the operation failed; empty when unknown.",
+                  "type": "string"
+                },
+                "previous_occurrences": {
+                  "description": "Occurrences within the window_days before the last window.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "recent_occurrences": {
+                  "description": "Occurrences within the last window_days.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "signature": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "targets": {
+                  "description": "Distinct StackKit deployments with this signature.",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "signature",
+                "normalizer_version",
+                "component",
+                "phase",
+                "error_code",
+                "latest_template",
+                "latest_exit_status",
+                "occurrences",
+                "targets",
+                "first_seen",
+                "last_seen",
+                "recent_occurrences",
+                "previous_occurrences",
+                "latest_stackkit_module"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "normalizer_version": {
+            "type": "string"
+          },
+          "window_days": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "normalizer_version"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "list_features",
       "title": "List all features grouped by category",
       "description": "List all features grouped by category",
@@ -12743,6 +13011,121 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": true
+      }
+    },
+    {
+      "name": "record_failure_outcome",
+      "title": "Record the outcome of an applied failure resolution",
+      "description": "Attributes a finished procedure job of the caller tenant to the failure resolution it applied and the failure signature it was applied to. The outcome is the job's terminal state (completed is succeeded, failed is failed), never a value the caller sends; a job that is still running or was canceled is refused. The context is the one of the tenant's own latest occurrence of that signature. The record stays in the tenant; repeating the call for the same resolution and job returns the stored record.",
+      "requiredCapability": "techstack.inventory.write",
+      "operationId": "recordFailureOutcome",
+      "http": {
+        "method": "POST",
+        "path": "/api/v1/failures/outcomes"
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "description": "The tenant's job that ran the procedure.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "procedure": {
+            "description": "Product procedure reference of the applied fix step.",
+            "pattern": "^(stackkits|techstack):[a-z0-9][a-z0-9._:/@#-]{1,199}$",
+            "type": "string"
+          },
+          "resolution_id": {
+            "description": "Id of the failure resolution that was applied (find_similar_failures).",
+            "format": "uuid",
+            "type": "string"
+          },
+          "signature": {
+            "description": "Failure signature the resolution was applied to; the tenant must have an occurrence of it.",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "procedure",
+          "resolution_id",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "outcome": {
+            "properties": {
+              "completed_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "context": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Coarse context dimensions of the failure (stackkit_module, os, provider, ...); absent when unknown.",
+                "type": "object"
+              },
+              "job_id": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "succeeded",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "resolution_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "signature": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "stack_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "resolution_id",
+              "signature",
+              "procedure",
+              "job_id",
+              "outcome",
+              "context",
+              "completed_at",
+              "recorded_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "outcome",
+          "created"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
       }
     },
     {

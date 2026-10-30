@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	agentpkg "github.com/kombifyio/techstack/pkg/agent"
@@ -28,7 +30,12 @@ const legacyHandoffDir = "legacy-handoff"
 // .prev. It never installs an artifact the control plane merely vouches for.
 type LegacyRoot struct {
 	*agentpkg.StackKitExecutor
-	opts Options
+	opts               Options
+	mu                 sync.Mutex
+	runtimeConvergence runtimeConvergence
+	host               *Host
+	hostErr            error
+	candidateServer    *Server
 }
 
 // NewLegacyRoot wraps the in-process executor of a root Guard. opts selects the
@@ -36,7 +43,21 @@ type LegacyRoot struct {
 // paths come from each convergence request.
 func NewLegacyRoot(executor *agentpkg.StackKitExecutor, opts Options) *LegacyRoot {
 	opts.defaults()
-	return &LegacyRoot{StackKitExecutor: executor, opts: opts}
+	opts.HandoffDir = filepath.Join(opts.StateDir, legacyHandoffDir)
+	l := &LegacyRoot{StackKitExecutor: executor, opts: opts}
+	updater, err := NewUpdaterFromOptions(opts)
+	if err != nil {
+		l.hostErr = err
+		return l
+	}
+	l.host, l.hostErr = NewHost(HostConfig{StackKit: executor, Updater: updater, StateDir: opts.StateDir, HandoffDir: opts.HandoffDir})
+	if l.hostErr == nil {
+		l.StackKitExecutor = l.host.cfg.StackKit
+		l.candidateServer = &Server{Backend: l.host, Replay: &FileReplay{Dir: filepath.Join(opts.StateDir, "admitted")}, Pins: func() ([]guardbinding.PinnedKey, error) {
+			return guardbinding.ReadPins(filepath.Join(opts.StateDir, guardbinding.PinFile))
+		}}
+	}
+	return l
 }
 
 // AdmitsUnsigned reports whether this Guard's own environment admits unsigned
@@ -49,6 +70,8 @@ func (l *LegacyRoot) AdmitsUnsigned() bool {
 // signed release the control plane publishes. A candidate the policy refuses
 // leaves both executables as they are and is reported as *UpdateDeniedError.
 func (l *LegacyRoot) EnsureTechstackRuntime(ctx context.Context, cfg agentpkg.TechstackRuntimeConvergenceConfig) (agentpkg.TechstackRuntimeConvergenceResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	result := agentpkg.TechstackRuntimeConvergenceResult{Version: strings.TrimSpace(cfg.Version)}
 	for label, path := range map[string]string{"agent": cfg.AgentPath, "operations": cfg.OperationsPath} {
 		if !filepath.IsAbs(filepath.Clean(path)) {
@@ -130,4 +153,28 @@ func (l *LegacyRoot) EnsureTechstackRuntime(ctx context.Context, cfg agentpkg.Te
 	result.AgentUpdated, result.OperationsUpdated = true, true
 	result.Version = staged.Version
 	return result, nil
+}
+
+// EnsureRuntime and EnsureRuntimeEvidence override the embedded unprivileged
+// bootstrap: legacy root uses the same signed Host install and retention seam.
+func (l *LegacyRoot) EnsureRuntime(ctx context.Context, cfg agentpkg.StackKitRuntimeBootstrapConfig) error {
+	_, err := l.EnsureRuntimeEvidence(ctx, cfg)
+	return err
+}
+func (l *LegacyRoot) EnsureRuntimeEvidence(ctx context.Context, cfg agentpkg.StackKitRuntimeBootstrapConfig) (agentpkg.StackKitRuntimeConvergenceResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.hostErr != nil {
+		return agentpkg.StackKitRuntimeConvergenceResult{}, l.hostErr
+	}
+	cfg.StageDir = l.opts.HandoffDir
+	boundary := runtimeBoundary{describe: l.host.RuntimeDescribe, preflight: l.host.RuntimePreflight, install: func(ctx context.Context, p RuntimeInstallParams) (RuntimeEvidence, error) {
+		if p.CandidateIntent != nil || p.CandidateAdmission != nil {
+			if d := l.candidateServer.admitCandidateInstall(p); d != nil {
+				return RuntimeEvidence{}, d
+			}
+		}
+		return l.host.RuntimeInstall(ctx, p)
+	}}
+	return l.runtimeConvergence.converge(ctx, cfg, boundary, nil)
 }

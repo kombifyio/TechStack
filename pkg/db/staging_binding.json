@@ -1,0 +1,13 @@
+{
+  "schema": "techstack.staging-database-binding/v1",
+  "host": "kombify-stg-pg-8146d168.pgv20v39ze9j4j3d3dwbj6p979.c0.eu-central-1.aws.pg.clickhouse.cloud",
+  "database": "kombify_runtime",
+  "identity": "kombify_runtime@7699436836349883199",
+  "ca_sha256": "be0ba9f8317cff410c56c5696a9c1ca66f96b6d7f98624deda73fc3ce127ab5c",
+  "roles": {
+    "DATABASE_URL": "techstack_application",
+    "TECHSTACK_MIGRATION_DATABASE_URL": "kombify_runtime_user",
+    "TECHSTACK_ADVANCED_ISSUER_DATABASE_URL": "techstack_advanced_issuer",
+    "TECHSTACK_PROVIDER_CONTROL_RUNTIME_DATABASE_URL": "techstack_provider_control_runtime"
+  }
+}

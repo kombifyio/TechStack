@@ -4,7 +4,7 @@
   "source": {
     "product": "techstack",
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "bfc03cfe92a375331c59b6a82b248613eb5ddb166a2c154e96172f62df48dac0"
+    "sha256": "ab30fd283db3783fffa5149d9110fd34a16e69d6a9cf82c8cf32c9e34de0aced"
   },
   "tools": [
     {
@@ -4399,6 +4399,123 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.list_failure_outcomes",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "list_failure_outcomes",
+      "alias": "techstack.list_failure_outcomes",
+      "title": "List the tenant's failure resolution outcomes",
+      "description": "Returns the caller tenant's own recorded resolution outcomes, newest first, and the succeeded and failed counts per resolution and signature. Another tenant's outcomes are never visible.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "resolution_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/list_failure_outcomes",
+      "auditEvent": "mcp.customer.techstack.inventory.list_failure_outcomes",
+      "operationIds": [
+        "techstack.listFailureOutcomes"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.list_failure_signatures",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "list_failure_signatures",
+      "alias": "techstack.list_failure_signatures",
+      "title": "List the tenant's failure signatures",
+      "description": "Returns the caller tenant's own failed operations normalized into failure signatures, most recently seen first. A signature is the SHA-256 over the normalizer version, component, phase, error code and a template in which every variable token (timestamps, IDs, addresses, host names, paths, user names, quoted values, numbers) is replaced. No raw error text is stored or returned, and another tenant's occurrences are never visible.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "window_days": {
+            "default": 7,
+            "description": "Length of the growth window; recent_occurrences counts the last window, previous_occurrences the one before it.",
+            "maximum": 90,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/list_failure_signatures",
+      "auditEvent": "mcp.customer.techstack.inventory.list_failure_signatures",
+      "operationIds": [
+        "techstack.listFailureSignatures"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
       "toolId": "techstack.list_features",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -6332,6 +6449,79 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.record_failure_outcome",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "record_failure_outcome",
+      "alias": "techstack.record_failure_outcome",
+      "title": "Record the outcome of an applied failure resolution",
+      "description": "Attributes a finished procedure job of the caller tenant to the failure resolution it applied and the failure signature it was applied to. The outcome is the job's terminal state (completed is succeeded, failed is failed), never a value the caller sends; a job that is still running or was canceled is refused. The context is the one of the tenant's own latest occurrence of that signature. The record stays in the tenant; repeating the call for the same resolution and job returns the stored record.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "description": "The tenant's job that ran the procedure.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "procedure": {
+            "description": "Product procedure reference of the applied fix step.",
+            "pattern": "^(stackkits|techstack):[a-z0-9][a-z0-9._:/@#-]{1,199}$",
+            "type": "string"
+          },
+          "resolution_id": {
+            "description": "Id of the failure resolution that was applied (find_similar_failures).",
+            "format": "uuid",
+            "type": "string"
+          },
+          "signature": {
+            "description": "Failure signature the resolution was applied to; the tenant must have an occurrence of it.",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "procedure",
+          "resolution_id",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/record_failure_outcome",
+      "auditEvent": "mcp.customer.techstack.inventory.record_failure_outcome",
+      "operationIds": [
+        "techstack.recordFailureOutcome"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
     },
     {
       "toolId": "techstack.recreate_monthly_runtime",

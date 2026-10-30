@@ -11,6 +11,7 @@ import (
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
@@ -143,6 +144,11 @@ type workerInventoryService struct {
 	OperationalImpact      string                    `json:"operational_impact"`
 	InternalAddress        string                    `json:"internal_address"`
 	RuntimeIdentity        map[string]string         `json:"runtime_identity"`
+	// Labels are the container's allow-listed recognition labels and
+	// Fingerprint the application the Guard proved over HTTP on the unit's
+	// own port; both feed pkg/appcatalog recognition on read.
+	Labels      map[string]string `json:"labels"`
+	Fingerprint string            `json:"fingerprint"`
 }
 
 type workerInventoryEndpoint struct {
@@ -449,10 +455,21 @@ func (h workerRouteHandlers) authenticateRuntimeAgentCredential(e *httpx.Event, 
 		_ = httpx.Unauthorized(e, "Missing runtime agent token")
 		return out, false
 	}
+	var authCtx runtimeAgentAuthContext
+	var authenticated bool
 	if claims, err := workerauth.VerifyRotating(token, time.Now().UTC()); err == nil {
-		return h.authenticateSignedRuntimeAgent(e, id, req, token, claims)
+		authCtx, authenticated = h.authenticateSignedRuntimeAgent(e, id, req, token, claims)
+	} else {
+		authCtx, authenticated = h.authenticateOpaqueOrLegacyRuntimeAgent(e, id, req, token)
 	}
-	return h.authenticateOpaqueOrLegacyRuntimeAgent(e, id, req, token)
+	if !authenticated {
+		return authCtx, false
+	}
+	if err := h.requireStageEnrolledLease(e, authCtx.Worker); err != nil {
+		writeStageWorkerAdmissionError(e, err)
+		return out, false
+	}
+	return authCtx, true
 }
 
 func (h workerRouteHandlers) authenticateSignedRuntimeAgent(e *httpx.Event, id string, req workerInventoryRequest, token string, claims workerauth.Claims) (runtimeAgentAuthContext, bool) {
@@ -928,6 +945,12 @@ func buildInventoryRegistryProjection(worker controlplane.Worker, nodeID string,
 		}
 		if svc.Description != "" {
 			serviceMetadata["description"] = svc.Description
+		}
+		if labels := appcatalog.RecognitionLabels(svc.Labels); len(labels) > 0 {
+			serviceMetadata[serviceRecognitionLabelsKey] = labels
+		}
+		if fingerprint := boundedFingerprint(svc.Fingerprint); fingerprint != "" {
+			serviceMetadata[serviceFingerprintKey] = fingerprint
 		}
 		if inventoryRevision > 0 {
 			serviceMetadata["inventory_revision"] = inventoryRevision

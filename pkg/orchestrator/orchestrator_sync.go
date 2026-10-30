@@ -11,11 +11,18 @@ import (
 	"github.com/kombifyio/techstack/internal/walletsync"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 // enqueueWithSync enqueues a job and sets up progress synchronization.
 func (o *Orchestrator) enqueueWithSync(job *jobs.Job, tenantID string) error {
+	if !o.ownsJobType(job.Type) {
+		return fmt.Errorf("job belongs to another runtime process")
+	}
 	tenantID = strings.TrimSpace(tenantID)
+	if !releasechannel.AdmitsJobExecution(tenantID) {
+		return releasechannel.ErrTenantNotOwned
+	}
 	if err := job.BindTenantID(tenantID); err != nil {
 		return fmt.Errorf("bind durable job tenant: %w", err)
 	}
@@ -319,9 +326,10 @@ func (o *Orchestrator) persistControlPlaneJobSnapshotContext(ctx context.Context
 			Result:       projectedLegacyJobResult(job),
 			ScheduledFor: projectedLegacyJobSchedule(job),
 		},
-		ObservedState:    string(job.State),
-		AttemptStartedAt: job.StartedAt,
-		CompletedAt:      job.CompletedAt,
+		ObservedState:     string(job.State),
+		AttemptStartedAt:  job.StartedAt,
+		CompletedAt:       job.CompletedAt,
+		FailureOccurrence: failureOccurrenceForJob(job),
 	})
 	if err != nil {
 		if !errors.Is(err, controlplane.ErrConflict) {

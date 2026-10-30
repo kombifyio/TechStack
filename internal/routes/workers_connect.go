@@ -105,7 +105,7 @@ func (h workerRouteHandlers) connectServer(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create server enrollment", nil)
 	}
 	h.enrollGuardReachFromConnect(e, result.Enrollment)
-	return httpx.Success(e, http.StatusOK, h.workerEnrollmentResponse(e, result.Enrollment))
+	return h.writeWorkerEnrollmentResponse(e, result.Enrollment)
 }
 
 // connectServerApplication is the single application-level composition for
@@ -520,12 +520,12 @@ func (h workerRouteHandlers) rotateServerCredential(e *httpx.Event) error {
 	if credentialErr != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to rotate runtime agent credential", nil)
 	}
-	return httpx.Success(e, http.StatusOK, h.workerEnrollmentResponse(e, workerEnrollmentContext{
+	return h.writeWorkerEnrollmentResponse(e, workerEnrollmentContext{
 		WorkerID: server.WorkerID, ServerID: server.ID, RuntimeAgentID: server.WorkerID,
 		TenantID: tenantID, OwnerID: ownerID, StackID: server.StackID,
 		LeaseID: runtimeLeaseIDFromMetadata(worker.Capabilities), Accepted: true,
 		AgentToken: credential.Token, CredentialGeneration: credential.Generation,
-	}))
+	})
 }
 
 func workerCredentialRotationRequestDigest(

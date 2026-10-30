@@ -143,6 +143,9 @@ func RILStackKitOperationReceipt(req StackKitLifecycleRequest) map[string]any {
 // summaries needed by recovery. Retain the original admitted intent receipt
 // through the existing snapshot/persistence authority.
 func (job *Job) replaceStackKitLifecycleResult(req StackKitLifecycleRequest, result map[string]any) {
+	if receipt := WizardExtendReceipt(req); receipt != nil {
+		result[WizardExtendReceiptKey] = receipt
+	}
 	if receipt := RILStackKitOperationReceipt(req); receipt != nil {
 		result[RILOperationReceiptKey] = receipt
 	}

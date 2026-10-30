@@ -594,7 +594,10 @@ func (s *Service) IsEnabled(ctx context.Context, featureKey string, userID strin
 	// Check user override if store is available
 	if s.store != nil {
 		userEnabled, err := s.store.GetUserFlag(ctx, userID, localKey)
-		if err == nil && userEnabled != nil {
+		if err != nil {
+			return false, fmt.Errorf("read feature preference: %w", err)
+		}
+		if userEnabled != nil {
 			hasUserOverride = true
 			value = *userEnabled
 		}
@@ -609,7 +612,10 @@ func (s *Service) IsEnabled(ctx context.Context, featureKey string, userID strin
 	if shouldGateByConsent {
 		if s.store != nil {
 			hasConsent, err := s.store.HasUserConsent(ctx, userID, localKey)
-			if err != nil || !hasConsent {
+			if err != nil {
+				return false, fmt.Errorf("read feature consent: %w", err)
+			}
+			if !hasConsent {
 				s.log.Debug("feature requires consent but none found",
 					"feature", localKey,
 					"user", userID,
@@ -652,8 +658,8 @@ func (s *Service) resolveFeature(featureKey string) (string, FeatureDefinition, 
 }
 
 // getCachedFlags returns cached flags for a user if still valid
-func (s *Service) getCachedFlags(userID string, isAdmin bool) (map[string]FlagState, bool) {
-	cacheKey := fmt.Sprintf("%s:%v", userID, isAdmin)
+func (s *Service) getCachedFlags(ctx context.Context, userID string, isAdmin bool) (map[string]FlagState, bool) {
+	cacheKey := featureCacheKey(ctx, userID, isAdmin)
 
 	s.cacheMu.RLock()
 	defer s.cacheMu.RUnlock()
@@ -666,8 +672,8 @@ func (s *Service) getCachedFlags(userID string, isAdmin bool) (map[string]FlagSt
 }
 
 // setCachedFlags stores flags in the cache
-func (s *Service) setCachedFlags(userID string, isAdmin bool, states map[string]FlagState) {
-	cacheKey := fmt.Sprintf("%s:%v", userID, isAdmin)
+func (s *Service) setCachedFlags(ctx context.Context, userID string, isAdmin bool, states map[string]FlagState) {
+	cacheKey := featureCacheKey(ctx, userID, isAdmin)
 
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
@@ -678,6 +684,11 @@ func (s *Service) setCachedFlags(userID string, isAdmin bool, states map[string]
 	}
 }
 
+func featureCacheKey(ctx context.Context, userID string, isAdmin bool) string {
+	tenant := featureTenantID(ctx, userID)
+	return fmt.Sprintf("%d:%s%d:%s:%t", len(tenant), tenant, len(userID), userID, isAdmin)
+}
+
 // GetAllFlags returns all flags with their current state for a user
 // Optimized to use batch queries to avoid N+1 database calls
 // Results are cached for a short TTL to reduce database load
@@ -685,8 +696,10 @@ func (s *Service) GetAllFlags(ctx context.Context, userID string, isAdmin bool) 
 	_, edgeFlagsPresent := edgeauth.FlagsFromContext(ctx)
 
 	// Check cache first
-	if !edgeFlagsPresent {
-		if cached, ok := s.getCachedFlags(userID, isAdmin); ok {
+	// Persisted preferences/consents must pass the database verifier on every
+	// read. A cached result cannot outlive an expired or missing signed context.
+	if !edgeFlagsPresent && s.store == nil {
+		if cached, ok := s.getCachedFlags(ctx, userID, isAdmin); ok {
 			return cached, nil
 		}
 	}
@@ -711,15 +724,13 @@ func (s *Service) GetAllFlags(ctx context.Context, userID string, isAdmin bool) 
 		var err error
 		userPrefs, err = s.store.GetUserFlags(ctx, userID, allKeys)
 		if err != nil {
-			s.log.Warn("failed to batch fetch user flags, falling back", "error", err)
-			userPrefs = make(map[string]bool)
+			return nil, fmt.Errorf("read feature preferences: %w", err)
 		}
 
 		if len(consentRequiredKeys) > 0 {
 			userConsents, err = s.store.GetUserConsentsMap(ctx, userID, consentRequiredKeys)
 			if err != nil {
-				s.log.Warn("failed to batch fetch consents, falling back", "error", err)
-				userConsents = make(map[string]bool)
+				return nil, fmt.Errorf("read feature consents: %w", err)
 			}
 		} else {
 			userConsents = make(map[string]bool)
@@ -770,8 +781,8 @@ func (s *Service) GetAllFlags(ctx context.Context, userID string, isAdmin bool) 
 	}
 
 	// Cache the result
-	if !edgeFlagsPresent {
-		s.setCachedFlags(userID, isAdmin, result)
+	if !edgeFlagsPresent && s.store == nil {
+		s.setCachedFlags(ctx, userID, isAdmin, result)
 	}
 
 	return result, nil

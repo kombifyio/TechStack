@@ -49,7 +49,8 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 
 	return func(ctx context.Context, job *Job, q *Queue) (handlerErr error) {
 		defer func() {
-			if handlerErr != nil && !isJobWaitError(handlerErr) {
+			clearFailedNativeHostPreparation(ctx, job, handlerErr)
+			if handlerErr != nil && !isJobWaitError(handlerErr) && ctx.Err() != context.Canceled {
 				failCurrentRuntimeLifecyclePhase(job)
 			}
 		}()
@@ -106,6 +107,17 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 			result["registration_token"] = token
 		}
 		preparedManagedLease := restorePreparedManagedLeaseCheckpoint(result, previousResult, job, providerID)
+		if preparedManagedLease || customerGuest != nil {
+			for _, key := range []string{
+				"auto_deploy_guard_verified_at", "managed_runtime_target_verified_at",
+				"guard_admission_reason", "guard_admission_elapsed_ms", "guard_admission_phase", "guard_admission_deadline_at",
+				nativeHostPreparationStartedKey, "target_bootstrap",
+			} {
+				if value, exists := previousResult[key]; exists {
+					result[key] = value
+				}
+			}
+		}
 		job.replaceResult(result)
 		if customerGuest != nil {
 			job.mutateResult(func(result map[string]interface{}) {
@@ -119,6 +131,7 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 				}
 			})
 		}
+
 		restoreManagedProvisionWaitCheckpoint(job, previousResult)
 
 		if isManagedCloudSpec(spec) && !isInstallCommandSpec(spec) {
@@ -888,22 +901,37 @@ func provisionMaybeAutoDeploy(ctx context.Context, cfg *ProvisionConfig, job *Jo
 	}
 	snapshot := job.Snapshot()
 	request := AutoDeployAdmissionRequest{
-		StackID:     strings.TrimSpace(snapshot.TargetID),
-		TenantID:    firstNonEmpty(stringFromMap(snapshot.Payload, tenantIDField), stringFromMap(snapshot.Result, tenantIDField)),
-		OwnerID:     firstNonEmpty(stringFromMap(snapshot.Payload, "owner_id"), stringFromMap(snapshot.Result, "owner_id")),
-		LeaseID:     firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField)),
-		OperationID: firstNonEmpty(stringFromMap(snapshot.Result, operationIDField), stringFromMap(snapshot.Payload, operationIDField)),
+		ExistingServerID: stringFromMap(snapshot.Payload, "existing_server_id"),
+		StackID:          strings.TrimSpace(snapshot.TargetID),
+		TenantID:         firstNonEmpty(stringFromMap(snapshot.Payload, tenantIDField), stringFromMap(snapshot.Result, tenantIDField)),
+		OwnerID:          firstNonEmpty(stringFromMap(snapshot.Payload, "owner_id"), stringFromMap(snapshot.Result, "owner_id")),
+		LeaseID:          firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField)),
+		OperationID:      firstNonEmpty(stringFromMap(snapshot.Result, operationIDField), stringFromMap(snapshot.Payload, operationIDField)),
 	}
-	if err := awaitAutoDeployGuardAdmission(ctx, cfg, job, q, request); err != nil {
-		return true, err
+	// An already enrolled host has no provider-ready checkpoint. It still
+	// passes the same current canonical admission, once, before deployment.
+	var admissionErr error
+	if request.ExistingServerID != "" || resumingNativeHostPreparation(snapshot.Result, time.Now().UTC()) {
+		admissionErr = cfg.AutoDeployAdmission(ctx, request)
+	} else {
+		admissionErr = awaitAutoDeployGuardAdmission(ctx, cfg, job, q, request)
+	}
+	if admissionErr != nil {
+		return true, boundNativeHostPreparationDependencyWait(snapshot.Result, time.Now().UTC(), admissionErr)
 	}
 	// From here the rollout may cause side effects; the job is no longer a
 	// replay of a wait that recovery may resume.
 	clearManagedProvisionWaitCheckpoint(job)
 	job.mutateResult(func(result map[string]interface{}) {
-		result["auto_deploy_guard_verified_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+		if stringFromMap(result, "auto_deploy_guard_verified_at") == "" {
+			result["auto_deploy_guard_verified_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+		}
 	})
 	preparedResult := cloneJobResult(job.Snapshot().Result)
+	// A completed rollout owns these fields; defaults must never resurrect a
+	// cleared observation window or overwrite its fresh ready observation.
+	delete(preparedResult, nativeHostPreparationStartedKey)
+	delete(preparedResult, "target_bootstrap")
 	q.UpdateProgress(job.ID, 90, "Requirements ready - starting rollout...")
 	job.prepareDeployPayload()
 	if err := DeployHandler(cfg)(ctx, job, q); err != nil {

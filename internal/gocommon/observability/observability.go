@@ -1,3 +1,5 @@
+//go:build !kombify_full_local
+
 // Package observability wires kombify Go services into Sentry for error
 // reporting and performance tracing.
 //
@@ -41,31 +43,6 @@ import (
 	sentry "github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 )
-
-// Config configures Sentry initialization for a kombify SaaS Go service.
-type Config struct {
-	// Service is the Sentry project slug (e.g. "kombify-cloud-backend").
-	// Required when Enabled=true.
-	Service string
-
-	// DSN is the Sentry DSN. Defaults to os.Getenv("SENTRY_DSN").
-	// When empty, observability is disabled (safe for local dev).
-	DSN string
-
-	// Environment is the Sentry environment tag ("prod", "dev", "preview").
-	// Defaults to os.Getenv("SENTRY_ENVIRONMENT") or "prod".
-	Environment string
-
-	// Release is the release identifier, typically the Git SHA.
-	// Defaults to os.Getenv("SENTRY_RELEASE").
-	Release string
-
-	// TracesSampleRate overrides the default (0.1 in prod, 1.0 in dev).
-	TracesSampleRate *float64
-
-	// Debug enables Sentry SDK debug logging.
-	Debug bool
-}
 
 // MustInit initializes Sentry with kombify defaults. Safe to call even when
 // SENTRY_DSN is unset — it becomes a no-op and returns a no-op shutdown.
@@ -277,18 +254,6 @@ func safeRequestHeader(key string) bool {
 	}
 }
 
-func scrubURL(value string) string {
-	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return value
-	}
-	parsed.User = nil
-	parsed.RawQuery = ""
-	parsed.ForceQuery = false
-	parsed.Fragment = ""
-	return parsed.String()
-}
-
 // Normalize arbitrary JSON-shaped SDK metadata before walking it so nested
 // typed maps/slices cannot bypass the same policy. Unserializable data is dropped.
 func prepareMetadata(data map[string]interface{}, secrets *[]string) map[string]interface{} {
@@ -340,16 +305,6 @@ func scrubMetadataMap(data map[string]interface{}, secrets []string, headers boo
 		}
 		data[key] = scrubMetadataValue(value, secrets)
 	}
-}
-
-func sensitiveMetadataKey(key string) bool {
-	name := strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.ToLower(key))
-	for _, sensitive := range []string{"authorization", "cookie", "password", "secret", "token", "signature", "query", "body", "email", "ipaddress", "requestdata", "env", "xkombify", "xuser", "xorg"} {
-		if strings.Contains(name, sensitive) {
-			return true
-		}
-	}
-	return false
 }
 
 func collectSensitiveMetadata(value interface{}, secrets *[]string) {

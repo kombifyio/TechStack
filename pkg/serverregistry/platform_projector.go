@@ -82,6 +82,7 @@ type PlatformProjectorConfig struct {
 	Now       func() time.Time
 	Logger    *slog.Logger
 	OnError   func(error)
+	OnPass    func(ProjectionResult, error)
 }
 
 type PlatformProjector struct {
@@ -94,10 +95,12 @@ type PlatformProjector struct {
 	now              func() time.Time
 	logger           *slog.Logger
 	onError          func(error)
+	onPass           func(ProjectionResult, error)
+	afterTenant      string
 }
 
 // ProjectionResult reports one pass. Tenants that failed are counted, not
-// dropped: the next pass republishes them, because state is resent in full.
+// dropped: the next sweep republishes them, because state is resent in full.
 type ProjectionResult struct {
 	Tenants  int
 	Servers  int
@@ -121,6 +124,7 @@ func NewPlatformProjector(cfg PlatformProjectorConfig) (*PlatformProjector, erro
 		now:              cfg.Now,
 		logger:           cfg.Logger,
 		onError:          cfg.OnError,
+		onPass:           cfg.OnPass,
 	}
 	if p.interval <= 0 {
 		p.interval = 2 * time.Minute
@@ -165,6 +169,9 @@ func (p *PlatformProjector) Run(ctx context.Context) {
 
 func (p *PlatformProjector) runPass(ctx context.Context) {
 	result, err := p.ProjectOnce(ctx)
+	if p.onPass != nil {
+		p.onPass(result, err)
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		p.reportError(err)
 		return
@@ -175,10 +182,10 @@ func (p *PlatformProjector) runPass(ctx context.Context) {
 	}
 }
 
-// ProjectOnce publishes every known tenant's current servers once.
+// ProjectOnce publishes one bounded segment and retains its cursor until the sweep ends.
 func (p *PlatformProjector) ProjectOnce(ctx context.Context) (ProjectionResult, error) {
 	var result ProjectionResult
-	afterTenant := ""
+	afterTenant := p.afterTenant
 	for result.Tenants < p.maxTenantsPerRun {
 		limit := p.tenantPageSize
 		if remaining := p.maxTenantsPerRun - result.Tenants; limit > remaining {
@@ -189,6 +196,7 @@ func (p *PlatformProjector) ProjectOnce(ctx context.Context) (ProjectionResult, 
 			return result, fmt.Errorf("serverregistry: list projection tenants: %w", err)
 		}
 		if len(tenants) == 0 {
+			p.afterTenant = ""
 			break
 		}
 		for _, tenantID := range tenants {
@@ -202,6 +210,7 @@ func (p *PlatformProjector) ProjectOnce(ctx context.Context) (ProjectionResult, 
 				return result, nil
 			}
 			afterTenant = tenantID
+			p.afterTenant = tenantID
 			result.Tenants++
 			published, err := p.projectTenant(ctx, tenantID)
 			if err != nil {
@@ -212,6 +221,7 @@ func (p *PlatformProjector) ProjectOnce(ctx context.Context) (ProjectionResult, 
 			result.Servers += published
 		}
 		if len(tenants) < limit {
+			p.afterTenant = ""
 			break
 		}
 	}

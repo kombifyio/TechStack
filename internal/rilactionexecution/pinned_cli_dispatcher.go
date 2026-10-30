@@ -40,7 +40,7 @@ func (d *PinnedCLIDispatcher) Execute(ctx context.Context, request rilaction.Req
 	if request.Primitive.ID != "verify-stackkit-state" || request.Primitive.OperationClass != "verification" || request.Target.Scope != rilaction.TargetScopeRuntimeInstance {
 		return rilaction.Evidence{}, fmt.Errorf("rilactionexecution: unsupported governed primitive")
 	}
-	release, err := jobs.ConfiguredTargetStackKitRelease()
+	release, err := jobs.TargetStackKitReleaseForStack(ctx, request.TenantID, request.StackID)
 	if err != nil || release == nil {
 		evidence, evidenceErr := d.evidence(request, false)
 		if evidenceErr != nil {
