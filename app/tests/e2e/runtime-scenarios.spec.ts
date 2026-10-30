@@ -604,7 +604,7 @@ async function createRuntimeStack(
 async function createManagedRuntimeStackViaWizard(
   page: Page,
   providerId: "centron" | "ionos",
-  onCreated: (stack: { stack_id: string; lease_id?: string }) => void,
+  onCreated: (stack: { stack_id: string; lease_id?: string; refused_before_lease?: boolean }) => void,
 ): Promise<{
   stack: { stack_id: string; job_id?: string };
   stackName: string;
@@ -660,6 +660,12 @@ async function createManagedRuntimeStackViaWizard(
   const responseText = await response.text();
   const responseJson = responseText ? JSON.parse(responseText) : {};
   if (!response.ok()) {
+    // A refused admission can still have persisted the stack; its id in the
+    // error details puts it under the same cleanup custody as a created one.
+    const refusedStackId = String(responseJson.error?.details?.stack_id ?? "").trim();
+    // Only a preflight refusal precedes any lease (admitManagedCreate).
+    if (refusedStackId) onCreated({ stack_id: refusedStackId,
+      refused_before_lease: responseJson.error?.details?.admission_phase === "preflight" });
     throw new Error(
       `Managed Wizard create failed with HTTP ${response.status()}: ${responseText}`,
     );
@@ -762,6 +768,79 @@ function managedRuntimeE2ECleanupCandidates(
       leaseId.length > 0
     );
   });
+}
+
+// The owner's managed footprint of one provider: monthly-runtime stacks (any
+// name, with or without a lease) and servers that have not ended. A failed
+// create proves it left nothing only when this footprint did not grow.
+async function managedOwnerFootprint(
+  token: RuntimeBearer,
+  apiBase: string,
+  providerId: "centron" | "ionos",
+  // Optional creation bounds (epoch ms) of one earlier run; a row without a
+  // readable creation time stays in the footprint.
+  bounds: { since?: number; until?: number } = {},
+) {
+  const lower = (value: unknown) => String(value ?? "").trim().toLowerCase();
+  // A zero time.Time arrives as year 1; it is as unknown as an empty string.
+  const parsed = (created: unknown) => {
+    const at = Date.parse(String(created ?? ""));
+    return Number.isFinite(at) && at >= Date.UTC(2000, 0, 1) ? at : undefined;
+  };
+  const inBounds = (created: unknown) => {
+    const at = parsed(created);
+    if (at === undefined) return true;
+    return (bounds.since === undefined || at >= bounds.since) && (bounds.until === undefined || at <= bounds.until);
+  };
+  const stacks = await retryTransient("stack list", () => getStackList(token, apiBase));
+  const serverData = await retryTransient("server list", () =>
+    fetchRuntimeApi<LifecycleRecord[] | { servers?: LifecycleRecord[] }>(token, "/api/v1/servers", apiBase),
+  );
+  const servers = Array.isArray(serverData) ? serverData : (serverData.servers ?? []);
+  const ids = (rows: Array<Record<string, any>>) =>
+    rows.map((row) => String(row.id ?? "").trim()).filter(Boolean).sort();
+  const managedStacks = stacks.filter((stack: Record<string, any>) =>
+    lower(stack.provider_id) === providerId &&
+    (lower(stack.runtime_lane) === "monthly-runtime" || lower(stack.server_mode) === "monthly-runtime") &&
+    inBounds(stack.created));
+  const liveServers = servers.filter((server: Record<string, any>) =>
+    // provider_id appears only once a provider VM ref exists; a planned,
+    // provisioning or failed managed row names its provider in provider.ref.
+    [lower(server.provider_id), lower(server.provider?.ref)].some((value) =>
+      value === providerId || value.startsWith(`${providerId}:`) || value.startsWith(`${providerId}/`)) &&
+    !server.lifecycle?.ended_at &&
+    !["decommissioned", "ended", "removed", "deleted"].includes(lower(server.lifecycle?.state)) &&
+    inBounds(server.created_at));
+  return {
+    stack_ids: ids(managedStacks),
+    server_ids: ids(liveServers),
+    details: {
+      stacks: managedStacks.map((stack: Record<string, any>) => ({ id: stack.id, status: stack.status, created: stack.created,
+        created_known: parsed(stack.created) !== undefined, lease_id: stack.lease_id || null })),
+      servers: liveServers.map((server: Record<string, any>) => ({ id: server.id, state: server.lifecycle?.state, created_at: server.created_at, lease_id: server.provider?.lease_id || null })),
+    },
+  };
+}
+
+// The structured cleanup record a failed window run is released with
+// (paid-journey-receipts.yml cleanup_for_run): what this attempt created and
+// whether its removal or absence was read back through the product.
+async function writeManagedCleanupLedger(
+  providerId: "centron" | "ionos",
+  ledger: Record<string, unknown>,
+) {
+  const document = {
+    schema: "techstack.managed-cleanup-ledger/v1",
+    provider_id: providerId,
+    recorded_at: new Date().toISOString(),
+    ...ledger,
+  };
+  await mkdir(ARTIFACTS_DIR, { recursive: true });
+  await writeFile(
+    path.join(ARTIFACTS_DIR, `managed-cleanup-ledger-${providerId}.json`),
+    `${JSON.stringify(document, null, 2)}\n`,
+  );
+  await attachJson(`managed-cleanup-ledger-${providerId}.json`, document);
 }
 
 function exactManagedRecoveryLeaseId(
@@ -2694,6 +2773,70 @@ test.describe.serial("Runtime E2E scenarios", () => {
     });
   });
 
+  test("managed absence readback lists the owner's managed footprint", async ({
+    page,
+  }) => {
+    test.skip(
+      process.env.TECHSTACK_RUNTIME_E2E_ABSENCE_READBACK !== "1",
+      "The absence readback runs only for a cleanup proof",
+    );
+    test.setTimeout(25 * 60_000);
+    const providerId = process.env.TECHSTACK_RUNTIME_E2E_PROVIDER_ID;
+    if (providerId !== "centron" && providerId !== "ionos") {
+      throw new Error("The absence readback requires an exact centron or ionos provider ID");
+    }
+    // The earlier run's own span: rows created before it (a retained persistent
+    // environment) or after it (another lane) are not its effects.
+    const bound = (name: string) => {
+      const value = process.env[name];
+      if (!value) return undefined;
+      const at = Date.parse(value);
+      if (!Number.isFinite(at)) throw new Error(`${name} is not a timestamp`);
+      return at;
+    };
+    const bounds = { since: bound("TECHSTACK_RUNTIME_E2E_ABSENCE_SINCE"), until: bound("TECHSTACK_RUNTIME_E2E_ABSENCE_UNTIL") };
+    await authenticateRuntimeUser("cloud", page, RUNTIME_AUTH_OPTIONS);
+    const api = await captureGatewayApiSession(page);
+    const found = await managedOwnerFootprint(api.token, api.apiBase, providerId, bounds);
+    // With explicit bounds, the run's own leftover stacks are removed through
+    // the product's destroy path and, with a lease, its native cleanup readback.
+    const removals: Array<Record<string, unknown>> = [];
+    let footprint = found;
+    try {
+      if (process.env.TECHSTACK_RUNTIME_E2E_ABSENCE_REMOVE === "run-leftovers" && bounds.since !== undefined && bounds.until !== undefined) {
+        // Only a stack whose creation time is known to lie inside the span is destroyed.
+        for (const stack of found.details.stacks.filter((row) => row.created_known)) {
+          const stackId = String(stack.id ?? "").trim();
+          const leaseId = String(stack.lease_id ?? "").trim();
+          const job = await destroyRuntimeStackViaApi(api.token, stackId, api.apiBase);
+          const readback = leaseId
+            ? await waitForManagedRuntimeCleanupReadback({ token: api.token, apiBase: api.apiBase, stackId, leaseId })
+            : undefined;
+          removals.push({ stack_id: stackId, lease_id: leaseId || null, destroy_job_id: job?.id ?? null,
+            destroy_job_state: job?.state ?? null, absence_evidence_ref: readback?.provider_operation?.absence_evidence_ref ?? null });
+        }
+      }
+      // Destroy jobs finish asynchronously; read back until the span is empty or five minutes pass.
+      for (const deadline = Date.now() + 300_000; removals.length && Date.now() < deadline;) {
+        await delay(15_000);
+        footprint = await managedOwnerFootprint(api.token, api.apiBase, providerId, bounds);
+        if (footprint.stack_ids.length === 0 && footprint.server_ids.length === 0) break;
+      }
+    } finally {
+      const empty = footprint.stack_ids.length === 0 && footprint.server_ids.length === 0;
+      await writeManagedCleanupLedger(providerId, {
+        outcome: empty ? "nothing_remaining" : "unproven",
+        reason: "owner_footprint_readback",
+        bounds: { since: bounds.since ? new Date(bounds.since).toISOString() : null, until: bounds.until ? new Date(bounds.until).toISOString() : null },
+        found,
+        removals,
+        remaining: { stack_ids: footprint.stack_ids, server_ids: footprint.server_ids },
+        remaining_details: footprint.details,
+      });
+    }
+    expect({ stack_ids: footprint.stack_ids, server_ids: footprint.server_ids }).toEqual({ stack_ids: [], server_ids: [] });
+  });
+
   test("install-command registers a real worker and validates post-setup UI", async ({
     page,
   }) => {
@@ -2896,6 +3039,11 @@ test.describe.serial("Runtime E2E scenarios", () => {
       let laneStartedAt = "";
       let day2Evidence: ManagedDay2Evidence | undefined;
       let lifecycleEvidence: ManagedLifecycleEvidence | undefined;
+      // The owner's managed footprint before the create; the cleanup ledger
+      // compares against it when the create returned no stack.
+      let baselineFootprint: { stack_ids: string[]; server_ids: string[] } | undefined;
+      // The create was refused at its preflight, before any lease could exist.
+      let createRefusedBeforeLease = false;
       const attemptId = randomUUID();
       test.afterEach(async () => {
         test.setTimeout(MANAGED_RUNTIME_BUDGETS.cleanupMs);
@@ -2906,7 +3054,43 @@ test.describe.serial("Runtime E2E scenarios", () => {
           lease_id: leaseId,
         });
 
+        if (!stackId) {
+          // No stack id reached this attempt: read the owner's footprint back
+          // (again after a pause, for a create still persisting) so a failed
+          // create proves it left nothing, or names what it left.
+          let ledger: Record<string, unknown>;
+          if (!managedApi) {
+            ledger = { attempt_id: attemptId, outcome: "nothing_created", reason: "create_not_attempted" };
+          } else if (!baselineFootprint) {
+            ledger = { attempt_id: attemptId, outcome: "unproven", reason: "baseline_unavailable" };
+          } else {
+            try {
+              await delay(20_000);
+              const after = await managedOwnerFootprint(managedApi, managedApi.apiBase, leaseProvider.id);
+              const before = baselineFootprint;
+              const created = {
+                stack_ids: after.stack_ids.filter((id) => !before.stack_ids.includes(id)),
+                server_ids: after.server_ids.filter((id) => !before.server_ids.includes(id)),
+              };
+              ledger = {
+                attempt_id: attemptId,
+                outcome: created.stack_ids.length === 0 && created.server_ids.length === 0 ? "nothing_created" : "unproven",
+                reason: "owner_footprint_readback",
+                baseline: before,
+                created,
+              };
+            } catch (error) {
+              ledger = { attempt_id: attemptId, outcome: "unproven", reason: "owner_footprint_unreadable", error: String(error).slice(0, 300) };
+            }
+          }
+          await writeManagedCleanupLedger(leaseProvider.id, ledger);
+          return;
+        }
+
         if (stackId && managedApi && MANAGED_RUNTIME_RETAIN) {
+          await writeManagedCleanupLedger(leaseProvider.id, {
+            attempt_id: attemptId, outcome: "retained", stack_id: stackId, lease_id: leaseId,
+          });
           await attachJson("kombify-cloud-retained.json", {
             provider_id: leaseProvider.id,
             stack_id: stackId,
@@ -2988,6 +3172,33 @@ test.describe.serial("Runtime E2E scenarios", () => {
               `managed-lifecycle-receipt-${leaseProvider.id}.json`,
               receipt,
             );
+            const absenceRef = String(cleanupReadback?.provider_operation?.absence_evidence_ref ?? "").trim();
+            // A stack that never got a lease is proven removed when it is gone from
+            // the owner's list and no managed server appeared since the baseline.
+            let removedWithoutLease = false;
+            if (createRefusedBeforeLease && !leaseId && cleanupJob && baselineFootprint) {
+              const before = baselineFootprint;
+              for (const deadline = Date.now() + 90_000; Date.now() < deadline;) {
+                const stacks = await getStackList(managedApi!, managedApi!.apiBase).catch(() => undefined);
+                const after = await managedOwnerFootprint(managedApi!, managedApi!.apiBase, leaseProvider.id).catch(() => undefined);
+                if (stacks && after && !stacks.some((row: Record<string, any>) => String(row.id ?? "") === stackId) &&
+                    after.server_ids.every((id) => before.server_ids.includes(id))) {
+                  removedWithoutLease = true;
+                  break;
+                }
+                await delay(15_000);
+              }
+            }
+            await writeManagedCleanupLedger(leaseProvider.id, {
+              attempt_id: attemptId,
+              outcome: cleanupReadbackVerified && leaseId && cleanupReadback?.lease_id === leaseId && absenceRef
+                ? "native_cleanup_verified"
+                : removedWithoutLease ? "removed_without_lease" : "unproven",
+              stack_id: stackId,
+              lease_id: leaseId,
+              destroy_job_id: typeof cleanupJob?.id === "string" ? cleanupJob.id : null,
+              absence_evidence_ref: absenceRef || null,
+            });
           }
           if (leaseId) {
             expect(cleanupReadback?.lease_id).toBe(leaseId);
@@ -3147,6 +3358,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
             ).catch(() => ({}) as { release?: { tag?: string } })
           ).release?.tag ?? "",
         ).trim();
+        baselineFootprint = await managedOwnerFootprint(session, session.apiBase, leaseProvider.id);
         logRuntimeE2E("creating managed lease stack through visible Wizard", {
           provider_id: leaseProvider.id,
         });
@@ -3156,6 +3368,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
           (created) => {
             stackId = created.stack_id;
             leaseId = created.lease_id ?? "";
+            createRefusedBeforeLease = created.refused_before_lease === true;
           },
         );
         const stack = wizardCreate.stack;

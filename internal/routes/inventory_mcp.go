@@ -96,6 +96,11 @@ func newInventoryMCPHandler(h inventoryHandlers, routes inventoryMCPRouteLookup)
 		Stateless:                    true,
 		JSONResponse:                 true,
 		PropagateRequestCancellation: true,
+		// The hosted runtime receives the Gateway's requests on a loopback
+		// address with the public Host, which the SDK's DNS-rebinding guard
+		// refuses. validMCPOrigin already refuses every browser origin, which
+		// is the DNS-rebinding defence, and every request is authenticated.
+		DisableLocalhostProtection: true,
 	})
 	verifiedTransport := maintenanceOriginMiddleware(h.maintenanceOrigin)(transport)
 	return func(e *httpx.Event) error {

@@ -7,9 +7,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/discovery"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -18,6 +20,7 @@ import (
 type DiscoveryHandler struct {
 	discovery discovery.Discovery
 	allowLAN  bool
+	wallet    WalletSecretReferences
 	mu        sync.Mutex
 	scanOwn   map[string]scanEntry
 	deviceOwn map[string]deviceEntry
@@ -52,6 +55,13 @@ func NewDiscoveryHandlerForLAN(available bool) *DiscoveryHandler {
 	handler := NewDiscoveryHandler(discovery.New())
 	handler.allowLAN = available
 	return handler
+}
+
+// WithWallet lets probe and test-ssh take a Wallet item reference in place of
+// a credential typed into the request.
+func (h *DiscoveryHandler) WithWallet(wallet WalletSecretReferences) *DiscoveryHandler {
+	h.wallet = wallet
+	return h
 }
 
 // pruneOldEntries removes ownership records while the caller holds h.mu.
@@ -331,15 +341,27 @@ func (h *DiscoveryHandler) probeDevice(e *httpx.Event) error {
 	if !h.allowLAN {
 		return h.requireLAN(e)
 	}
-	req, err := decodeDiscoveryProbeRequest(e.Request.Body)
+	body, err := decodeDiscoveryProbeRequest(e.Request.Body)
 	if err != nil {
 		return httpx.BadRequest(e, "Invalid request body")
 	}
+	req := body.ProbeRequest
 	if validationErr := validateDiscoveryProbeRequest(req); validationErr != nil {
 		return httpx.BadRequest(e, validationErr.Error())
 	}
 	if accessOK, accessErr := h.requireDeviceIPAccess(e, ownerID, isAdmin, req.IP); accessErr != nil || !accessOK {
 		return accessErr
+	}
+	if strings.TrimSpace(body.SSHWalletItemID) != "" {
+		if req.SSHPassword != "" || req.SSHPrivateKey != "" {
+			return httpx.BadRequest(e, "Name a Wallet item or a credential, not both")
+		}
+		credential, denial := h.walletSSH(e, ownerID, body.SSHWalletItemID, req.IP)
+		if denial != nil {
+			return writeWalletReferenceDenial(e, denial)
+		}
+		defer credential.Wipe()
+		req.SSHPrivateKey, req.SSHPassword = credential.PrivateKey, credential.Password
 	}
 
 	result, err := h.discovery.ProbeDevice(e.Request.Context(), &req)
@@ -369,13 +391,19 @@ func (h *DiscoveryHandler) testSSH(e *httpx.Event) error {
 		return accessErr
 	}
 
-	err = h.discovery.TestSSH(
-		e.Request.Context(),
-		req.IP,
-		req.Port,
-		req.User,
-		req.Password,
-	)
+	if strings.TrimSpace(req.SSHWalletItemID) == "" {
+		err = h.discovery.TestSSH(e.Request.Context(), req.IP, req.Port, req.User, req.Password)
+	} else {
+		if req.Password != "" {
+			return httpx.BadRequest(e, "Name a Wallet item or a password, not both")
+		}
+		credential, denial := h.walletSSH(e, ownerID, req.SSHWalletItemID, req.IP)
+		if denial != nil {
+			return writeWalletReferenceDenial(e, denial)
+		}
+		defer credential.Wipe()
+		err = h.testSSHCredential(e.Request.Context(), req, credential)
+	}
 
 	if err != nil {
 		return httpx.Success(e, http.StatusOK, map[string]any{routeSuccessField: false, routeErrorField: err.Error()})
@@ -445,12 +473,43 @@ func validateDiscoveryScanRequest(req discovery.ScanRequest) error {
 	return nil
 }
 
-func decodeDiscoveryProbeRequest(body io.Reader) (discovery.ProbeRequest, error) {
-	var req discovery.ProbeRequest
+// discoveryProbeRequest is the probe body: the probe itself and, in place of
+// ssh_password or ssh_private_key, the Wallet item that holds the login.
+type discoveryProbeRequest struct {
+	discovery.ProbeRequest
+	SSHWalletItemID string `json:"ssh_wallet_item_id,omitempty"`
+}
+
+func decodeDiscoveryProbeRequest(body io.Reader) (discoveryProbeRequest, error) {
+	var req discoveryProbeRequest
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		return discovery.ProbeRequest{}, err
+		return discoveryProbeRequest{}, err
 	}
 	return req, nil
+}
+
+// walletSSH resolves the Wallet item a probe or test names, for a login to ip.
+func (h *DiscoveryHandler) walletSSH(e *httpx.Event, ownerID, itemID, ip string) (*walletSSHCredential, error) {
+	tenantID, err := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.discovery.wallet")
+	if err != nil {
+		return nil, err
+	}
+	return h.wallet.SSH(e.Request.Context(), tenantID, ownerID, itemID, ip)
+}
+
+// testSSHCredential tests the login a Wallet item resolved to: its key when it
+// holds one, otherwise its password.
+func (h *DiscoveryHandler) testSSHCredential(ctx context.Context, req discoveryTestSSHRequest, credential *walletSSHCredential) error {
+	if credential.PrivateKey == "" {
+		return h.discovery.TestSSH(ctx, req.IP, req.Port, req.User, credential.Password)
+	}
+	keyTester, ok := h.discovery.(interface {
+		TestSSHWithKey(ctx context.Context, host string, port int, username, privateKey string) error
+	})
+	if !ok {
+		return errors.New("this deployment tests SSH with a password only")
+	}
+	return keyTester.TestSSHWithKey(ctx, req.IP, req.Port, req.User, credential.PrivateKey)
 }
 
 func validateDiscoveryProbeRequest(req discovery.ProbeRequest) error {
@@ -471,6 +530,9 @@ type discoveryTestSSHRequest struct {
 	Port     int    `json:"port"`
 	User     string `json:"user"`
 	Password string `json:"password,omitempty"`
+	// SSHWalletItemID names the Wallet item holding the login, in place of
+	// Password.
+	SSHWalletItemID string `json:"ssh_wallet_item_id,omitempty"`
 }
 
 func decodeDiscoveryTestSSHRequest(body io.Reader) (discoveryTestSSHRequest, error) {

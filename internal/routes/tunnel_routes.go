@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
+	"github.com/kombifyio/techstack/internal/routes/trust"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/tunnel"
@@ -15,7 +17,8 @@ import (
 
 // RegisterTunnelRoutes registers tunnel management routes.
 // This should be called from main.go during server setup.
-func RegisterTunnelRoutes(r *httpx.Router, resolver *tunnel.RegistryURLResolver) {
+// pairing mints the enrollment token of an install command that names none.
+func RegisterTunnelRoutes(r *httpx.Router, resolver *tunnel.RegistryURLResolver, pairing trust.RouteStores) {
 	if resolver == nil {
 		return
 	}
@@ -103,7 +106,7 @@ func RegisterTunnelRoutes(r *httpx.Router, resolver *tunnel.RegistryURLResolver)
 	// Tokens are accepted only in the request body so they don't leak through
 	// URL logs, browser history, referrers, or reverse-proxy request paths.
 	r.POST("/api/v1/tunnel/install-command", func(e *httpx.Event) error {
-		return tunnelInstallCommand(e, resolver)
+		return tunnelInstallCommand(e, resolver, pairing)
 	})
 
 	// Validate a given URL (used by UI to pre-check custom URLs)
@@ -159,11 +162,15 @@ func RegisterTunnelRoutes(r *httpx.Router, resolver *tunnel.RegistryURLResolver)
 	})
 }
 
-func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver) error {
+// tunnelInstallCommand answers the install commands for a new server. A
+// caller that names no pairing token gets a fresh one minted for it, so an
+// agent never handles a token it did not receive from Techstack.
+func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver, pairing trust.RouteStores) error {
 	if e.Request.Method != http.MethodPost {
 		return httpx.MethodNotAllowed(e, e.Request.Method)
 	}
-	if _, err := requireAuth(e); err != nil {
+	userID, err := requireAuth(e)
+	if err != nil {
 		return err
 	}
 
@@ -173,12 +180,31 @@ func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver) 
 	if err := e.BindBody(&req); err != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, "invalid request body", nil)
 	}
-	if req.Token == "" {
-		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, "token is required", nil)
-	}
 
 	ctx, cancel := context.WithTimeout(e.Request.Context(), 90*time.Second)
 	defer cancel()
+
+	var minted *trust.MintedStackPairing
+	if req.Token == "" {
+		// No token is minted for a command that cannot be generated.
+		if _, err := resolver.GetRegistryURL(ctx); err != nil {
+			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
+		}
+		if pairing.Workers == nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Pairing token authority is temporarily unavailable", map[string]any{
+				"reason_code": "pairing_token_authority_unavailable", "retryable": true,
+			})
+		}
+		tenantID, err := tenantguard.TenantScope(requestExplicitTenantID(e), userID, "techstack.trust.pairing-tokens.create")
+		if err != nil {
+			return err
+		}
+		token, err := trust.MintStackPairingTokenOnly(ctx, pairing, tenantID, userID, nil, trust.PairingTokenParams{Name: "Install command"})
+		if err != nil {
+			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, token.FailureMessage(), nil)
+		}
+		minted, req.Token = &token, token.Token
+	}
 
 	linuxCmd, err := resolver.GenerateInstallCommand(ctx, req.Token)
 	if err != nil {
@@ -202,6 +228,10 @@ func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver) 
 	// The LAN bridge has no Windows command; the key is then absent.
 	if windowsCmd != "" {
 		response["windows"] = windowsCmd
+	}
+	if minted != nil {
+		response["pairing_token_id"] = minted.TokenID
+		response["expires_at"] = minted.ExpiresAt
 	}
 	return httpx.Success(e, http.StatusOK, response)
 }

@@ -317,6 +317,12 @@ test.describe.serial("Runtime Auth0 smoke", () => {
       }
       const whoami = await fetchBrowserWhoAmI(page);
       expect(whoami.status).toBe(200);
+      await test.step("the hosted control plane installs no host software for a signed-in person", () =>
+        verifyHostInstallRefused(auth.token),
+      );
+      await test.step("a maintenance cancel on a server the person does not own answers one refusal", () =>
+        verifyMaintenanceCancelRefusedOnce(auth.token),
+      );
       if (role === "cloud") {
         if (INVENTORY_EXPECTATION && !STAGE_CONTEXT_JOURNEY) {
           assertCanonicalDemoPrincipal(whoami.body);
@@ -2074,6 +2080,65 @@ async function verifyDataProfile(
     "data-profile-ret",
     body?.data?.ret ?? "",
   );
+}
+
+// Both host dependency routes refuse every signed-in person on a hosted
+// edition (platform-vijkk). The edge deny answers before the runtime, and a
+// Preview mutation admission may refuse the install first; the status read
+// passes no mutation gate, so its runtime answer must name the hosted
+// refusal. The body names no real dependency, so even a regression installs
+// nothing.
+async function verifyHostInstallRefused(token: string) {
+  for (const [method, endpoint] of [
+    ["GET", "/api/v1/autoinstall/status"],
+    ["POST", "/api/v1/autoinstall/install"],
+  ] as const) {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      method,
+      redirect: "error",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+        ...(NIGHTLY ? { "x-kombify-release-channel": "preview" } : {}),
+        ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+      },
+      body: method === "POST" ? JSON.stringify({ dependencies: ["__host_install_refusal_probe__"] }) : undefined,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const text = await response.text();
+    expect(response.status, `${method} ${endpoint}`).toBe(403);
+    if (method !== "GET" || !(response.headers.get("content-type") ?? "").includes("json")) continue;
+    const body = JSON.parse(text);
+    expect(body?.error?.details?.reason_code, `${method} ${endpoint}`).toBe("hosted_control_plane");
+  }
+}
+
+// A maintenance cancel for a server the person does not own is refused once.
+// It used to write its 404 and then read the nil server, so a second
+// "internal server error" envelope followed the 404 in the same body
+// (platform-7r1il). The body must be exactly one JSON refusal.
+async function verifyMaintenanceCancelRefusedOnce(token: string) {
+  const endpoint = "/api/v1/servers/srv-journey-not-owned/actions/job-journey-not-owned/cancel";
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(NIGHTLY ? { "x-kombify-release-channel": "preview" } : {}),
+    },
+    body: "{}",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const text = await response.text();
+  expect([403, 404], endpoint).toContain(response.status);
+  let body: { error?: { code?: string } } | undefined;
+  expect(() => { body = JSON.parse(text); }, `${endpoint} answers one JSON refusal`).not.toThrow();
+  if (response.status === 404) expect(body?.error?.code, endpoint).toBe("NOT_FOUND");
+  // Only a person with the maintenance entitlement reaches the ownership check
+  // that wrote the second body; a 403 here says the fixture lacks it.
+  if (response.status === 403) test.info().annotations.push({ type: "maintenance-cancel", description: "entitlement refusal; ownership check not reached" });
 }
 
 async function authenticatedJSON(

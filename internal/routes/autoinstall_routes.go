@@ -8,27 +8,58 @@ import (
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/autoinstall"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/logger"
 )
 
-// RegisterAutoInstallRoutes registers auto-install endpoints.
-func RegisterAutoInstallRoutes(r *httpx.Router, log *logger.Logger) {
+// RegisterAutoInstallRoutes registers the host dependency endpoints. They
+// read and change the machine this runtime runs on, so only the self-hosted
+// owner may call them. Every other edition runs on the shared hosted control
+// plane: there both routes refuse every caller before any detection or
+// install (platform-vijkk).
+func RegisterAutoInstallRoutes(r *httpx.Router, log *logger.Logger, edition config.Edition) {
+	if edition != config.EditionSelfHostOSS {
+		r.GET("/api/v1/autoinstall/status", refuseHostedAutoInstall)
+		r.POST("/api/v1/autoinstall/install", refuseHostedAutoInstall)
+		return
+	}
 	detector := autoinstall.NewDetector(log)
 
 	r.GET("/api/v1/autoinstall/status", func(re *httpx.Event) error {
-		if _, err := requireAuth(re); err != nil {
+		if err := requireHostOwner(re); err != nil {
 			return err
 		}
 		return handleAutoInstallStatus(re, detector, log)
 	})
 
 	r.POST("/api/v1/autoinstall/install", func(re *httpx.Event) error {
-		if _, err := requireAuth(re); err != nil {
+		if err := requireHostOwner(re); err != nil {
 			return err
 		}
 		return handleAutoInstallInstall(re, detector, log)
 	})
+}
+
+// requireHostOwner admits the self-hosted owner (the local admin) only; a
+// signed-in session alone does not own the host.
+func requireHostOwner(re *httpx.Event) error {
+	if _, err := requireAuth(re); err != nil {
+		return err
+	}
+	return requireAdmin(re)
+}
+
+func refuseHostedAutoInstall(re *httpx.Event) error {
+	failure := ksapi.StructuredError{
+		Status: http.StatusForbidden, Message: "Hosted Techstack does not install software on its host",
+		ErrorCode: "host_install_unavailable", ReasonCode: "hosted_control_plane",
+		Guidance: ksapi.UserGuidance{
+			Title: "Not available on hosted Techstack",
+			Body:  "Dependencies are installed only by the owner of a self-hosted Techstack.",
+		},
+	}
+	return httpx.Error(re, failure.Status, failure.Code(), failure.Message, failure.Details())
 }
 
 // handleAutoInstallStatus checks for missing dependencies.

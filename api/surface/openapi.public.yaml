@@ -2404,7 +2404,7 @@ paths:
       tags: [Servers, Jobs]
       summary: Cancel an owned maintenance job before execution starts
       description: >-
-        Uses the same tenant, entitlement, server and requesting-owner scope as the job read. Cancellation and execution claim use the same queued-state compare-and-set. Repeating a successful cancellation returns its receipt; a claimed or finished job returns maintenance_not_cancellable. Cancelling never claims to stop a command that has already reached the server.
+        Uses the same tenant, entitlement, server and requesting-owner scope as the job read: the authority to withdraw a queued job is the person who owns the server and requested the job, and the person's agent acts with it. No delegated maintenance origin is needed, since cancelling only withdraws work that has not reached the server. Cancellation and execution claim use the same queued-state compare-and-set. Repeating a successful cancellation returns its receipt; a claimed or finished job returns maintenance_not_cancellable. Cancelling never claims to stop a command that has already reached the server.
       parameters:
         - $ref: "#/components/parameters/serverId"
         - name: jobId
@@ -3985,21 +3985,22 @@ paths:
       operationId: probeDevice
       tags: [Discovery]
       summary: Deep probe a caller-owned device
-      description: Non-admin callers may only probe IPs from their own discovery results; admins may probe arbitrary IPs.
+      description: >-
+        Logs in to the device over SSH with the login held in the Wallet item `ssh_wallet_item_id` (a kombify Wallet node access item assigned to Techstack and bound to this IP or to no host, or an SSH key or password item of the built-in wallet whose URL names this IP) and reads its system facts. The login is resolved inside Techstack for this probe only and never answered. This contract accepts no password or private key. Non-admin callers may only probe IPs from their own discovery results; admins may probe arbitrary IPs. Local control planes only (409 `lan_executor_required` on a hosted one).
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [ip]
+              additionalProperties: false
+              required: [ip, ssh_user, ssh_wallet_item_id]
               properties:
-                ip:
-                  type: string
-                ssh_user:
-                  type: string
-                ssh_key:
-                  type: string
+                ip: {type: string}
+                ssh_user: {type: string}
+                ssh_port: {type: integer, minimum: 1, maximum: 65535, default: 22}
+                ssh_wallet_item_id: {type: string, description: Wallet item holding the SSH key or password.}
+                timeout_seconds: {type: integer, minimum: 1, default: 30}
       responses:
         "200":
           description: Probe results
@@ -4010,25 +4011,21 @@ paths:
       operationId: testSSH
       tags: [Discovery]
       summary: Test SSH connectivity to a device
-      description: Non-admin callers may only test IPs from their own discovery results; admins may test arbitrary IPs.
+      description: >-
+        Opens one SSH connection with the login held in the Wallet item `ssh_wallet_item_id` (its key when it holds one, otherwise its password; a built-in wallet item must name this IP as its URL), resolved inside Techstack and never answered; nothing is stored. This contract accepts no password. A failed connection answers 200 with `success: false`. Non-admin callers may only test IPs from their own discovery results; admins may test arbitrary IPs. Local control planes only.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [ip]
+              additionalProperties: false
+              required: [ip, user, ssh_wallet_item_id]
               properties:
-                ip:
-                  type: string
-                port:
-                  type: integer
-                  default: 22
-                user:
-                  type: string
-                password:
-                  type: string
-                  format: password
+                ip: {type: string}
+                port: {type: integer, minimum: 1, maximum: 65535, default: 22}
+                user: {type: string}
+                ssh_wallet_item_id: {type: string, description: Wallet item holding the SSH key or password.}
       responses:
         "200":
           description: SSH test result
@@ -4277,20 +4274,28 @@ paths:
       operationId: createInstallCommand
       tags: [Tunnel]
       summary: Generate worker install command with tunnel URL
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [token]
-              properties:
-                token:
-                  type: string
-      security: []
+      description: >-
+        Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument.
       responses:
         "200":
           description: Install command
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [linux, registry_url]
+                    properties:
+                      linux: {type: string}
+                      windows: {type: string}
+                      registry_url: {type: string}
+                      pairing_token_id: {type: string}
+                      expires_at: {type: string, format: date-time}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /api/v1/tunnel/validate-url:
     post:
       operationId: validateTunnelUrl
@@ -4732,6 +4737,47 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "503":
           description: Wallet store is not configured
+    post:
+      operationId: createWalletItem
+      tags: [Wallet]
+      summary: Create a wallet item without secret values
+      description: >-
+        Creates a wallet item owned by the caller in the resolved tenant and returns it redacted. The server assigns the id. `secret` and `totp` values are entered by the person in the Wallet and are not part of this contract; an item created here has no secret until the person adds one, and a secret can never be read back through this API without the person's fresh re-authentication. Only deployments that keep credentials in Techstack's own Wallet serve this route; elsewhere it answers 409 `self_hosted_only`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 200}
+                kind: {type: string, enum: [password, api_key, ssh_key, oauth_token, certificate, other], description: Defaults to `other`. Cannot be changed later.}
+                username: {type: string}
+                url: {type: string}
+                notes: {type: string, description: Free text; never put credentials here.}
+                stack_id: {type: string, description: Stack (kit deployment) the item belongs to.}
+                service_id: {type: string}
+                expires_at: {type: string, format: date-time}
+                item_class: {type: string, enum: [launch, user_account, credential, recovery, machine_secret_ref, manual]}
+                access_mode: {type: string, enum: [open, reveal, manage]}
+                source_type: {type: string}
+                source_ref: {type: string}
+      responses:
+        "201":
+          description: The created item, redacted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/WalletItem"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503":
+          description: Wallet store is not configured
   /api/v1/wallet/{id}/reauth-proof:
     post:
       operationId: createWalletReauthProof
@@ -5122,14 +5168,28 @@ paths:
       responses:
         "200":
           description: Dependency status
+        "403":
+          description: Only the owner of a self-hosted Techstack; hosted Techstack refuses every caller (reason_code hosted_control_plane)
   /api/v1/autoinstall/install:
     post:
       operationId: installDependencies
       tags: [Health]
       summary: Install missing dependencies
+      description: >-
+        Installs the missing host dependencies (OpenTofu, cloudflared, Docker) on the machine a self-hosted Techstack runs on, all of them or the named ones. Only the owner of a self-hosted Techstack may call it, and an agent acts with the owner's reach there; hosted Techstack refuses every caller with 403 `host_install_unavailable` (reason_code `hosted_control_plane`) before anything is detected.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                dependencies: {type: array, items: {type: string}, description: Names of the missing dependencies to install; all when omitted.}
       responses:
         "200":
           description: Installation result
+        "403":
+          description: Only the owner of a self-hosted Techstack; hosted Techstack refuses every caller (reason_code hosted_control_plane)
   /metrics:
     get:
       operationId: getMetrics
@@ -5533,6 +5593,3007 @@ paths:
           $ref: "#/components/responses/ValidationError"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/onboarding/{journeyId}:
+    put:
+      operationId: applyOnboardingAction
+      tags: [Stacks]
+      summary: Apply one action to the caller's onboarding journey
+      description: >-
+        Applies one closed action (complete, skip, dismiss, resume or coach_seen) to the authenticated owner's progress in a journey and answers the resolved journey, state, step availability and revision. Steps that spend money complete only from server facts: a reported completion of such a step is refused with 403 `onboarding_derived_only`. A repeated action is a no-op, and a stale `If-Match` revision answers 412.
+      parameters:
+        - name: journeyId
+          in: path
+          required: true
+          description: Journey id, for example `techstack.platform`.
+          schema: {type: string, minLength: 1}
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional compare-and-swap revision read from the journey state, for example `"3"`.
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: {type: string, enum: [complete, skip, dismiss, resume, coach_seen]}
+                step_id: {type: string, description: "Required for complete, skip and coach_seen, for example `techstack.add_server`."}
+                source: {type: string, enum: [reported, manual], description: "Who asserts the completion; empty means reported for complete and manual for skip."}
+      responses:
+        "200":
+          description: The resolved journey after the action
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [journey, state, availability, revision]
+                    properties:
+                      journey: {type: object, description: The journey descriptor with its steps.}
+                      state:
+                        type: object
+                        properties:
+                          journey_id: {type: string}
+                          journey_version: {type: integer}
+                          completed:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                step_id: {type: string}
+                                at: {type: string, format: date-time}
+                                source: {type: string}
+                          seen_steps: {type: array, items: {type: string}}
+                          status: {type: string, enum: [active, completed, dismissed]}
+                          dismissed_at: {type: [string, "null"], format: date-time}
+                          reopened_at: {type: [string, "null"], format: date-time}
+                          revision: {type: integer}
+                          updated_at: {type: string, format: date-time}
+                      availability:
+                        type: object
+                        description: Per-step availability; steps that are available are omitted.
+                        additionalProperties:
+                          type: object
+                          properties:
+                            status: {type: string, enum: [disabled, blocked, pending]}
+                            reason_code: {type: string}
+                            user_guidance: {$ref: "#/components/schemas/StructuredUserGuidance"}
+                      revision: {type: integer}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "412":
+          description: The state moved on since the supplied `If-Match` revision was read (`onboarding_revision_conflict`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/onboarding/{journeyId}/reset:
+    post:
+      operationId: resetOnboarding
+      tags: [Stacks]
+      summary: Restart the caller's onboarding journey
+      description: >-
+        Clears the authenticated owner's completed and seen steps in a journey and reactivates it so the tour is shown again. Only the owner's own progress changes; no infrastructure is touched. Answers the resolved journey like the action route.
+      parameters:
+        - name: journeyId
+          in: path
+          required: true
+          description: Journey id, for example `techstack.platform`.
+          schema: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: The resolved journey after the reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [journey, state, availability, revision]
+                    properties:
+                      journey: {type: object, description: The journey descriptor with its steps.}
+                      state:
+                        type: object
+                        properties:
+                          journey_id: {type: string}
+                          journey_version: {type: integer}
+                          completed: {type: array, items: {type: object}}
+                          seen_steps: {type: array, items: {type: string}}
+                          status: {type: string, enum: [active, completed, dismissed]}
+                          dismissed_at: {type: [string, "null"], format: date-time}
+                          reopened_at: {type: [string, "null"], format: date-time}
+                          revision: {type: integer}
+                          updated_at: {type: string, format: date-time}
+                      availability:
+                        type: object
+                        additionalProperties: {type: object}
+                      revision: {type: integer}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/resume-remote-enrollment:
+    post:
+      operationId: resumeRemoteEnrollment
+      tags: [Stacks, Jobs]
+      summary: Retry SSH enrollment of a connect-remote StackKit deployment
+      description: >-
+        Re-runs the Guard enrollment over the SSH connection persisted for a connect-remote deployment without rerunning the StackKit rollout. The deployment must belong to the authenticated owner and use the connect-remote transport; the credential comes from the Wallet node access item already bound to it, or from `ssh_wallet_item_id` when the connection should be rebound first. A plaintext password is never accepted by this contract.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                ssh_wallet_item_id:
+                  type: string
+                  pattern: "^itm_[a-z2-7]{26}$"
+                  description: Wallet node access item to rebind the stack's persisted SSH connection to before the retry.
+      responses:
+        "202":
+          description: Remote SSH enrollment retry accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      success: {type: boolean}
+                      message: {type: string}
+                      kit_deployment_id: {type: string}
+                      pairing_job_id: {type: string}
+                      planned_server_id: {type: string}
+                      server_remote_host: {type: string}
+                      server_remote_user: {type: string}
+                      server_remote_port: {type: integer}
+                      server_remote_auth_method: {type: string}
+                      server_remote_credential_item_id: {type: string}
+                      server_remote_credential_ref: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/use-cases/{workload}/configure:
+    post:
+      operationId: configureUseCase
+      tags: [Stacks]
+      summary: Change the configuration of one installed use-case workload
+      description: >-
+        Authors a native configuration change for one installed catalog workload (compute, storage and accelerator profiles, public settings, secret references) against the baseline named by `expected_spec_hash`, saves the candidate and queues the StackKit lifecycle jobs that apply it. The `Idempotency-Key` makes a retry replay the original acceptance. Refused with 409 while the stack is busy, a service is locked, a server is in maintenance, or the baseline changed.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: workload
+          in: path
+          required: true
+          description: Installed catalog workload slug.
+          schema: {type: string, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"}
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: One opaque attempt key of at most 128 characters; exactly one value.
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_spec_hash]
+              properties:
+                expected_spec_hash: {type: string, pattern: "^sha256:[0-9a-f]{64}$", description: Native baseline hash read from the use-case configuration view.}
+                compute_profile: {type: string, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"}
+                storage_profile: {type: string, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"}
+                accelerator_profile: {type: string, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"}
+                settings:
+                  type: object
+                  maxProperties: 64
+                  description: Public catalog settings by key; each value is a string, boolean or number.
+                  additionalProperties:
+                    oneOf:
+                      - {type: string}
+                      - {type: boolean}
+                      - {type: number}
+                secret_refs:
+                  type: object
+                  maxProperties: 64
+                  description: Existing secret references by catalog key. Values are `secret://` references, never secret material.
+                  additionalProperties: {type: string, pattern: "^secret://", maxLength: 512}
+      responses:
+        "202":
+          description: Configuration change accepted or replayed; jobs are queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      kit_deployment_id: {type: string}
+                      run_id: {type: string}
+                      job_id: {type: string}
+                      job_ids: {type: array, items: {type: string}}
+                      state: {type: string}
+                      operation: {type: string, const: use_case_configure}
+                      workload_ref: {type: string}
+                      previous_spec_hash: {type: string}
+                      spec_hash: {type: string}
+                      accepted_at: {type: string, format: date-time}
+                      idempotent_replay: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/use-cases/remove:
+    post:
+      operationId: removeUseCase
+      tags: [Stacks]
+      summary: Remove one workload or a whole use case from a StackKit deployment
+      description: >-
+        Retires an installed workload, or every installed workload of a catalog use case, through the native resolver against the baseline named by `expected_spec_hash`, and queues the StackKit lifecycle jobs. The workload stops running but its data is retained (`data_disposition: retain`). The `Idempotency-Key` makes a retry replay the original acceptance; refused with 409 while the stack is busy, a service is locked or a server is in maintenance.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: One opaque attempt key of at most 128 characters; exactly one value.
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [selector_kind, selector_ref, expected_spec_hash]
+              properties:
+                selector_kind: {type: string, enum: [workload, use_case]}
+                selector_ref: {type: string, minLength: 1, maxLength: 128, description: Workload slug or catalog use-case id; no surrounding whitespace.}
+                expected_spec_hash: {type: string, pattern: "^sha256:[0-9a-f]{64}$", description: Native baseline hash read from the use-case configuration view.}
+      responses:
+        "202":
+          description: Removal accepted or replayed; jobs are queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      kit_deployment_id: {type: string}
+                      run_id: {type: string}
+                      job_id: {type: string}
+                      job_ids: {type: array, items: {type: string}}
+                      state: {type: string}
+                      operation: {type: string, const: use_case_remove}
+                      selector_kind: {type: string}
+                      selector_ref: {type: string}
+                      removed_workload_refs: {type: array, items: {type: string}}
+                      data_disposition: {type: string, const: retain}
+                      previous_spec_hash: {type: string}
+                      spec_hash: {type: string}
+                      accepted_at: {type: string, format: date-time}
+                      idempotent_replay: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/unifier/recommendations:
+    post:
+      operationId: recommendStackKits
+      tags: [Unifier]
+      summary: Rank StackKits for the goals and services of a wizard selection
+      description: >-
+        Computes ranked StackKit recommendations from the selected goals, the deployment lane and surface, and the authenticated owner's worker inventory and self-disclosure. Safe and idempotent: nothing is stored. A non-ready status (`incomplete`, `stale`, `degraded`) is still a useful answer that names the evidence to supply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [deployment_lane, surface]
+              properties:
+                goals: {type: array, items: {type: string}}
+                services: {type: array, items: {type: string}}
+                deployment_lane: {type: string, enum: [saas, self-hosted]}
+                surface: {type: string, enum: [easy, techie]}
+                provider_id: {type: string}
+                selection_intent: {type: string, enum: [all], description: "all asks which of available_goals the full-homelab template should preselect."}
+                available_goals: {type: array, items: {type: string}, description: Use cases the released catalog offers.}
+                compute_profile: {type: string}
+                use_case_settings:
+                  type: object
+                  additionalProperties: {type: object}
+                use_case_capabilities:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    additionalProperties: {type: string}
+                smart_home_context:
+                  type: object
+                  properties:
+                    existing: {type: boolean}
+                    proxmox_available: {type: boolean}
+                    lan_reachable: {type: boolean}
+                    cpu: {type: integer}
+                    memory_mib: {type: integer}
+                    disk_gib: {type: integer}
+                    needs_apps: {type: boolean}
+                    needs_radio: {type: boolean}
+                    exclusive_radio: {type: boolean}
+                    prefers_appliance_maintenance: {type: boolean}
+                smart_home_settings: {type: object, description: Smart-home setting decisions by id.}
+      responses:
+        "200":
+          description: Ranked recommendations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: {type: string, enum: [ready, incomplete, stale, degraded]}
+                      generated_at: {type: string, format: date-time}
+                      decision_context: {type: object}
+                      decision_context_hash: {type: string}
+                      catalog_source: {type: string}
+                      missing_inputs: {type: array, items: {type: string}}
+                      stale_inputs: {type: array, items: {type: string}}
+                      recommendations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: {type: string}
+                            stackkit: {type: string}
+                            rank: {type: integer}
+                            score: {type: number}
+                            recommended: {type: boolean}
+                            reasons: {type: array, items: {type: object}}
+                            alternatives: {type: array, items: {type: string}}
+                            deep_link: {type: object}
+                      selection: {type: object, description: Preselection guidance when selection_intent is set.}
+                      smart_home_recommendation: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
+  /api/v1/unifier/layout/recommendations:
+    post:
+      operationId: recommendLayout
+      tags: [Unifier]
+      summary: Compute and record a verified workload layout for a planned change
+      description: >-
+        Plans where the selected goals run across the nodes of one owned StackKit deployment for an add-server or add-use-case change, verifies the option with the pinned StackKits feasibility check and, when it is feasible, records it as an open recommendation the owner can accept inside a wizard run, reject or snooze. An option that is not verified is returned with state `unverified` and no id. Records the proposal but changes no infrastructure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [flow, stack_id, goals]
+              properties:
+                flow: {type: string, enum: [add-server, add-use-case]}
+                stack_id: {type: string, minLength: 1}
+                goals: {type: array, minItems: 1, items: {type: string}}
+                compute_profile: {type: string}
+                use_case_settings:
+                  type: object
+                  additionalProperties: {type: object}
+                use_case_capabilities:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    additionalProperties: {type: string}
+                planned_node:
+                  type: object
+                  additionalProperties: false
+                  description: The node an add-server run brings, when its size is known before it enrolls.
+                  required: [name, cpu_cores, ram_gb, storage_gb, source]
+                  properties:
+                    name: {type: string}
+                    cpu_cores: {type: integer}
+                    ram_gb: {type: number}
+                    storage_gb: {type: integer}
+                    arch: {type: string}
+                    source: {type: string}
+                    roles: {type: array, items: {type: string}}
+                    transport: {type: string}
+      responses:
+        "200":
+          description: The recommendation view
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: {type: string}
+                      api_version: {type: string}
+                      state: {type: string, description: "open, unverified, snoozed, rejected, accepted, executing, done, failed, expired or superseded."}
+                      scope: {type: string}
+                      stack_id: {type: string}
+                      flow: {type: string}
+                      outcome: {type: string, enum: [feasible, proven-infeasible, unknown, budget-exhausted]}
+                      proposal_digest: {type: string}
+                      snapshot_digest: {type: string}
+                      material_digest: {type: string}
+                      expires_at: {type: string, format: date-time}
+                      superseded_by: {type: string}
+                      catalog_release: {type: string}
+                      planner: {type: object}
+                      nodes: {type: array, items: {type: object}}
+                      assignments: {type: array, items: {type: object}}
+                      existing: {type: array, items: {type: object}}
+                      notes: {type: array, items: {type: object}}
+                      conflicts: {type: array, items: {type: object}}
+                      verification: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/unifier/layout/recommendations/{id}/reject:
+    post:
+      operationId: rejectLayoutRecommendation
+      tags: [Unifier]
+      summary: Reject one layout recommendation
+      description: >-
+        Marks an open or snoozed layout recommendation of the authenticated owner as rejected so it is no longer offered, and answers its updated view. A recommendation in any other state answers 409 `layout_recommendation_changed`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Layout recommendation id.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The rejected recommendation view
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: {type: string}
+                      state: {type: string}
+                      stack_id: {type: string}
+                      flow: {type: string}
+                      outcome: {type: string}
+                      proposal_digest: {type: string}
+                      assignments: {type: array, items: {type: object}}
+                      verification: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/unifier/layout/recommendations/{id}/snooze:
+    post:
+      operationId: snoozeLayoutRecommendation
+      tags: [Unifier]
+      summary: Snooze one layout recommendation until a later time
+      description: >-
+        Hides an open or snoozed layout recommendation of the authenticated owner until `until`, which must lie in the future and within 90 days, and answers its updated view. A recommendation in any other state answers 409 `layout_recommendation_changed`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Layout recommendation id.
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [until]
+              properties:
+                until: {type: string, format: date-time, description: "End of the snooze, at most 90 days ahead."}
+      responses:
+        "200":
+          description: The snoozed recommendation view
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: {type: string}
+                      state: {type: string}
+                      stack_id: {type: string}
+                      flow: {type: string}
+                      outcome: {type: string}
+                      proposal_digest: {type: string}
+                      assignments: {type: array, items: {type: object}}
+                      verification: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/wizard/preview:
+    post:
+      operationId: previewWizard
+      tags: [Stacks]
+      summary: Preview the StackKit spec a wizard intent would produce
+      description: >-
+        Projects a wizard intent onto the pinned kit seed and validates the result with the pinned StackKits CLI. Safe and idempotent: nothing is persisted. An invalid projection answers 200 with `valid: false` and `validate_error`; join previews need `base_spec`. Requires the `native_v2_wizard` feature for the caller (403 `feature_not_enabled` otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [intent]
+              properties:
+                intent:
+                  type: object
+                  additionalProperties: false
+                  required: [schema, run_kind, name, kit_assignment]
+                  description: Closed wizard intent (techstack.wizard-intent/v1). The backend projects it onto the pinned StackKits kit seed; owner identity never travels here.
+                  properties:
+                    schema: {type: string, const: "techstack.wizard-intent/v1"}
+                    run_kind: {type: string, enum: [first-run, expansion]}
+                    homelab_id: {type: string}
+                    name: {type: string, minLength: 1, description: Display name of the StackKit deployment.}
+                    domain_base: {type: string}
+                    goals:
+                      type: array
+                      items: {type: string}
+                      description: Selected use-case slugs from the released StackKits catalog.
+                    server:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        existing_server_id: {type: string, description: "Already enrolled, unassigned canonical server for the first installation (found runs, install-command transport only)."}
+                        roles:
+                          type: array
+                          items: {type: string, description: "controller, worker, storage or edge; the legacy names foundation, standalone, main and control-plane map to controller."}
+                        purpose: {type: string}
+                        transport: {type: string, enum: [install-command, connect-remote, hypervisor, kombify-cloud], description: "Provisioning lane; empty means install-command. kombify-cloud orders a billed managed server."}
+                        environment_class: {type: string, enum: [local, cloud]}
+                        site_ref: {type: string}
+                    kit_assignment:
+                      type: object
+                      additionalProperties: false
+                      required: [mode]
+                      properties:
+                        mode: {type: string, enum: [found, join, extend], description: "found creates a deployment (kit_slug required); join adds a Node and extend adds use cases to kit_deployment_id."}
+                        kit_slug: {type: string, enum: [basement-kit, cloud-kit, modern-homelab]}
+                        kit_deployment_id: {type: string}
+                    access:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        mode: {type: string, enum: [local, remote-private]}
+                        publications:
+                          type: array
+                          items:
+                            type: object
+                            additionalProperties: false
+                            required: [service_id, exposure]
+                            properties:
+                              service_id: {type: string}
+                              exposure: {type: string, const: public}
+                    household:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        profile: {type: string, enum: [solo, shared]}
+                        planned_people:
+                          type: array
+                          maxItems: 50
+                          items:
+                            type: object
+                            additionalProperties: false
+                            required: [client_ref]
+                            properties:
+                              client_ref: {type: string}
+                              name: {type: string, maxLength: 200}
+                              email: {type: string, maxLength: 320}
+                    use_case_settings:
+                      type: object
+                      additionalProperties: {type: object}
+                      description: Setting decisions per selected use-case slug, as the StackKits catalog declares them.
+                    use_case_capabilities:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        additionalProperties: {type: string}
+                      description: Capability option id (or "off") per capability id, per selected use-case slug.
+                    use_case_setup_answers:
+                      type: object
+                      maxProperties: 128
+                      additionalProperties:
+                        type: object
+                        maxProperties: 128
+                        additionalProperties:
+                          type: array
+                          maxItems: 128
+                          items: {type: string, maxLength: 128}
+                    backup:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        offsite: {type: boolean, description: "Off-site object backup; available only when founding a cloud-kit deployment."}
+                    layout_recommendation:
+                      type: object
+                      additionalProperties: false
+                      required: [id, proposal_digest]
+                      description: Accepts a shown layout recommendation (join and extend runs only).
+                      properties:
+                        id: {type: string}
+                        proposal_digest: {type: string, pattern: "^sha256:"}
+                base_spec: {type: object, description: Current spec of the deployment being joined; required for join previews.}
+                smart_home_context:
+                  type: object
+                  properties:
+                    existing: {type: boolean}
+                    proxmox_available: {type: boolean}
+                    lan_reachable: {type: boolean}
+                    cpu: {type: integer}
+                    memory_mib: {type: integer}
+                    disk_gib: {type: integer}
+                    needs_apps: {type: boolean}
+                    needs_radio: {type: boolean}
+                    exclusive_radio: {type: boolean}
+                    prefers_appliance_maintenance: {type: boolean}
+      responses:
+        "200":
+          description: The projected and validated spec
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      valid: {type: boolean}
+                      kit_slug: {type: string}
+                      node_id: {type: string}
+                      spec: {type: object, description: Projected StackKits stack spec.}
+                      unmapped_goals: {type: array, items: {type: string}}
+                      unmapped_purpose: {type: string}
+                      intent_adjustments: {type: array, items: {type: object}}
+                      effective_intent: {type: object}
+                      smart_home_recommendation: {type: object}
+                      release_version: {type: string}
+                      validate_error: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/wizard/remote/test-ssh:
+    post:
+      operationId: testWizardRemoteSsh
+      tags: [Stacks]
+      summary: Test an SSH connection to a machine before connecting it
+      description: >-
+        Opens one SSH connection to the given host with a credential held in the Wallet and reports whether it succeeded; nothing is stored. The credential is a Wallet node access item (`ssh_wallet_item_id`, bound to the host) or, on deployments that read the built-in wallet, the label of a stored SSH key. This contract accepts no password or private key. A failed connection answers 200 with `success: false` and the error. Requires the `native_v2_wizard` feature for the caller.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [host, user]
+              properties:
+                host: {type: string, minLength: 1}
+                port: {type: integer, minimum: 1, maximum: 65535, default: 22}
+                user: {type: string, minLength: 1}
+                auth_method: {type: string, enum: [ssh-key, password], default: ssh-key}
+                ssh_wallet_item_id: {type: string, pattern: "^itm_[a-z2-7]{26}$", description: Wallet node access item holding the SSH key or password.}
+                ssh_key_label: {type: string, description: Label of a stored SSH key; only on deployments that read the built-in wallet.}
+      responses:
+        "200":
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [success]
+                    properties:
+                      success: {type: boolean}
+                      message: {type: string}
+                      error: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/wizard/runs:
+    post:
+      operationId: createWizardRun
+      tags: [Stacks, Jobs]
+      summary: Run the creation wizard to found, join or extend a StackKit deployment
+      description: >-
+        Persists one wizard run for the authenticated owner. A found run creates the deployment and its first server, a join run adds a Node and an extend run adds use cases; the first run in a Homelab founds it and later first-run requests are coerced to expansions. The kombify-cloud transport orders a billed managed server, the hypervisor transport creates a guest on the owner's hypervisor and connect-remote enrolls over SSH. Join, extend, managed and hypervisor runs require `X-Idempotency-Key`; a replay with the same key and request returns the original outcome. Requires the `native_v2_wizard` feature for the caller.
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: true
+          description: >-
+            Stable attempt key, at most 256 characters. The handler accepts a missing key only for found runs on the install-command or connect-remote transport.
+          schema: {type: string, minLength: 1, maxLength: 256}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [intent]
+              properties:
+                intent:
+                  type: object
+                  additionalProperties: false
+                  required: [schema, run_kind, name, kit_assignment]
+                  description: Closed wizard intent (techstack.wizard-intent/v1). The backend projects it onto the pinned StackKits kit seed; owner identity never travels here.
+                  properties:
+                    schema: {type: string, const: "techstack.wizard-intent/v1"}
+                    run_kind: {type: string, enum: [first-run, expansion]}
+                    homelab_id: {type: string}
+                    name: {type: string, minLength: 1, description: Display name of the StackKit deployment.}
+                    domain_base: {type: string}
+                    goals:
+                      type: array
+                      items: {type: string}
+                      description: Selected use-case slugs from the released StackKits catalog.
+                    server:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        existing_server_id: {type: string, description: "Already enrolled, unassigned canonical server for the first installation (found runs, install-command transport only)."}
+                        roles:
+                          type: array
+                          items: {type: string, description: "controller, worker, storage or edge; the legacy names foundation, standalone, main and control-plane map to controller."}
+                        purpose: {type: string}
+                        transport: {type: string, enum: [install-command, connect-remote, hypervisor, kombify-cloud], description: "Provisioning lane; empty means install-command. kombify-cloud orders a billed managed server."}
+                        environment_class: {type: string, enum: [local, cloud]}
+                        site_ref: {type: string}
+                    kit_assignment:
+                      type: object
+                      additionalProperties: false
+                      required: [mode]
+                      properties:
+                        mode: {type: string, enum: [found, join, extend], description: "found creates a deployment (kit_slug required); join adds a Node and extend adds use cases to kit_deployment_id."}
+                        kit_slug: {type: string, enum: [basement-kit, cloud-kit, modern-homelab]}
+                        kit_deployment_id: {type: string}
+                    access:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        mode: {type: string, enum: [local, remote-private]}
+                        publications:
+                          type: array
+                          items:
+                            type: object
+                            additionalProperties: false
+                            required: [service_id, exposure]
+                            properties:
+                              service_id: {type: string}
+                              exposure: {type: string, const: public}
+                    household:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        profile: {type: string, enum: [solo, shared]}
+                        planned_people:
+                          type: array
+                          maxItems: 50
+                          items:
+                            type: object
+                            additionalProperties: false
+                            required: [client_ref]
+                            properties:
+                              client_ref: {type: string}
+                              name: {type: string, maxLength: 200}
+                              email: {type: string, maxLength: 320}
+                    use_case_settings:
+                      type: object
+                      additionalProperties: {type: object}
+                      description: Setting decisions per selected use-case slug, as the StackKits catalog declares them.
+                    use_case_capabilities:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        additionalProperties: {type: string}
+                      description: Capability option id (or "off") per capability id, per selected use-case slug.
+                    use_case_setup_answers:
+                      type: object
+                      maxProperties: 128
+                      additionalProperties:
+                        type: object
+                        maxProperties: 128
+                        additionalProperties:
+                          type: array
+                          maxItems: 128
+                          items: {type: string, maxLength: 128}
+                    backup:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        offsite: {type: boolean, description: "Off-site object backup; available only when founding a cloud-kit deployment."}
+                    layout_recommendation:
+                      type: object
+                      additionalProperties: false
+                      required: [id, proposal_digest]
+                      description: Accepts a shown layout recommendation (join and extend runs only).
+                      properties:
+                        id: {type: string}
+                        proposal_digest: {type: string, pattern: "^sha256:"}
+                owner:
+                  type: object
+                  additionalProperties: false
+                  description: Owner bootstrap options for a first run; ignored on expansion runs.
+                  properties:
+                    owner_bootstrap_mode: {type: string, enum: [auto, custom, none]}
+                    owner_source: {type: string, enum: [local, cloud, cloud-linked]}
+                    owner_email: {type: string}
+                    owner_username: {type: string}
+                    owner_display_name: {type: string}
+                managed:
+                  type: object
+                  additionalProperties: false
+                  required: [provider_id]
+                  description: Managed provider selection for the kombify-cloud transport.
+                  properties:
+                    provider_id: {type: string}
+                    runtime_offering_id: {type: string}
+                    provider_region: {type: string}
+                    ionos_datacenter: {type: string}
+                remote:
+                  type: object
+                  additionalProperties: false
+                  description: >-
+                    SSH target for the connect-remote transport. The credential is a Wallet node access item; this contract accepts no plaintext password.
+                  properties:
+                    host: {type: string}
+                    port: {type: integer, minimum: 1, maximum: 65535}
+                    user: {type: string}
+                    auth_method: {type: string, enum: [ssh-key, password]}
+                    ssh_key_label: {type: string, description: Label of a stored SSH key; only on deployments that read the built-in wallet.}
+                    ssh_wallet_item_id: {type: string, pattern: "^itm_[a-z2-7]{26}$"}
+                    use_sudo: {type: boolean}
+                substrate:
+                  type: object
+                  additionalProperties: false
+                  description: Guest placement on the owner's connected hypervisor; required for, and only valid with, the hypervisor transport.
+                  required: [server_id, profile_id, storage, bridge, cpu, memory_mib, disk_gib]
+                  properties:
+                    server_id: {type: string}
+                    profile_id: {type: string, description: Ubuntu guest profile id.}
+                    storage: {type: string}
+                    bridge: {type: string}
+                    cpu: {type: integer, minimum: 2}
+                    memory_mib: {type: integer, minimum: 2048}
+                    disk_gib: {type: integer, minimum: 32}
+                    appliance:
+                      type: object
+                      additionalProperties: false
+                      required: [profile_id, storage, bridge, cpu, memory_mib, disk_gib]
+                      properties:
+                        profile_id: {type: string}
+                        storage: {type: string}
+                        bridge: {type: string}
+                        cpu: {type: integer}
+                        memory_mib: {type: integer}
+                        disk_gib: {type: integer}
+                    accelerator:
+                      type: object
+                      required: [address]
+                      properties:
+                        address: {type: string}
+                        root_port: {type: string}
+                        subtree: {type: string}
+                        thunderbolt_unique_id: {type: string}
+                services: {type: array, items: {type: string}}
+      responses:
+        "202":
+          description: Wizard run accepted or replayed; provisioning or pairing continues as a job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      run_id: {type: string}
+                      run_kind: {type: string}
+                      requested_run_kind: {type: string}
+                      coerced: {type: boolean}
+                      homelab_id: {type: string}
+                      kit_assignment_mode: {type: string, enum: [found, join, extend]}
+                      kit_slug: {type: string}
+                      stack_id: {type: string}
+                      server_id: {type: string}
+                      node_id: {type: string}
+                      name: {type: string}
+                      job_id: {type: string}
+                      state: {type: string, enum: [provisioning, awaiting_pairing]}
+                      auto_deploy: {type: boolean}
+                      operations_url: {type: string}
+                      pairing_job_id: {type: string}
+                      planned_server_id: {type: string}
+                      operation_id: {type: string}
+                      appliance: {type: object}
+                      unmapped_goals: {type: array, items: {type: string}}
+                      unmapped_purpose: {type: string}
+                      release_version: {type: string}
+                      idempotent_replay: {type: boolean}
+                      bootstrap_token: {type: string, description: Short-lived owner-spec bootstrap bearer; present only when issued.}
+                      bootstrap_token_expires_at: {type: string, format: date-time}
+                      owner_spec_endpoint: {type: string}
+                      owner_spec_scopes: {type: array, items: {type: string}}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/wizard/runs/{runId}/dismiss:
+    post:
+      operationId: dismissWizardRun
+      tags: [Stacks]
+      summary: Hide one wizard run's dashboard notice
+      description: >-
+        Hides the dashboard notice of one of the authenticated owner's wizard runs on every device. The run's job is not touched; cancelling is a separate operation. An unknown or foreign run answers 404.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          description: Wizard run id, as returned by the wizard run.
+          schema: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: Run notice dismissed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [run_id, dismissed]
+                    properties:
+                      run_id: {type: string}
+                      dismissed: {type: boolean, const: true}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/auth/cloud-link:
+    delete:
+      operationId: deleteCloudLink
+      tags: [Auth]
+      summary: Remove the kombify Cloud link of the signed-in operator
+      description: >-
+        Deletes the stored kombify Cloud profile link of the authenticated operator on this install. The link is per operator; nothing at kombify Cloud changes. When no link exists the call succeeds with `removed: false`. Re-linking is a browser sign-in and is not available to agents.
+      responses:
+        "200":
+          description: The link was removed, or there was none to remove
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [removed]
+                    properties:
+                      removed: {type: boolean, description: True when a link existed and was removed.}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "500":
+          description: The link could not be removed (`cloud_link_unavailable`, reason `cloud_link_remove_failed`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/auth/cloud-link/start:
+    post:
+      operationId: startCloudLink
+      tags: [Auth]
+      summary: Start linking a kombify Cloud profile (PKCE sign-in)
+      description: >-
+        Self-hosted installs only. Mints a single-use PKCE state, stores it for 10 minutes, binds it to the calling browser with the `techstack_cloud_link` cookie and returns the hosted authorization URL that the browser opens (popup or full-page redirect). The callback accepts the sign-in only from the same browser, so the flow cannot be completed outside the browser that started it. Answers 409 on the SaaS edition and when no Cloud OIDC issuer is configured.
+      responses:
+        "200":
+          description: Hosted authorization URL for the browser
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [authorization_url, expires_at]
+                    properties:
+                      authorization_url: {type: string, format: uri}
+                      expires_at: {type: string, format: date-time}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500":
+          description: The link request could not be prepared (`cloud_link_unavailable`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/registry/services/import:
+    post:
+      operationId: importRegistryService
+      tags: [Services]
+      summary: Record an unmanaged service that already runs on an owned server
+      description: >-
+        Adds an observed (unmanaged) service row for a server of an owned stack. The row is keyed by stack, server and service name, so repeating the call updates the same row. Nothing is deployed or probed. Either `name` or `service_id` is required and is normalized to a lower-case key. A stack the caller does not own is refused with 403 and an unknown stack or server with 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stack_id, server_id]
+              properties:
+                stack_id: {type: string, minLength: 1}
+                server_id: {type: string, minLength: 1, description: Registry server (node) id of the stack.}
+                name: {type: string, description: Service name; used when `service_id` is not set.}
+                service_id: {type: string, description: Service key; used only when `name` is not set.}
+                display_name: {type: string}
+                type: {type: string, description: "Service type, for example `media`; defaults to `custom`."}
+                port: {type: integer, minimum: 0, maximum: 65535}
+                url: {type: string}
+      responses:
+        "200":
+          description: The recorded service
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [service]
+                    properties:
+                      service: {$ref: "#/components/schemas/RegistryService"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/v1/registry/services/home-assistant/import:
+    post:
+      operationId: importHomeAssistantService
+      tags: [Services]
+      summary: Link an existing Home Assistant instance read-only
+      description: >-
+        Probes a Home Assistant instance from a local executor with the long-lived access token held in the Wallet item `token_wallet_item_id` (a kombify Wallet item assigned to Techstack, or a built-in wallet API key or OAuth token item whose URL names this instance; resolved inside Techstack, never answered) and records a read-only observed service. This contract accepts no token. The token is used for this probe only and is never stored in the registry row. Self-hosted installs only (503 `lan_executor_unavailable` otherwise). The call is idempotent: an already linked instance returns `existing: true` without a new probe.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stack_id, server_id, url, token_wallet_item_id, installation_method]
+              properties:
+                stack_id: {type: string, minLength: 1}
+                server_id: {type: string, minLength: 1}
+                url: {type: string, description: Local Home Assistant endpoint.}
+                token_wallet_item_id: {type: string, minLength: 1, description: Wallet item holding the Home Assistant long-lived access token.}
+                installation_method: {type: string, enum: [haos, container]}
+      responses:
+        "200":
+          description: The linked service and the observation made
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [service]
+                    properties:
+                      service: {$ref: "#/components/schemas/RegistryService"}
+                      existing: {type: boolean}
+                      observation: {type: object}
+                      management_scope: {type: string, enum: [observed]}
+                      migration_available: {type: boolean}
+                      migration_unavailable_reason: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The Home Assistant probe failed (`home_assistant_probe_failed`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/registry/services/migrate:
+    post:
+      operationId: migrateRegistryService
+      tags: [Services]
+      summary: Start moving a service to another server of the same stack
+      description: >-
+        Marks the source service as migrating, creates the target copy pending verification and starts a migration job. The target server must belong to the same stack and differ from the source, and the service must be movable. Today every call answers 501 `Runtime service migration is unavailable` (`migration_available` is false in the registry) until a runtime executor exists; the canonical inventory store additionally answers 503 `service_control_server_fence_unavailable`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id, target_server_id]
+              properties:
+                service_id: {type: string, minLength: 1}
+                target_server_id: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: Migration job created; source and target copies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      job_id: {type: string}
+                      source_service: {$ref: "#/components/schemas/RegistryService"}
+                      target_service: {$ref: "#/components/schemas/RegistryService"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "501":
+          description: Runtime service migration is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/registry/services/verify:
+    post:
+      operationId: verifyRegistryService
+      tags: [Services]
+      summary: Finish a service move by accepting the target copy
+      description: >-
+        Accepts a service copy that is pending verification as running and archives the migrating source copy. Answers 409 when the service is not pending verification. Today every call answers 501 until a runtime executor exists, and the canonical inventory store answers 503 `service_control_server_fence_unavailable`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id]
+              properties:
+                service_id: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: The running service and the archived source copy, when one existed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [service]
+                    properties:
+                      service: {$ref: "#/components/schemas/RegistryService"}
+                      archived_service:
+                        oneOf:
+                          - $ref: "#/components/schemas/RegistryService"
+                          - type: "null"
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "501":
+          description: Runtime service migration is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/registry/services/{id}:
+    delete:
+      operationId: deleteRegistryService
+      tags: [Services]
+      summary: Delete an archived service copy from the Registry
+      description: >-
+        Removes the registry row of a service copy that a finished move left in the archived state. Any other status is refused with 409; no workload or server is touched. The canonical inventory store currently answers 503 `service_control_server_fence_unavailable`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Canonical service runtime ID
+          schema: {type: string}
+      responses:
+        "200":
+          description: The service row was deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [message, id]
+                    properties:
+                      message: {type: string}
+                      id: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/wallet/{id}:
+    patch:
+      operationId: updateWalletItem
+      tags: [Wallet]
+      summary: Update the metadata of a wallet item
+      description: >-
+        Merges the supplied fields into an item the caller owns and returns it redacted. Fields that are not supplied keep their value, including the stored secret and TOTP, which this contract can neither read nor change: the person sets those in the Wallet. The item kind and owner are immutable. An item owned by someone else answers 404. Only deployments that keep credentials in Techstack's own Wallet serve this route; elsewhere it answers 409 `self_hosted_only`.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, minLength: 1, maxLength: 200}
+                username: {type: string}
+                url: {type: string}
+                notes: {type: string, description: Free text; never put credentials here.}
+                stack_id: {type: string}
+                service_id: {type: string}
+                expires_at: {type: string, format: date-time}
+                item_class: {type: string, enum: [launch, user_account, credential, recovery, machine_secret_ref, manual]}
+                access_mode: {type: string, enum: [open, reveal, manage]}
+                source_type: {type: string}
+                source_ref: {type: string}
+      responses:
+        "200":
+          description: The updated item, redacted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/WalletItem"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503":
+          description: Wallet store is not configured
+    delete:
+      operationId: deleteWalletItem
+      tags: [Wallet]
+      summary: Delete a wallet item
+      description: >-
+        Deletes an item the caller owns, including its encrypted secret and TOTP. An item owned by someone else answers 404. Only deployments that keep credentials in Techstack's own Wallet serve this route; elsewhere it answers 409 `self_hosted_only`.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      responses:
+        "200":
+          description: The item was deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [ok]
+                    properties:
+                      ok: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503":
+          description: Wallet store is not configured
+  /api/v1/auth/stack-identity/conditional:
+    put:
+      operationId: updateStackIdentityConditional
+      tags: [Auth]
+      summary: Update the stack identity only when its local revision still matches
+      description: >-
+        Revision-checked variant of the stack identity update. `If-Match` carries the `local_revision` read from the stack identity, in double quotes (for example `"3"`); a stale revision answers 412 and a reused `Idempotency-Key` with different content answers 409. The edit is stored locally and marked pending until it is synced with kombify Cloud. The body is limited to 4096 bytes. Requires the Postgres control plane (503 `stack_identity_store_unavailable` otherwise).
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable mutation id of 16 to 128 letters, digits, `-` or `_`.
+          schema: {type: string, minLength: 16, maxLength: 128, pattern: "^[A-Za-z0-9_-]+$"}
+        - name: If-Match
+          in: header
+          required: true
+          description: Strong local revision in double quotes, for example `"3"`.
+          schema: {type: string, pattern: '^"[0-9]+"$'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 30, description: "Trimmed, without control characters."}
+                characterId: {type: string, pattern: "^[a-z][a-z0-9_-]{0,63}$"}
+                animationStyle: {type: string, pattern: "^[a-z][a-z0-9_-]{0,63}$"}
+                animationEnabled: {type: boolean}
+                iconStyle: {type: string, enum: [filled, glass, gradient, outlined]}
+                glowColorOverride: {type: [string, "null"], pattern: "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"}
+      responses:
+        "200":
+          description: The updated stack identity with its new revision
+          headers:
+            ETag:
+              description: New local revision.
+              schema: {type: string, example: '"4"'}
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      stack_identity: {type: object}
+                      editable: {type: boolean}
+                      sync:
+                        type: object
+                        properties:
+                          cloud_revision: {type: integer}
+                          pending: {type: boolean}
+                      local_revision: {type: integer, format: int64}
+                      mutation:
+                        type: object
+                        properties:
+                          id: {type: string}
+                          tenant_id: {type: string}
+                          owner_subject_id: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "412":
+          description: If-Match does not equal the current local revision (`stack_identity_revision_conflict`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "428":
+          description: A strong If-Match is required (`stack_identity_if_match_required`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/auth/stack-identity/sync:
+    post:
+      operationId: syncStackIdentity
+      tags: [Auth]
+      summary: Apply one kombify Cloud sync step to the local stack identity
+      description: >-
+        Takes the kombify Cloud stack identity record (read by the caller through the Gateway with the user's own token; `null` when Cloud has none) and applies the sync rules to the local copy: adopt the Cloud record, confirm an identical one, or answer the body to push to Cloud with the `If-Match` revision. The call itself never writes to Cloud. When no local stack identity exists yet it only reports `homelab_missing`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cloud]
+              properties:
+                cloud:
+                  description: The Cloud record, or null when Cloud has no stack identity.
+                  oneOf:
+                    - type: "null"
+                    - type: object
+                      required: [revision, name, updated_at]
+                      properties:
+                        revision: {type: integer, minimum: 1}
+                        name: {type: string, minLength: 1, maxLength: 30}
+                        character_id: {type: string, pattern: "^[a-z][a-z0-9_-]{0,63}$"}
+                        animation_style: {type: string, pattern: "^[a-z][a-z0-9_-]{0,63}$"}
+                        animation_enabled: {type: [boolean, "null"]}
+                        icon_style: {type: string, enum: ["", filled, glass, gradient, outlined]}
+                        glow_color_override: {type: [string, "null"], pattern: "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"}
+                        updated_at: {type: string, format: date-time}
+      responses:
+        "200":
+          description: The sync decision and the resulting local stack identity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [action, reason]
+                    properties:
+                      action: {type: string, enum: [none, in_sync, adopt_cloud, push_local]}
+                      reason: {type: string}
+                      push:
+                        type: object
+                        description: Present for `push_local`; the body to send to Cloud with `If-Match`.
+                        properties:
+                          if_match: {type: integer}
+                          body: {type: object}
+                      stack_identity: {type: object}
+                      editable: {type: boolean}
+                      sync:
+                        type: object
+                        properties:
+                          cloud_revision: {type: integer}
+                          pending: {type: boolean}
+                      local_revision: {type: integer, format: int64}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "412":
+          description: The local stack identity changed while syncing (`stack_identity_revision_conflict`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/home-assistant/instances/{binding}/backup:
+    post:
+      operationId: backupHomeAssistantInstance
+      tags: [Services]
+      summary: Create an encrypted off-instance backup of an owned Home Assistant instance
+      description: >-
+        Runs a native full backup through the instance binding, stores it encrypted off the instance and retains the recovery key in custody. Requires an owned instance binding with the backup grant. `operation_id` is a stable identity: repeating it returns the retained result instead of a second backup. A pending operation answers 202.
+      parameters:
+        - name: binding
+          in: path
+          required: true
+          description: Instance binding reference
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id]
+              properties:
+                operation_id: {type: string, minLength: 1, maxLength: 128, description: Stable operation identity.}
+      responses:
+        "200":
+          description: Backup result with its retained evidence
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "202":
+          description: The native operation is still pending; repeat the call with the same operation_id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/home-assistant/instances/{binding}/restore:
+    post:
+      operationId: restoreHomeAssistantInstance
+      tags: [Services]
+      summary: Restore a retained backup into the owned isolated recovery instance
+      description: >-
+        Restores a completed retained backup into the isolated recovery binding that belongs to the instance and verifies the result; the running instance itself is not overwritten. Requires the restore grant and an owned recovery binding (403 `recovery_not_authorized` otherwise). `operation_id` is a stable identity. A pending operation answers 202.
+      parameters:
+        - name: binding
+          in: path
+          required: true
+          description: Instance binding reference
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, backup_operation_id]
+              properties:
+                operation_id: {type: string, minLength: 1, maxLength: 128, description: Stable operation identity.}
+                backup_operation_id: {type: string, minLength: 1, maxLength: 128, description: The completed backup to restore.}
+      responses:
+        "200":
+          description: Restore result with its verification evidence
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "202":
+          description: The native operation is still pending; repeat the call with the same operation_id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/home-assistant/instances/{binding}/update:
+    post:
+      operationId: updateHomeAssistantInstance
+      tags: [Services]
+      summary: Update Home Assistant Core or OS to a pinned version after a verified backup
+      description: >-
+        Updates the instance to the exact `version`. It requires a completed backup (`backup_operation_id`) whose archive passed an isolated restore, the update grant on the binding and a pinned version (core `YYYY.M.P`, os `M.N` or `M.N.P`). `operation_id` is a stable identity and an uncertain submission is never repeated. A pending operation answers 202.
+      parameters:
+        - name: binding
+          in: path
+          required: true
+          description: Instance binding reference
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, backup_operation_id, version]
+              properties:
+                operation_id: {type: string, minLength: 1, maxLength: 128, description: Stable operation identity.}
+                backup_operation_id: {type: string, minLength: 1, maxLength: 128, description: The verified backup taken before the update.}
+                version: {type: string, description: "Exact target version: core `YYYY.M.P`, os `M.N[.P]`."}
+                target: {type: string, enum: [core, os], default: core}
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "202":
+          description: The native operation is still pending; repeat the call with the same operation_id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/home-assistant/migrations:
+    post:
+      operationId: startHomeAssistantMigration
+      tags: [Services]
+      summary: Start a native Home Assistant migration to an isolated target
+      description: >-
+        Starts (or resumes) the durable migration run for an authorized local binding: archive the source, provision an isolated target on the owner's own substrate, restore and verify it, then wait for the cutover confirmation. The run id is derived from tenant, owner and target, so repeating the call resumes the same run. The request must match the binding's source service and authorization reference exactly (403 otherwise). Self-hosted installs with a configured local binding only (503 `migration_executor_unavailable` otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_service_id, target_binding_ref, authorization_ref]
+              properties:
+                source_service_id: {type: string, minLength: 1}
+                target_binding_ref: {type: string, minLength: 1}
+                authorization_ref: {type: string, minLength: 1, description: Opaque reference of the binding's authorization; not a secret.}
+      responses:
+        "202":
+          description: Migration run started or resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [run_id]
+                    properties:
+                      run_id: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/home-assistant/migrations/{id}/confirm:
+    post:
+      operationId: confirmHomeAssistantMigration
+      tags: [Services]
+      summary: Confirm the cutover of a verified Home Assistant migration
+      description: >-
+        Delivers the explicit cutover confirmation to a migration run that is waiting for it. The run then stops the source, moves the exclusive attachments to the target and starts it; the original and its archive are retained and the migration can be returned with the rollback call. Answers 400 when the run is not awaiting confirmation and 404 for a run the caller does not own.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Migration run id
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmed]
+              properties:
+                confirmed: {type: boolean, enum: [true], description: Must be true.}
+      responses:
+        "202":
+          description: Cutover confirmation delivered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [run_id]
+                    properties:
+                      run_id: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/home-assistant/migrations/{id}/rollback:
+    post:
+      operationId: rollbackHomeAssistantMigration
+      tags: [Services]
+      summary: Return a completed or failed Home Assistant migration to the original instance
+      description: >-
+        Starts the return run for an owned migration that completed or failed and kept its source archive: archive the target, stop it, return the exclusive attachments and start and verify the original. The return run id is the migration run id with `:rollback`, so repeating the call resumes it. Answers 400 when the migration is not in a returnable state and 404 for a run the caller does not own.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Migration run id
+          schema: {type: string}
+      responses:
+        "202":
+          description: Return run started or resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [run_id]
+                    properties:
+                      run_id: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/home-assistant/owners/attach:
+    post:
+      operationId: attachHomeAssistantOwner
+      tags: [Services]
+      summary: Attach an owned Home Assistant instance to a pending owner enrollment
+      description: >-
+        Binds the instance's endpoint and the long-lived access token held in the Wallet item `token_wallet_item_id` (a kombify Wallet item assigned to Techstack, or a built-in wallet API key or OAuth token item whose URL names this instance; resolved inside Techstack, never answered; this contract accepts no token) to a pending owner enrollment of an owned stack, with the lifecycle grants and baseline settings the owner chooses. The token is stored encrypted and an existing attachment is never overwritten (409 `attachment_rejected`). Self-hosted installs only (503 otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stack_id, binding_ref, url, token_wallet_item_id]
+              properties:
+                stack_id: {type: string, minLength: 1}
+                binding_ref: {type: string, minLength: 1}
+                url: {type: string}
+                token_wallet_item_id: {type: string, minLength: 1, description: Wallet item holding the Home Assistant long-lived access token.}
+                lease_id: {type: string, description: Managed guest lease; required for a new instance.}
+                configure_granted: {type: boolean}
+                lifecycle_grants:
+                  type: object
+                  properties:
+                    Backup: {type: boolean}
+                    Restore: {type: boolean}
+                    Update: {type: boolean}
+                dependency_assessment_ref: {type: string}
+                recovery_binding_ref: {type: string}
+                recovery_backup_operation_id: {type: string}
+                settings:
+                  type: object
+                  properties:
+                    language: {type: string}
+                    time_zone: {type: string}
+                    internal_url: {type: string}
+                    external_url: {type: string}
+      responses:
+        "200":
+          description: The instance was attached
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [binding_ref, attached]
+                    properties:
+                      binding_ref: {type: string}
+                      attached: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/notifications/feed/{id}/read:
+    post:
+      operationId: markNotificationRead
+      tags: [Auth]
+      summary: Mark one notification of the signed-in user as read
+      description: >-
+        Marks one item of the authenticated user's notification feed as read. Techstack signs the call to the notifications engine for the authenticated user, so only that user's own items can be changed; an unknown item answers 404. The engine's answer is passed through unchanged and is not wrapped in the `data` envelope.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Feed item ID
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: The updated feed item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    type: object
+                    additionalProperties: true
+                    description: The feed item as the notifications engine reports it, with its read state.
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The notifications engine is unreachable (`notifications_engine_unreachable`)
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/notifications/feed/{id}/dismiss:
+    post:
+      operationId: dismissNotification
+      tags: [Auth]
+      summary: Dismiss one notification of the signed-in user
+      description: >-
+        Removes one item from the authenticated user's notification feed. Techstack signs the call to the notifications engine for the authenticated user, so only that user's own items can be dismissed; an unknown item answers 404. The engine's answer is passed through unchanged and is not wrapped in the `data` envelope.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Feed item ID
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: The dismissed feed item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    type: object
+                    additionalProperties: true
+                    description: The feed item as the notifications engine reports it, after the dismissal.
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: The notifications engine is unreachable (`notifications_engine_unreachable`)
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/notifications/feed/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [Auth]
+      summary: Mark every notification of the signed-in user as read
+      description: >-
+        Marks all unread items of the authenticated user's notification feed as read, across every section. The body is empty. The engine's answer is passed through unchanged and is not wrapped in the `data` envelope.
+      responses:
+        "200":
+          description: How many items changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: {type: integer, minimum: 0, description: Number of items that were marked read.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "502":
+          description: The notifications engine is unreachable (`notifications_engine_unreachable`)
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/notifications/preferences:
+    put:
+      operationId: updateNotificationPreferences
+      tags: [Auth]
+      summary: Set which channels the signed-in user receives each notification topic on
+      description: >-
+        Writes the topic-by-channel preference matrix of the authenticated user. Techstack forwards the body (at most 1 MiB) to the notifications engine unchanged; the engine rejects unknown topics and channels with 400 and silently ignores channels that are locked for a topic. The answer is the fresh matrix, not wrapped in the `data` envelope. Quiet hours and the Telegram link are read-only here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                topics:
+                  type: array
+                  items:
+                    type: object
+                    required: [topic_key, channels]
+                    properties:
+                      topic_key: {type: string}
+                      channels:
+                        type: object
+                        description: Channel name (email, in_app, slack, sms, push, telegram) to its new state.
+                        additionalProperties:
+                          type: object
+                          required: [enabled]
+                          properties:
+                            enabled: {type: boolean}
+                only_if_unset:
+                  type: boolean
+                  description: When true, a channel the user already set is left as it is.
+      responses:
+        "200":
+          description: The preference matrix after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  topics:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        topic_key: {type: string}
+                        category: {type: string}
+                        channels:
+                          type: object
+                          additionalProperties:
+                            type: object
+                            properties:
+                              enabled: {type: boolean}
+                              locked: {type: boolean, description: A locked channel keeps its forced state.}
+                  quiet_hours: {type: object, additionalProperties: true}
+                  telegram_linked: {type: boolean}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "502":
+          description: The notifications engine is unreachable (`notifications_engine_unreachable`)
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/operator/self-disclosure:
+    get:
+      operationId: getOperatorSelfDisclosure
+      tags: [Unifier]
+      summary: Read the operator's own answers about experience, goals, placement and household
+      description: >-
+        Returns the signed-in operator's stored self-disclosure, its source and the capability profile the Unifier derives from it. An operator who never answered gets an empty `disclosure`. Pass the returned `source` and `disclosure` as `if_unchanged` to replace it safely.
+      responses:
+        "200":
+          description: The stored self-disclosure, or an empty one
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      disclosure:
+                        type: object
+                        additionalProperties: true
+                        description: The stored answers, in the shape of the `disclosure` the replacement takes.
+                      profile:
+                        type: object
+                        description: Capability profile the Unifier derives from the answers.
+                      source: {type: string, enum: [link, techstack]}
+                      updated_at: {type: string, format: date-time}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    put:
+      operationId: putOperatorSelfDisclosure
+      tags: [Unifier]
+      summary: Store the operator's own answers about experience, goals, placement and household
+      description: >-
+        Replaces the signed-in operator's whole self-disclosure; an unanswered question means "not told". The body is decoded strictly and every answer must come from the closed vocabulary below. The capability profile in the answer is derived by the Unifier, never stored from the request. With `if_unchanged` the replacement is applied only when the stored value still equals it, otherwise the answer is 412 `self_disclosure_changed`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source, disclosure]
+              properties:
+                source:
+                  type: string
+                  enum: [link, techstack]
+                  description: link when the answers arrived as URL state and the operator confirmed them; techstack when typed in a Techstack surface.
+                disclosure:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    experience: {type: string, enum: [hands-off, guided, curious, techie, expert]}
+                    goals: {type: array, items: {type: string, enum: [photos, media, vault, files, smart-home, ai, dev, mail, game]}}
+                    placement: {type: string, enum: [home, rented, both, unsure]}
+                    hardware: {type: array, items: {type: string, enum: [none-yet, old-pc, mini-pc, nas, raspberry-pi, rented-server]}}
+                    household: {type: string, enum: [just-me, household, friends-family, small-team]}
+                    motivations: {type: array, items: {type: string, enum: [privacy, replace-subscriptions, learning, family, projects]}}
+                    notes: {type: string, maxLength: 2000}
+                if_unchanged:
+                  type: object
+                  additionalProperties: false
+                  required: [source, disclosure]
+                  description: The stored value this replacement must still match.
+                  properties:
+                    source: {type: string}
+                    disclosure:
+                      type: object
+                      additionalProperties: true
+                      description: Same shape as `disclosure`.
+      responses:
+        "200":
+          description: The stored self-disclosure with its derived profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      disclosure:
+                        type: object
+                        additionalProperties: true
+                        description: The stored answers, in the shape of the request `disclosure`.
+                      profile:
+                        type: object
+                        description: Capability profile the Unifier derives from the answers.
+                        properties:
+                          score: {type: integer}
+                          band: {type: string}
+                          confidence: {type: number}
+                          source: {type: string}
+                      source: {type: string}
+                      updated_at: {type: string, format: date-time}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412":
+          description: The stored value changed before this replacement (`self_disclosure_changed`)
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/access/authorized-key:
+    post:
+      operationId: authorizeServerAccessKey
+      tags: [Servers]
+      summary: Install one Wallet SSH public key on a managed server for direct owner SSH
+      description: >-
+        Installs the public key of a Wallet SSH item on a connected managed server and records the owner SSH grant. The body names the Wallet item (`wallet_item_id`, never key material) and must carry `confirm: true`. A fresh server-access re-authentication is required, supplied by the signed-in session or as `reauth_timestamp` and `reauth_signature`; without it the answer is 403 `server_access_step_up_required`. Refused on the demo account, when owner SSH access is disabled for the server (409) and when the Wallet is unavailable (503).
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet_item_id, confirm]
+              properties:
+                wallet_item_id: {type: string, description: Wallet item that holds the SSH key.}
+                confirm: {type: boolean, enum: [true]}
+                reauth_timestamp: {type: string}
+                reauth_signature: {type: string}
+      responses:
+        "200":
+          description: The server access state after the key was installed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      server_id: {type: string}
+                      host: {type: string}
+                      user: {type: string}
+                      port: {type: integer}
+                      host_key_fingerprint: {type: string}
+                      user_key_fingerprint: {type: string}
+                      ssh_command: {type: string}
+                      terminal_enabled: {type: boolean}
+                      manual_command_available: {type: boolean}
+                      connect_ready: {type: boolean}
+                      owner_ssh_access: {type: string, enum: [enabled, disabled]}
+                      reason: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: The public key could not be installed on the server
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/terminal-sessions:
+    post:
+      operationId: createServerTerminalSession
+      tags: [Servers]
+      summary: Open a browser terminal session on a managed server
+      description: >-
+        Creates one terminal session for the server owner and answers the WebSocket URL (`/api/v1/terminal-sessions/{sessionId}/stream`) that carries the shell. Requires a fresh server-terminal re-authentication (403 `server_access_step_up_required` without it) and a connected server whose browser terminal is enabled. One session per owner and server; it ends after 10 minutes idle or 60 minutes in total, and the stream can be attached once.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reauth_timestamp: {type: string}
+                reauth_signature: {type: string}
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [session_id, stream_url, expires_at, idle_limit_seconds]
+                    properties:
+                      session_id: {type: string}
+                      stream_url: {type: string, description: 'ws:// or wss:// URL of the terminal stream.'}
+                      expires_at: {type: string, format: date-time}
+                      idle_limit_seconds: {type: integer}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/identity/owner-activation:
+    post:
+      operationId: issueStackOwnerActivation
+      tags: [Stacks]
+      summary: Issue the activation link for the owner account of a stack's identity service
+      description: >-
+        Asks the StackKits identity runtime of the owned stack for a link that activates the owner's own account on the stack. The body must carry `owner_approved: true`; any other body is 400 `owner_approval_required`. The response includes the activation URL, which is a one-time sign-in link: hand it to the owner and do not log it. Answers 409 when the pinned StackKits runtime cannot issue activations or issuing fails.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [owner_approved]
+              properties:
+                owner_approved: {type: boolean, enum: [true]}
+      responses:
+        "200":
+          description: Owner activation issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      owner:
+                        type: object
+                        properties:
+                          status: {type: string}
+                          origin: {type: string}
+                          expires_at: {type: string, format: date-time}
+                          reason_code: {type: string}
+                          activation_url: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/stacks/{id}/identity/household-invitations:
+    post:
+      operationId: inviteStackHouseholdMember
+      tags: [Stacks]
+      summary: Invite one planned household member to a stack's identity service
+      description: >-
+        Invites one person of the household plan to the owned stack. The person must match the persisted Wizard intent (`client_ref`, e-mail and display name), the owner must already be active on the stack, and the body must carry `owner_approved: true`. The body is decoded strictly. The response includes the member's activation URL when one exists.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [client_ref, username, email, owner_approved]
+              properties:
+                client_ref: {type: string, description: Reference of the planned person in the Wizard household intent.}
+                username: {type: string}
+                email: {type: string, format: email}
+                display_name: {type: string}
+                owner_approved: {type: boolean, enum: [true]}
+      responses:
+        "201":
+          description: Invitation created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      invitation:
+                        type: object
+                        properties:
+                          client_ref: {type: string}
+                          username: {type: string}
+                          email: {type: string}
+                          display_name: {type: string}
+                          status: {type: string}
+                          expires_at: {type: string, format: date-time}
+                          activation_url: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/stacks/{id}/jobs/{jobId}/abandon:
+    post:
+      operationId: abandonStaleStackJob
+      tags: [Stacks, Jobs]
+      summary: Retire a rollout that is still marked running but has stopped reporting
+      description: >-
+        Releases the execution claim of one stale rollout job of an owned stack so that the stack can be retried with `retry-rollout`. Only a job that stopped reporting can be abandoned; any other job answers 409 `abandon_job_conflict` with the guard that refused. The body is empty and no command is sent to a server.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: jobId
+          in: path
+          required: true
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: The job was abandoned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      success: {type: boolean}
+                      message: {type: string}
+                      stack_id: {type: string}
+                      job_id: {type: string}
+                      silent_seconds: {type: integer, description: How long the job had been silent.}
+                      stack_status: {type: string}
+                      next_step: {type: string, enum: [retry-rollout]}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/relocations:
+    post:
+      operationId: startWorkloadRelocation
+      tags: [Stacks, Jobs]
+      summary: Move Coolify projects or resources from one owned stack's server to another
+      description: >-
+        Starts a verified move of workloads from the source server (this stack, `source_agent_id`) to a destination server of another owned stack. The workloads stop on the source while they transfer and the source is kept until both nodes verify the transfer; it can be resumed with the abort operation. Select either whole `projects` or individual `resource_uuids`. The transfer secret stays in Wallet custody (`wallet_item_id`) and domain switches go only to test domains. Needs exactly one Idempotency-Key; a replay returns the same job. Refused with 409 when a target holds locked services or server maintenance runs.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, minLength: 8, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_agent_id, destination_stack_id, destination_agent_id, wallet_item_id, owner_approved]
+              properties:
+                source_agent_id: {type: string, description: Guard agent of the source server in this stack.}
+                destination_stack_id: {type: string}
+                destination_agent_id: {type: string, description: Guard agent of the destination server; must differ from the source.}
+                projects:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  uniqueItems: true
+                  items: {type: string, maxLength: 128}
+                  description: Whole Coolify projects to move. Mutually exclusive with resource_uuids.
+                resource_uuids:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  uniqueItems: true
+                  items: {type: string, maxLength: 128}
+                  description: Individual Coolify resources to move. Mutually exclusive with projects.
+                wallet_item_id: {type: string, description: Wallet item id (itm_...) of the transfer secret; never the secret itself.}
+                domain_switches:
+                  type: array
+                  maxItems: 64
+                  items: {type: string, description: "OLD=NEW host names; NEW must be a test domain."}
+                owner_approved: {type: boolean, enum: [true]}
+      responses:
+        "202":
+          description: Relocation accepted or exact replay returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [job_id, kit_deployment_id, operation, source_retained]
+                    properties:
+                      job_id: {type: string}
+                      kit_deployment_id: {type: string, description: The source stack.}
+                      operation: {type: string, enum: [workload_relocation]}
+                      source_retained: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/relocations/{jobId}/resolve:
+    post:
+      operationId: resolveWorkloadRelocation
+      tags: [Stacks, Jobs]
+      summary: Verify both nodes of an interrupted move and settle its outcome
+      description: >-
+        Re-reads the transfer proof from the source and destination nodes of one relocation and records the verified outcome (`moved` or `aborted`). It is used when a move stopped between transfer and verification. The body is empty. While the nodes cannot both prove the exact transfer the answer is 409 and the relocation stays fenced.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: jobId
+          in: path
+          required: true
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: Relocation resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [job_id, state, resolved, source_retained]
+                    properties:
+                      job_id: {type: string}
+                      state: {type: string, description: Job state after the settlement.}
+                      node_verification: {type: object, additionalProperties: true, description: Proof read back from the source and destination nodes.}
+                      source_retained: {type: boolean}
+                      resolved: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/relocations/{jobId}/abort:
+    post:
+      operationId: abortWorkloadRelocation
+      tags: [Stacks, Jobs]
+      summary: Abort a workload relocation and resume the source
+      description: >-
+        Stops a relocation that has not finished and resumes the workloads on the source server, whose data was kept. The body must carry `owner_approved: true`. A relocation that already moved cannot be aborted (409), and an abort stays fenced until the nodes verify the state.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: jobId
+          in: path
+          required: true
+          schema: {type: string, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [owner_approved]
+              properties:
+                owner_approved: {type: boolean, enum: [true]}
+      responses:
+        "200":
+          description: Relocation aborted and verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [job_id, state, resolved, source_retained]
+                    properties:
+                      job_id: {type: string}
+                      state: {type: string, description: Job state after the settlement.}
+                      node_verification: {type: object, additionalProperties: true, description: Proof read back from the source and destination nodes.}
+                      source_retained: {type: boolean}
+                      resolved: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/stacks/{id}/workers/{workerId}/assign:
+    post:
+      operationId: assignWorkerToStack
+      tags: [Stacks, Workers]
+      summary: Assign an approved worker server to an owned stack
+      description: >-
+        Binds one approved, connected worker of the owner to one owned stack through the canonical server runtime. A worker that is not approved yet, or that already belongs to another stack, answers 409; assigning it to the stack it already belongs to is a no-op. The body is empty.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: workerId
+          in: path
+          required: true
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: The worker is assigned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      kit_deployment_id: {type: string}
+                      worker_id: {type: string}
+                      server:
+                        type: object
+                        additionalProperties: true
+                        description: The server as the stack operations view lists it.
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /v1/ril/action-cards:
+    post:
+      operationId: createRILActionCard
+      tags: [Inventory, RIL]
+      summary: Create a governed action card for one owned server
+      description: >-
+        Stores a card that describes one approved-action primitive, its target and its evidence sink for the authenticated owner. The card starts as `awaiting_grant` (no `grant` given) or `awaiting_approval` and runs nothing until it is approved and executed. The body is decoded strictly and must stay under 64 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [server_id, title, action]
+              properties:
+                id: {type: string, maxLength: 128, description: Optional card id; generated when omitted.}
+                server_id: {type: string}
+                title: {type: string, minLength: 1}
+                severity: {type: string, default: info}
+                action:
+                  type: object
+                  additionalProperties: false
+                  required: [stack_id, primitive, resolved_plan_hash, target, evidence_sink_ref]
+                  properties:
+                    stack_id: {type: string}
+                    primitive:
+                      type: object
+                      additionalProperties: false
+                      required: [id, contract_hash, operation_class]
+                      properties:
+                        id: {type: string}
+                        contract_hash: {type: string}
+                        operation_class: {type: string, description: "For example product-apply, product-upgrade, product-rollback, mutation or drift-correction."}
+                    resolved_plan_hash: {type: string}
+                    grant:
+                      type: object
+                      additionalProperties: false
+                      description: Delegated grant binding the card runs under. Without it the card waits for a grant.
+                      properties:
+                        binding_ref: {type: string}
+                        binding_hash: {type: string}
+                        audience: {type: string}
+                        scopes: {type: array, maxItems: 16, items: {type: string}}
+                        granted_at: {type: string, format: date-time}
+                        valid_until: {type: string, format: date-time}
+                    connector_binding:
+                      type: object
+                      additionalProperties: false
+                      required: [binding_id, binding_hash]
+                      properties:
+                        binding_id: {type: string}
+                        binding_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+                    target:
+                      type: object
+                      additionalProperties: false
+                      required: [scope]
+                      properties:
+                        scope: {type: string, enum: [stack, module-instance, runtime-instance]}
+                        site_ref: {type: string}
+                        node_ref: {type: string}
+                        module_instance_ref: {type: string}
+                        runtime_instance_ref: {type: string}
+                        execution_channel_ref: {type: string}
+                    inputs:
+                      type: array
+                      maxItems: 16
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [id, type]
+                        properties:
+                          id: {type: string}
+                          type: {type: string, enum: [opaque-reference, boolean, integer, string-enum]}
+                          opaque_ref: {type: string}
+                          boolean: {type: boolean}
+                          integer: {type: integer, format: int64}
+                          enum: {type: string}
+                    evidence_sink_ref: {type: string}
+      responses:
+        "201":
+          description: Card created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [id, server_id, title, status, action]
+                    properties:
+                      id: {type: string}
+                      server_id: {type: string}
+                      title: {type: string}
+                      severity: {type: string}
+                      status: {type: string, description: "awaiting_grant, awaiting_approval, approved, denied, executing, verifying, completed or failed."}
+                      action: {type: object, additionalProperties: true, description: The action template as it was created.}
+                      approval: {type: object, additionalProperties: true, description: Approval receipt once the owner approved.}
+                      execution_id: {type: string}
+                      trace_id: {type: string}
+                      evidence: {type: object, additionalProperties: true, description: Public-safe result evidence once the action finished.}
+                      error_code: {type: string}
+                      created_at: {type: string, format: date-time}
+                      updated_at: {type: string, format: date-time}
+                      approved_at: {type: string, format: date-time}
+                      denied_at: {type: string, format: date-time}
+                      execution_started_at: {type: string, format: date-time}
+                      completed_at: {type: string, format: date-time}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /v1/ril/action-cards/{cardId}/execute:
+    post:
+      operationId: executeRILActionCard
+      tags: [Inventory, RIL]
+      summary: Run one approved governed action card on its server
+      description: >-
+        Starts the durable workflow of a card that the owner approved and that holds a live grant, after checking that the caller may operate the card's server. `execution_id`, `trace_id` and `idempotency_key` bind one execution; repeating them returns the stored result. A card of operation class `drift-correction` also needs `compensation_card_id`, any other card must not send it. A missing approval or grant, an expired grant and a connector binding that does not match answer 403 or 409 with a stable `reason_code`.
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema: {type: string, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [execution_id, trace_id, idempotency_key]
+              properties:
+                execution_id: {type: string}
+                trace_id: {type: string}
+                idempotency_key: {type: string}
+                compensation_card_id: {type: string, description: Required for drift-correction cards; forbidden for others.}
+      responses:
+        "200":
+          description: The card after execution started or its exact replay
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [id, server_id, title, status, action]
+                    properties:
+                      id: {type: string}
+                      server_id: {type: string}
+                      title: {type: string}
+                      severity: {type: string}
+                      status: {type: string, description: "awaiting_grant, awaiting_approval, approved, denied, executing, verifying, completed or failed."}
+                      action: {type: object, additionalProperties: true, description: The action template as it was created.}
+                      approval: {type: object, additionalProperties: true, description: Approval receipt once the owner approved.}
+                      execution_id: {type: string}
+                      trace_id: {type: string}
+                      evidence: {type: object, additionalProperties: true, description: Public-safe result evidence once the action finished.}
+                      error_code: {type: string}
+                      created_at: {type: string, format: date-time}
+                      updated_at: {type: string, format: date-time}
+                      approved_at: {type: string, format: date-time}
+                      denied_at: {type: string, format: date-time}
+                      execution_started_at: {type: string, format: date-time}
+                      completed_at: {type: string, format: date-time}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/device-readiness/probe:
+    post:
+      operationId: probeDeviceReadiness
+      tags: [Discovery]
+      summary: Look at a not-yet-enrolled device over SSH and report whether it is ready
+      description: >-
+        Opens one SSH session to the named machine, reads its facts (network, proxy, virtualization, enrollment reachability) and answers a readiness report; nothing on the device changes. The login comes from the Wallet item connection.wallet_item_id, resolved inside Techstack for this request only and never answered or stored. Registered only on a local (non-SaaS) control plane and requires the signed techstack.device.prepare entitlement. Unknown body fields are refused. The first request may omit host_key_fingerprint; the answer then carries the key the device presented so it can be pinned on the next call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [connection]
+              properties:
+                connection:
+                  type: object
+                  additionalProperties: false
+                  required: [host, user, wallet_item_id]
+                  properties:
+                    host: {type: string}
+                    port: {type: integer}
+                    user: {type: string}
+                    wallet_item_id: {type: string, description: "Wallet item holding the SSH key or password; this contract accepts no key, passphrase or password."}
+                    host_key_fingerprint: {type: string, description: Key the device must present; omit on the first request.}
+      responses:
+        "200":
+          description: Readiness report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [report, device_key_fingerprint]
+                    properties:
+                      report: {type: object, description: Readiness evaluation of the probed facts.}
+                      device_key_fingerprint: {type: string, description: SSH host-key fingerprint the device presented.}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "502":
+          description: The device could not be reached or looked at (reason_code device_unreachable or a probe failure)
+  /api/v1/device-readiness/prepare:
+    post:
+      operationId: prepareDeviceReadiness
+      tags: [Discovery]
+      summary: Apply catalog fixes to a not-yet-enrolled device over SSH
+      description: >-
+        Connects to the named machine over SSH, runs the named catalog resolutions in order (only catalog ids are accepted), optionally opens a temporary egress path while they run, and probes again to report the result. Requires the signed techstack.device.prepare entitlement, and techstack.device.egress when egress is true. Registered only on a local (non-SaaS) control plane. The login comes from the Wallet item connection.wallet_item_id, resolved inside Techstack for this request only. A failing resolution stops the run with 409 and the receipts collected so far.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [connection, resolutions]
+              properties:
+                connection:
+                  type: object
+                  additionalProperties: false
+                  required: [host, user, wallet_item_id]
+                  properties:
+                    host: {type: string}
+                    port: {type: integer}
+                    user: {type: string}
+                    wallet_item_id: {type: string, description: "Wallet item holding the SSH key or password; this contract accepts no key, passphrase or password."}
+                    host_key_fingerprint: {type: string, description: Key the device must present; omit on the first request.}
+                resolutions:
+                  type: array
+                  minItems: 1
+                  items: {type: string, description: Resolution catalog id.}
+                interface: {type: string, description: "Interface a fix should act on, when one asks for it."}
+                egress: {type: boolean, description: Open a temporary way out for the machine while the fixes run.}
+      responses:
+        "200":
+          description: Receipts and the readiness report after the fixes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [receipts, report, device_key_fingerprint]
+                    properties:
+                      receipts: {type: array, items: {type: object}}
+                      report: {type: object}
+                      device_key_fingerprint: {type: string}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: The device could not be reached, or could not be checked again after the fixes
+  /api/v1/provider-operations/{operationId}/provision-discovery:
+    post:
+      operationId: discoverProviderProvision
+      tags: [Servers]
+      summary: Observe what the provider holds for one parked provision operation
+      description: >-
+        First step of operator resolution for a provision whose outcome is unknown. Reads the provider (read-only) and appends the immutable discovery evidence; it never creates or retries anything at the provider. A replay re-verifies the same observation. The answer names the confirmation string the second step requires. Administrator-only: a non-administrator caller is refused with 403, and the operation must belong to the caller's tenant.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          description: Provider operation id (non-empty, at most 256 characters, no whitespace or control characters).
+          schema: {type: string, minLength: 1, maxLength: 256}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Discovery observation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [operation_id, observation_id, candidate_count, expected_outcome, required_confirmation]
+                    properties:
+                      operation_id: {type: string}
+                      observation_id: {type: string}
+                      observation_digest: {type: string}
+                      resolution_revision: {type: integer, format: int64, minimum: 0}
+                      candidate_count: {type: integer, minimum: 0}
+                      expected_outcome:
+                        type: string
+                        enum: [no_candidate_observed, adopted_exact_candidate, multiple_candidates_quarantined]
+                      required_confirmation: {type: string, description: "Exact string the resolution step must send: adopt-provision:<operationId>."}
+                      created: {type: boolean, description: True when this call appended the observation.}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/provider-operations/{operationId}/provision-resolution:
+    post:
+      operationId: resolveProviderProvision
+      tags: [Servers]
+      summary: Record the operator decision for one parked provision operation
+      description: >-
+        Second step of operator resolution. With the exact confirmation from the discovery step it appends one decision against the persisted observation: no candidate, adopt the single exact candidate, or quarantine several. The decision is local custody state and never starts or retries provider creation. Replays return the original decision. Administrator-only; a stale or mismatching observation answers 409.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          description: Provider operation id (non-empty, at most 256 characters, no whitespace or control characters).
+          schema: {type: string, minLength: 1, maxLength: 256}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: string
+                  description: "Must equal required_confirmation from the discovery step (adopt-provision:<operationId>)."
+      responses:
+        "200":
+          description: Recorded decision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [operation_id, outcome]
+                    properties:
+                      operation_id: {type: string}
+                      outcome:
+                        type: string
+                        enum: [no_candidate_observed, adopted_exact_candidate, multiple_candidates_quarantined]
+                      operation_phase: {type: string}
+                      resource_count: {type: integer, minimum: 0}
+                      decision_digest: {type: string}
+                      created: {type: boolean, description: True when this call appended the decision.}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/substrates/{id}/appliances:
+    post:
+      operationId: createSubstrateAppliance
+      tags: [Servers]
+      summary: Admit a Home Assistant OS guest on the owner's own hypervisor
+      description: >-
+        Reserves a guest on a bound substrate (the owner's own Proxmox host, customer custody, local billing, nothing billed by kombify) and submits its creation; the guest is not yet assessed as running (`application_status` is `authenticated_check_pending`). Only the `haos` profile and a placement on this substrate are accepted. The substrate binding must be enabled and its Guard inventory current, and the stack must be owned by the caller. Replaying the same intent with the same Idempotency-Key returns the same guest; a changed intent or a different key for the same stack and node answers 409 `appliance_not_admitted`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Substrate server id.
+          schema: {type: string, minLength: 1, maxLength: 512}
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            Stable retry key, 1-256 characters, no commas, control characters or surrounding whitespace. Pass the same key on a retry; a fresh key for an unchanged request is a conflict.
+          schema: {type: string, minLength: 1, maxLength: 256}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stack_id, node_id, placement]
+              properties:
+                stack_id: {type: string, minLength: 1, maxLength: 512, description: Stack that owns the appliance; must belong to the caller.}
+                node_id: {type: string, minLength: 1, maxLength: 512, description: Node the appliance becomes in that stack; one appliance per stack node.}
+                placement:
+                  type: object
+                  required: [server_id, profile_id, storage, bridge, cpu, memory_mib, disk_gib]
+                  properties:
+                    server_id: {type: string, description: Must equal the substrate server id in the path.}
+                    profile_id: {type: string, enum: [haos]}
+                    storage: {type: string, description: "Active storage id on the substrate holding images, import content and vztmpl."}
+                    bridge: {type: string, description: Active LAN bridge name on the substrate.}
+                    cpu: {type: integer, minimum: 2, maximum: 256}
+                    memory_mib: {type: integer, minimum: 4096, maximum: 1048576}
+                    disk_gib: {type: integer, minimum: 32, maximum: 65536}
+                    isolated: {type: boolean}
+                    requires_accelerator: {type: boolean}
+                    accelerator:
+                      type: object
+                      required: [address]
+                      properties:
+                        address: {type: string}
+                        root_port: {type: string}
+                        subtree: {type: string}
+                        thunderbolt_unique_id: {type: string}
+      responses:
+        "202":
+          description: Guest admitted; creation is in progress
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [guest, application_status]
+                    properties:
+                      guest:
+                        type: object
+                        required: [lease_id, server_id, operation_id, guest_id, profile_id]
+                        properties:
+                          lease_id: {type: string}
+                          server_id: {type: string}
+                          operation_id: {type: string}
+                          guest_id: {type: integer}
+                          profile_id: {type: string}
+                      application_status: {type: string, enum: [authenticated_check_pending]}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/substrates/{id}/binding:
+    put:
+      operationId: setSubstrateBinding
+      tags: [Servers]
+      summary: Enable or disable guest placement on one substrate
+      description: >-
+        Binds the substrate to the Guard's current authenticated inventory (node, guest-id range, image pins) and turns guest placement on or off. Optimistic concurrency: `revision` must equal the current binding revision (0 when none exists) and the answer carries the next one. Refused with 409 while the substrate has no current inventory, no node-local configuration, a revision mismatch, or non-decommissioned guests that still hold custody.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Substrate server id.
+          schema: {type: string, minLength: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled, revision]
+              properties:
+                enabled: {type: boolean}
+                revision: {type: integer, format: int64, minimum: 0, description: Current binding revision; 0 creates the binding.}
+      responses:
+        "200":
+          description: Binding updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [server_id, revision, enabled]
+                    properties:
+                      server_id: {type: string}
+                      revision: {type: integer, format: int64, minimum: 1}
+                      enabled: {type: boolean}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
 components:
   securitySchemes:
     bearerAuth:
@@ -7133,7 +10194,7 @@ components:
         ssid: {type: string, description: The connected WiFi network.}
         interface: {type: string}
         wireless: {type: boolean}
-        fingerprint: {type: string, description: Stable identity of the network (gateway, subnet and SSID).: ''}
+        fingerprint: {type: string, description: "Stable identity of the network (gateway, subnet and SSID)."}
     ServerNetwork:
       type: object
       required: [server_id, current, can_rebind, connection_state]
@@ -7587,7 +10648,7 @@ components:
         management_state: {type: string, enum: [managed, observed]}
         kit_deployment_id: {type: string}
         stack_name: {type: string}
-        server_id: {type: string, description: Canonical server id, or empty when placement is unknown.: ''}
+        server_id: {type: string, description: "Canonical server id, or empty when placement is unknown."}
         server_name: {type: string}
         environment_class: {type: string}
         port: {type: integer}

@@ -14,6 +14,9 @@ type Route struct {
 	path        string
 	handler     HandlerFunc
 	middlewares []MiddlewareFunc
+	// global is how many leading middlewares came from the router's root
+	// group (the process-wide chain bound with Router.BindFunc).
+	global int
 }
 
 // BindFunc attaches route-scoped middleware and returns the Route for chaining.
@@ -36,6 +39,18 @@ type RouterGroup struct {
 	prefix      string
 	middlewares []MiddlewareFunc
 	router      *Router
+	// global is how many leading middlewares this nested group copied from
+	// the root group; the root group counts all of its own.
+	global int
+}
+
+// globalCount is the number of leading middlewares in this group's stack that
+// belong to the router's root group.
+func (g *RouterGroup) globalCount() int {
+	if g.router != nil && g == g.router.RouterGroup {
+		return len(g.middlewares)
+	}
+	return g.global
 }
 
 // Group creates a nested sub-group with the given prefix appended to the
@@ -45,6 +60,7 @@ func (g *RouterGroup) Group(prefix string) *RouterGroup {
 		prefix:      joinPath(g.prefix, prefix),
 		middlewares: append([]MiddlewareFunc(nil), g.middlewares...),
 		router:      g.router,
+		global:      g.globalCount(),
 	}
 	return child
 }
@@ -64,6 +80,7 @@ func (g *RouterGroup) Route(method, path string, handler HandlerFunc) *Route {
 		path:        joinPath(g.prefix, path),
 		handler:     handler,
 		middlewares: append([]MiddlewareFunc(nil), g.middlewares...),
+		global:      g.globalCount(),
 	}
 	g.router.routes = append(g.router.routes, rt)
 	return rt
@@ -268,7 +285,8 @@ func ensureLeadingSlash(p string) string {
 // together with the registered path pattern. Wildcard segments match by
 // position, so "/stacks/{stackId}" finds a route registered as "/stacks/{id}".
 // The handler is the bare leaf: none of the router or group middleware runs.
-// Callers that invoke it must already hold a verified request context.
+// Callers that invoke it must already hold a verified request context: the
+// process-wide chain bound on the root group ran on that caller's own request.
 func (r *Router) LeafHandler(method, template string) (HandlerFunc, string, bool) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	want := pathShape(template)
@@ -276,8 +294,9 @@ func (r *Router) LeafHandler(method, template string) (HandlerFunc, string, bool
 		if rt.method == method && pathShape(rt.path) == want {
 			// Route- or group-bound middleware may carry authorization that a
 			// bare handler call would skip, so such routes are never exposed
-			// as leaf handlers (fail closed).
-			if len(rt.middlewares) > 0 {
+			// as leaf handlers (fail closed). The root group's chain every
+			// route inherits is not one of them.
+			if len(rt.middlewares) > rt.global {
 				return nil, "", false
 			}
 			return rt.handler, rt.path, true

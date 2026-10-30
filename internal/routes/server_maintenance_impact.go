@@ -37,10 +37,12 @@ func (h serverRuntimeHandlers) maintenanceImpact(e *httpx.Event) error {
 	return httpx.Success(e, http.StatusOK, impact)
 }
 
+// ownedMaintenanceServer writes every refusal itself and then returns a
+// non-nil error, so a caller that stops on the error never reads a nil server.
 func (h serverRuntimeHandlers) ownedMaintenanceServer(e *httpx.Event) (*controlplane.ServerRuntime, string, error) {
 	ownerID, _, ok := authenticatedUser(e)
 	if !ok {
-		return nil, "", httpx.Unauthorized(e, "Authentication required")
+		return nil, "", httpx.RejectUnauthorized(e, "Authentication required")
 	}
 	tenantID, err := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, ServerMaintenanceEntitlement)
 	if err != nil {
@@ -51,14 +53,14 @@ func (h serverRuntimeHandlers) ownedMaintenanceServer(e *httpx.Event) (*controlp
 	}
 	serverID := strings.TrimSpace(e.Request.PathValue("serverId"))
 	if serverID == "" {
-		return nil, "", httpx.BadRequest(e, "Server ID is required", nil)
+		return nil, "", httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Server ID is required", nil)
 	}
 	server, err := h.store.GetServerRuntime(e.Request.Context(), tenantID, serverID)
 	if errors.Is(err, controlplane.ErrNotFound) || (err == nil && (server == nil || !serverRuntimeOwnedBy(*server, ownerID))) {
-		return nil, "", httpx.NotFound(e, "Server not found")
+		return nil, "", httpx.Reject(e, http.StatusNotFound, ksapi.ErrCodeNotFound, "Server not found", nil)
 	}
 	if err != nil {
-		return nil, "", httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
+		return nil, "", httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
 	return server, ownerID, nil
 }
@@ -82,12 +84,11 @@ func (h serverRuntimeHandlers) cancelMaintenanceJob(e *httpx.Event) error {
 	if err != nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server maintenance is unavailable", nil)
 	}
-	if maintenanceOriginMarkedWithoutVerification(ctx, e.Request.Header) {
-		return writeServerMaintenanceOriginDenial(e, errors.New("maintenance origin verification required"))
-	}
-	if err := checkMaintenanceOriginCurrent(ctx, h.maintenance.originAuthority, ownerID, server.TenantID, server.ID, job.Action); err != nil {
-		return writeServerMaintenanceOriginDenial(e, err)
-	}
+	// The authority to withdraw a queued job is the person who owns the server
+	// and requested the job, checked above with the entitlement; the person's
+	// agent acts with it. Cancelling only withdraws work that has not reached
+	// the server, so it needs no delegated maintenance origin, which guards
+	// running maintenance (run_server_maintenance_action) only.
 	if job.State == controlplane.ServerMaintenanceStateQueued {
 		job, err = h.maintenance.jobs.UpdateServerMaintenanceJob(ctx, server.TenantID, jobID, controlplane.ServerMaintenanceUpdate{
 			ExpectedState: controlplane.ServerMaintenanceStateQueued, State: controlplane.ServerMaintenanceStateCancelled,
