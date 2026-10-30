@@ -211,7 +211,7 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 		routes.RegisterFailureSignatureRoutes(router, store)
 		routes.RegisterFailureOutcomeRoutes(router, store)
 	}
-	routes.RegisterDiscoveryRoutes(router, routes.NewDiscoveryHandlerForLAN(!cfg.DeploymentMode.IsSaaS()))
+	routes.RegisterDiscoveryRoutes(router, routes.NewDiscoveryHandlerForLAN(!cfg.DeploymentMode.IsSaaS()).WithWallet(walletSecretReferences(deps)))
 	if deps.v2 != nil && deps.v2.db != nil {
 		routes.RegisterSubstrateRoutes(router, deps.v2.db.DB)
 		registerSubstrateAppliances(router, deps, managedLeases)
@@ -233,6 +233,7 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 		Jobs:                    stores.Jobs,
 		// Canonical serverregistry state backs Node placement in Registry Services.
 		Servers: serverRuntimeControlPlaneStore(deps.v2),
+		Wallet:  walletSecretReferences(deps),
 	})
 	if deps.wallet != nil {
 		routes.RegisterSystemAccountRefusal(router)
@@ -403,6 +404,13 @@ func controlPlanePostgresStore(boot *v2Boot) *controlplane.PostgresStore {
 		return controlplane.NewPostgresStore(boot.db.DB, controlplane.WithServerEventProjector(boot.serverEventProjector))
 	}
 	return controlplane.NewPostgresStore(boot.db.DB)
+}
+
+// walletSecretReferences resolves the Wallet item a request names in place of
+// a secret: the kombify Wallet when the deployment reads it, otherwise the
+// built-in wallet.
+func walletSecretReferences(deps routeDeps) routes.WalletSecretReferences {
+	return routes.WalletSecretReferences{Kombify: deps.wallet, Legacy: walletControlPlaneStore(deps.v2)}
 }
 
 func walletControlPlaneStore(boot *v2Boot) controlplane.WalletStore {
@@ -638,6 +646,7 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 	routes.RegisterDeviceReadinessRoutes(router, routes.DeviceReadinessRouteConfig{
 		LocalDeployment:  deps.startup.cfg.DeploymentMode != "saas",
 		ControlPlaneHost: publicOriginHost(),
+		Wallet:           walletSecretReferences(deps),
 		Entitled: func(ctx context.Context, ownerID, capability string) (bool, error) {
 			if deps.featureSvc == nil {
 				return false, fmt.Errorf("no entitlement source")
@@ -890,9 +899,12 @@ func registerRILRoutes(router *httpx.Router, deps routeDeps, inventoryPolicy rou
 }
 
 func registerNetworkRoutes(router *httpx.Router, deps routeDeps) {
-	routes.RegisterTunnelRoutes(router, deps.tunnel)
+	stores := stackControlPlaneStores(deps.v2)
+	routes.RegisterTunnelRoutes(router, deps.tunnel, trust.RouteStores{
+		Stacks: stores.Stacks, Workers: workerControlPlaneStore(deps.v2), Jobs: stores.Jobs,
+	})
 	routes.RegisterKombifyMeRoutes(router)
-	routes.RegisterAutoInstallRoutes(router, deps.log)
+	routes.RegisterAutoInstallRoutes(router, deps.log, deps.startup.cfg.Edition)
 }
 
 func initFeatureService(deps routeDeps) (*features.Service, error) {

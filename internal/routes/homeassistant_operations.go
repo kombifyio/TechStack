@@ -17,9 +17,9 @@ type HomeAssistantOperationRoutes struct {
 }
 
 func RegisterHomeAssistantOperationRoutes(r *httpx.Router, c HomeAssistantOperationRoutes) {
-	for _, action := range []string{"backup", "restore", "update"} {
-		r.POST("/api/v1/home-assistant/instances/{binding}/"+action, c.execute(action))
-	}
+	r.POST("/api/v1/home-assistant/instances/{binding}/backup", c.execute("backup"))
+	r.POST("/api/v1/home-assistant/instances/{binding}/restore", c.execute("restore"))
+	r.POST("/api/v1/home-assistant/instances/{binding}/update", c.execute("update"))
 }
 
 func (c HomeAssistantOperationRoutes) execute(action string) httpx.HandlerFunc {

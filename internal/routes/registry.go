@@ -76,6 +76,8 @@ type RegistryRouteStores struct {
 	// instead of composing runtime state from `nodes` + `workers`.
 	Servers  controlplane.ServerRuntimeStore
 	Services controlplane.ServiceRuntimeStore
+	// Wallet resolves token_wallet_item_id on the Home Assistant import.
+	Wallet WalletSecretReferences
 }
 
 func RegisterRegistryRoutesWithStores(r *httpx.Router, stores RegistryRouteStores) {
@@ -92,6 +94,7 @@ func RegisterRegistryRoutesWithStores(r *httpx.Router, stores RegistryRouteStore
 			updates: appcatalog.NewUpdateChecker(), stackKitRelease: pinnedStackKitRelease(),
 		},
 		allowLocalHomeAssistant: stores.AllowLocalHomeAssistant,
+		wallet:                  stores.Wallet,
 	}
 	r.GET("/api/v1/registry/services", h.services)
 	r.POST("/api/v1/registry/services/import", h.importUnmanagedService)
@@ -103,6 +106,7 @@ func RegisterRegistryRoutesWithStores(r *httpx.Router, stores RegistryRouteStore
 
 type registryRouteHandlers struct {
 	allowLocalHomeAssistant bool
+	wallet                  WalletSecretReferences
 	stackStore              controlplane.StackStore
 	workerStore             controlplane.WorkerStore
 	registryStore           controlplane.RegistryStore

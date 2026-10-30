@@ -391,6 +391,10 @@ func (h crudRouteHandlers) writeManagedCreateAdmissionError(e *httpx.Event, stac
 	default:
 		details["reason_code"] = "native_admission_outcome_unconfirmed"
 		details["retryable"] = true
+		// The response stays generic; the operator log names the cause, which
+		// was otherwise lost for both the local and the remote execution custody.
+		logger.Default().Warn("managed_create_admission_unclassified", "phase", phase, "stack_id", stackID,
+			"provider", request.Provider, "error", err)
 	}
 	return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Managed server admission was not accepted", details)
 }

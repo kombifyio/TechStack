@@ -7,9 +7,17 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"io"
 	"net/http"
+	"strings"
 )
 
-func RegisterHomeAssistantEnrollmentRoutes(r *httpx.Router, store *homeassistant.EnrollmentStore) {
+// homeAssistantAttachRequest is the attachment body: the attachment itself
+// and, in place of its token, the Wallet item that holds the token.
+type homeAssistantAttachRequest struct {
+	homeassistant.AttachOwner
+	TokenWalletItemID string `json:"token_wallet_item_id,omitempty"`
+}
+
+func RegisterHomeAssistantEnrollmentRoutes(r *httpx.Router, store *homeassistant.EnrollmentStore, wallet WalletSecretReferences) {
 	r.GET("/api/v1/home-assistant/owners", func(e *httpx.Event) error {
 		owner, err := requireAuth(e)
 		if err != nil {
@@ -40,15 +48,25 @@ func RegisterHomeAssistantEnrollmentRoutes(r *httpx.Router, store *homeassistant
 		if store == nil {
 			return httpx.NewAPIError(503, "unavailable", "Local owner enrollment is unavailable", nil)
 		}
-		var req homeassistant.AttachOwner
+		var body homeAssistantAttachRequest
 		decoder := json.NewDecoder(http.MaxBytesReader(e.Response, e.Request.Body, 16384))
 		decoder.DisallowUnknownFields()
-		if err = decoder.Decode(&req); err != nil {
+		if err = decoder.Decode(&body); err != nil {
 			return httpx.BadRequest(e, "Invalid owner attachment", nil)
 		}
 		var trailing any
 		if !errors.Is(decoder.Decode(&trailing), io.EOF) {
 			return httpx.BadRequest(e, "Invalid owner attachment", nil)
+		}
+		req := body.AttachOwner
+		if strings.TrimSpace(body.TokenWalletItemID) != "" {
+			if req.Token != "" {
+				return httpx.BadRequest(e, "Name a Wallet item or a token, not both", nil)
+			}
+			if req.Token, err = wallet.Token(e.Request.Context(), tenant, owner, body.TokenWalletItemID, req.URL); err != nil {
+				return writeWalletReferenceDenial(e, err)
+			}
+			defer func() { req.Token = "" }()
 		}
 		if err = store.Attach(e.Request.Context(), tenant, owner, req); err != nil {
 			return httpx.NewAPIError(409, "attachment_rejected", "An owned pending enrollment, current runtime and authenticated native instance are required", nil)

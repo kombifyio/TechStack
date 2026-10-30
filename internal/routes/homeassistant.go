@@ -25,10 +25,13 @@ func (h registryRouteHandlers) importHomeAssistant(e *httpx.Event) error {
 		return err
 	}
 	var req struct {
-		StackID            string `json:"stack_id"`
-		ServerID           string `json:"server_id"`
-		URL                string `json:"url"`
-		Token              string `json:"token"`
+		StackID  string `json:"stack_id"`
+		ServerID string `json:"server_id"`
+		URL      string `json:"url"`
+		Token    string `json:"token"`
+		// TokenWalletItemID names the Wallet item holding the token, in place
+		// of Token.
+		TokenWalletItemID  string `json:"token_wallet_item_id"`
 		InstallationMethod string `json:"installation_method"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(e.Response, e.Request.Body, 16384))
@@ -56,6 +59,15 @@ func (h registryRouteHandlers) importHomeAssistant(e *httpx.Event) error {
 	}
 	if !h.allowLocalHomeAssistant {
 		return httpx.Error(e, http.StatusServiceUnavailable, "lan_executor_unavailable", "Home Assistant requires an authorized local executor", nil)
+	}
+	if strings.TrimSpace(req.TokenWalletItemID) != "" {
+		if req.Token != "" {
+			return httpx.BadRequest(e, "Name a Wallet item or a token, not both", nil)
+		}
+		if req.Token, err = h.wallet.Token(ctx, tenant, owner, req.TokenWalletItemID, req.URL); err != nil {
+			return writeWalletReferenceDenial(e, err)
+		}
+		defer func() { req.Token = "" }()
 	}
 	client, err := homeassistant.NewLocalClient(ctx, req.URL, req.Token)
 	if err != nil {

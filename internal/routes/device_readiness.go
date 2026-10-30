@@ -37,6 +37,9 @@ type DeviceReadinessRouteConfig struct {
 	// ControlPlaneHost is the origin a probed device is asked to reach, so the
 	// report says whether the device could actually enroll.
 	ControlPlaneHost string
+	// Wallet resolves connection.wallet_item_id, the reference a caller sends
+	// in place of a key or password.
+	Wallet WalletSecretReferences
 }
 
 // Capabilities gated here. Both are cost-free but neither is harmless: one runs
@@ -71,6 +74,9 @@ type deviceConnection struct {
 	PrivateKey string `json:"private_key,omitempty"`
 	Passphrase string `json:"passphrase,omitempty"`
 	Password   string `json:"password,omitempty"`
+	// WalletItemID names the Wallet item holding the login, in place of
+	// PrivateKey, Passphrase and Password.
+	WalletItemID string `json:"wallet_item_id,omitempty"`
 	// HostKeyFingerprint pins the key the machine must present. The first
 	// request may omit it, and the response then carries what was seen so the
 	// operator can confirm it and pin it on the next one.
@@ -109,14 +115,13 @@ func (h deviceReadinessHandlers) probe(e *httpx.Event) error {
 	if !ok {
 		return nil
 	}
-	_ = ownerID
 
 	var body deviceProbeRequest
 	if err := decodeExactJSON(e, &body); err != nil {
 		return err
 	}
 
-	session, fingerprint, err := h.connect(e, body.Connection)
+	session, fingerprint, err := h.connect(e, ownerID, body.Connection)
 	if err != nil {
 		return h.connectionFailure(e, err)
 	}
@@ -137,7 +142,6 @@ func (h deviceReadinessHandlers) prepare(e *httpx.Event) error {
 	if !ok {
 		return nil
 	}
-	_ = ownerID
 
 	var body devicePrepareRequest
 	if err := decodeExactJSON(e, &body); err != nil {
@@ -152,7 +156,7 @@ func (h deviceReadinessHandlers) prepare(e *httpx.Event) error {
 		}
 	}
 
-	session, fingerprint, err := h.connect(e, body.Connection)
+	session, fingerprint, err := h.connect(e, ownerID, body.Connection)
 	if err != nil {
 		return h.connectionFailure(e, err)
 	}
@@ -252,9 +256,24 @@ func (h deviceReadinessHandlers) probeEnvironment() devicereadiness.ProbeEnviron
 
 // connect opens the session and hands back a way to read the key the device
 // presented, so the caller can pin it next time.
-func (h deviceReadinessHandlers) connect(e *httpx.Event, conn deviceConnection) (*devicereadiness.Session, func() string, error) {
+func (h deviceReadinessHandlers) connect(e *httpx.Event, ownerID string, conn deviceConnection) (*devicereadiness.Session, func() string, error) {
 	if strings.TrimSpace(conn.Host) == "" || strings.TrimSpace(conn.User) == "" {
 		return nil, nil, errors.New("the device address and user are required")
+	}
+	if strings.TrimSpace(conn.WalletItemID) != "" {
+		if conn.PrivateKey != "" || conn.Passphrase != "" || conn.Password != "" {
+			return nil, nil, errors.New("name a Wallet item or a credential, not both")
+		}
+		tenantID, err := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, CapabilityDevicePrepare)
+		if err != nil {
+			return nil, nil, err
+		}
+		credential, err := h.cfg.Wallet.SSH(e.Request.Context(), tenantID, ownerID, conn.WalletItemID, conn.Host)
+		if err != nil {
+			return nil, nil, &deviceWalletDenial{cause: err}
+		}
+		defer credential.Wipe()
+		conn.PrivateKey, conn.Password = credential.PrivateKey, credential.Password
 	}
 	auth := devicereadiness.Auth{
 		PrivateKeyPEM: []byte(conn.PrivateKey),
@@ -293,7 +312,17 @@ func (h deviceReadinessHandlers) connect(e *httpx.Event, conn deviceConnection) 
 	}, nil
 }
 
+// deviceWalletDenial is a refused Wallet reference, answered as the Wallet's
+// own denial rather than as an unreachable device.
+type deviceWalletDenial struct{ cause error }
+
+func (d *deviceWalletDenial) Error() string { return d.cause.Error() }
+
 func (h deviceReadinessHandlers) connectionFailure(e *httpx.Event, err error) error {
+	var denial *deviceWalletDenial
+	if errors.As(err, &denial) {
+		return writeWalletReferenceDenial(e, denial.cause)
+	}
 	return httpx.Error(e, http.StatusBadGateway, ksapi.ErrCodeUnavailable,
 		"The device could not be reached: "+err.Error(), map[string]any{
 			"reason_code":   "device_unreachable",

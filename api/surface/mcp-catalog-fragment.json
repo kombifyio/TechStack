@@ -4,9 +4,134 @@
   "source": {
     "product": "techstack",
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "ab30fd283db3783fffa5149d9110fd34a16e69d6a9cf82c8cf32c9e34de0aced"
+    "sha256": "b4ecf1c027bdea5404ef14342228702eee37ba38e16cf73316eb2a5ae96f7501"
   },
   "tools": [
+    {
+      "toolId": "techstack.abandon_stale_stack_job",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "abandon_stale_stack_job",
+      "alias": "techstack.abandon_stale_stack_job",
+      "title": "Abandon stale rollout",
+      "description": "Releases the execution claim of one stale rollout job of an owned stack so that the stack can be retried with `retry-rollout`. Only a job that stopped reporting can be abandoned; any other job answers 409 `abandon_job_conflict` with the guard that refused. The body is empty and no command is sent to a server.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "job_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/abandon_stale_stack_job",
+      "auditEvent": "mcp.customer.techstack.inventory.abandon_stale_stack_job",
+      "operationIds": [
+        "techstack.abandonStaleStackJob"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.abort_workload_relocation",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "abort_workload_relocation",
+      "alias": "techstack.abort_workload_relocation",
+      "title": "Abort workload relocation",
+      "description": "Stops a relocation that has not finished and resumes the workloads on the source server, whose data was kept. The body must carry `owner_approved: true`. A relocation that already moved cannot be aborted (409), and an abort stays fenced until the nodes verify the state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "owner_approved": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "job_id",
+          "owner_approved"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/abort_workload_relocation",
+      "auditEvent": "mcp.customer.techstack.inventory.abort_workload_relocation",
+      "operationIds": [
+        "techstack.abortWorkloadRelocation"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
     {
       "toolId": "techstack.add_managed_runtime_server",
       "connectorFamily": "techstack",
@@ -162,6 +287,88 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.apply_onboarding_action",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "apply_onboarding_action",
+      "alias": "techstack.apply_onboarding_action",
+      "title": "Apply onboarding action",
+      "description": "Applies one closed action (complete, skip, dismiss, resume or coach_seen) to the authenticated owner's progress in a journey and answers the resolved journey, state, step availability and revision. Steps that spend money complete only from server facts: a reported completion of such a step is refused with 403 `onboarding_derived_only`. A repeated action is a no-op, and a stale `If-Match` revision answers 412.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "complete",
+              "skip",
+              "dismiss",
+              "resume",
+              "coach_seen"
+            ],
+            "type": "string"
+          },
+          "if_match": {
+            "description": "Optional compare-and-swap revision read from the journey state, for example `\"3\"`.",
+            "type": "string"
+          },
+          "journey_id": {
+            "description": "Journey id, for example `techstack.platform`.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "source": {
+            "description": "Who asserts the completion; empty means reported for complete and manual for skip.",
+            "enum": [
+              "reported",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "step_id": {
+            "description": "Required for complete, skip and coach_seen, for example `techstack.add_server`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "journey_id",
+          "action"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/apply_onboarding_action",
+      "auditEvent": "mcp.customer.techstack.inventory.apply_onboarding_action",
+      "operationIds": [
+        "techstack.applyOnboardingAction"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.approve_worker",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -274,6 +481,242 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.assign_worker_to_stack",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "assign_worker_to_stack",
+      "alias": "techstack.assign_worker_to_stack",
+      "title": "Assign server to stack",
+      "description": "Binds one approved, connected worker of the owner to one owned stack through the canonical server runtime. A worker that is not approved yet, or that already belongs to another stack, answers 409; assigning it to the stack it already belongs to is a no-op. The body is empty.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          },
+          "worker_id": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "worker_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/assign_worker_to_stack",
+      "auditEvent": "mcp.customer.techstack.inventory.assign_worker_to_stack",
+      "operationIds": [
+        "techstack.assignWorkerToStack"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.attach_home_assistant_owner",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "attach_home_assistant_owner",
+      "alias": "techstack.attach_home_assistant_owner",
+      "title": "Attach Home Assistant to its owner",
+      "description": "Binds the instance's endpoint and the long-lived access token held in the Wallet item `token_wallet_item_id` (a kombify Wallet item assigned to Techstack, or a built-in wallet API key or OAuth token item whose URL names this instance; resolved inside Techstack, never answered; this contract accepts no token) to a pending owner enrollment of an owned stack, with the lifecycle grants and baseline settings the owner chooses. The token is stored encrypted and an existing attachment is never overwritten (409 `attachment_rejected`). Self-hosted installs only (503 otherwise).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_ref": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "configure_granted": {
+            "type": "boolean"
+          },
+          "dependency_assessment_ref": {
+            "type": "string"
+          },
+          "lease_id": {
+            "description": "Managed guest lease; required for a new instance.",
+            "type": "string"
+          },
+          "lifecycle_grants": {
+            "properties": {
+              "Backup": {
+                "type": "boolean"
+              },
+              "Restore": {
+                "type": "boolean"
+              },
+              "Update": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "recovery_backup_operation_id": {
+            "type": "string"
+          },
+          "recovery_binding_ref": {
+            "type": "string"
+          },
+          "settings": {
+            "properties": {
+              "external_url": {
+                "type": "string"
+              },
+              "internal_url": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "time_zone": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "stack_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "token_wallet_item_id": {
+            "description": "Wallet item holding the Home Assistant long-lived access token.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_ref",
+          "stack_id",
+          "token_wallet_item_id",
+          "url"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/attach_home_assistant_owner",
+      "auditEvent": "mcp.customer.techstack.inventory.attach_home_assistant_owner",
+      "operationIds": [
+        "techstack.attachHomeAssistantOwner"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.backup_home_assistant",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "backup_home_assistant",
+      "alias": "techstack.backup_home_assistant",
+      "title": "Back up Home Assistant",
+      "description": "Runs a native full backup through the instance binding, stores it encrypted off the instance and retains the recovery key in custody. Requires an owned instance binding with the backup grant. `operation_id` is a stable identity: repeating it returns the retained result instead of a second backup. A pending operation answers 202.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_ref": {
+            "description": "Instance binding reference",
+            "type": "string"
+          },
+          "operation_id": {
+            "description": "Stable operation identity.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_ref",
+          "operation_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/backup_home_assistant",
+      "auditEvent": "mcp.customer.techstack.inventory.backup_home_assistant",
+      "operationIds": [
+        "techstack.backupHomeAssistantInstance"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.cancel_scan",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -326,6 +769,65 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.cancel_server_maintenance_job",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "cancel_server_maintenance_job",
+      "alias": "techstack.cancel_server_maintenance_job",
+      "title": "Cancel a queued maintenance job",
+      "description": "Uses the same tenant, entitlement, server and requesting-owner scope as the job read: the authority to withdraw a queued job is the person who owns the server and requested the job, and the person's agent acts with it. No delegated maintenance origin is needed, since cancelling only withdraws work that has not reached the server. Cancellation and execution claim use the same queued-state compare-and-set. Repeating a successful cancellation returns its receipt; a claimed or finished job returns maintenance_not_cancellable. Cancelling never claims to stop a command that has already reached the server.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "job_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/cancel_server_maintenance_job",
+      "auditEvent": "mcp.customer.techstack.inventory.cancel_server_maintenance_job",
+      "operationIds": [
+        "techstack.cancelServerMaintenanceJob"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.check_drift",
@@ -430,6 +932,450 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.configure_use_case",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "configure_use_case",
+      "alias": "techstack.configure_use_case",
+      "title": "Configure use case",
+      "description": "Authors a native configuration change for one installed catalog workload (compute, storage and accelerator profiles, public settings, secret references) against the baseline named by `expected_spec_hash`, saves the candidate and queues the StackKit lifecycle jobs that apply it. The `Idempotency-Key` makes a retry replay the original acceptance. Refused with 409 while the stack is busy, a service is locked, a server is in maintenance, or the baseline changed.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "accelerator_profile": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "compute_profile": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "expected_spec_hash": {
+            "description": "Native baseline hash read from the use-case configuration view.",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "secret_refs": {
+            "additionalProperties": {
+              "maxLength": 512,
+              "pattern": "^secret://",
+              "type": "string"
+            },
+            "description": "Existing secret references by catalog key. Values are `secret://` references, never secret material.",
+            "maxProperties": 64,
+            "type": "object"
+          },
+          "settings": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "description": "Public catalog settings by key; each value is a string, boolean or number.",
+            "maxProperties": 64,
+            "type": "object"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          },
+          "storage_profile": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "workload": {
+            "description": "Installed catalog workload slug.",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "workload",
+          "expected_spec_hash"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/configure_use_case",
+      "auditEvent": "mcp.customer.techstack.inventory.configure_use_case",
+      "operationIds": [
+        "techstack.configureUseCase"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.confirm_home_assistant_cutover",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "confirm_home_assistant_cutover",
+      "alias": "techstack.confirm_home_assistant_cutover",
+      "title": "Confirm Home Assistant cutover",
+      "description": "Delivers the explicit cutover confirmation to a migration run that is waiting for it. The run then stops the source, moves the exclusive attachments to the target and starts it; the original and its archive are retained and the migration can be returned with the rollback call. Answers 400 when the run is not awaiting confirmation and 404 for a run the caller does not own.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "description": "Must be true.",
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "migration_id": {
+            "description": "Migration run id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "migration_id",
+          "confirmed"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/confirm_home_assistant_cutover",
+      "auditEvent": "mcp.customer.techstack.inventory.confirm_home_assistant_cutover",
+      "operationIds": [
+        "techstack.confirmHomeAssistantMigration"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.create_action_card",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "create_action_card",
+      "alias": "techstack.create_action_card",
+      "title": "Create action card",
+      "description": "Stores a card that describes one approved-action primitive, its target and its evidence sink for the authenticated owner. The card starts as `awaiting_grant` (no `grant` given) or `awaiting_approval` and runs nothing until it is approved and executed. The body is decoded strictly and must stay under 64 KiB.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "additionalProperties": false,
+            "properties": {
+              "connector_binding": {
+                "additionalProperties": false,
+                "properties": {
+                  "binding_hash": {
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "binding_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "binding_id",
+                  "binding_hash"
+                ],
+                "type": "object"
+              },
+              "evidence_sink_ref": {
+                "type": "string"
+              },
+              "grant": {
+                "additionalProperties": false,
+                "description": "Delegated grant binding the card runs under. Without it the card waits for a grant.",
+                "properties": {
+                  "audience": {
+                    "type": "string"
+                  },
+                  "binding_hash": {
+                    "type": "string"
+                  },
+                  "binding_ref": {
+                    "type": "string"
+                  },
+                  "granted_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 16,
+                    "type": "array"
+                  },
+                  "valid_until": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "inputs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "boolean": {
+                      "type": "boolean"
+                    },
+                    "enum": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "integer": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "opaque_ref": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "enum": [
+                        "opaque-reference",
+                        "boolean",
+                        "integer",
+                        "string-enum"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              "primitive": {
+                "additionalProperties": false,
+                "properties": {
+                  "contract_hash": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "operation_class": {
+                    "description": "For example product-apply, product-upgrade, product-rollback, mutation or drift-correction.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "contract_hash",
+                  "operation_class"
+                ],
+                "type": "object"
+              },
+              "resolved_plan_hash": {
+                "type": "string"
+              },
+              "stack_id": {
+                "type": "string"
+              },
+              "target": {
+                "additionalProperties": false,
+                "properties": {
+                  "execution_channel_ref": {
+                    "type": "string"
+                  },
+                  "module_instance_ref": {
+                    "type": "string"
+                  },
+                  "node_ref": {
+                    "type": "string"
+                  },
+                  "runtime_instance_ref": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "enum": [
+                      "stack",
+                      "module-instance",
+                      "runtime-instance"
+                    ],
+                    "type": "string"
+                  },
+                  "site_ref": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "scope"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "stack_id",
+              "primitive",
+              "resolved_plan_hash",
+              "target",
+              "evidence_sink_ref"
+            ],
+            "type": "object"
+          },
+          "id": {
+            "description": "Optional card id; generated when omitted.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "severity": {
+            "default": "info",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "server_id",
+          "title"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/create_action_card",
+      "auditEvent": "mcp.customer.techstack.inventory.create_action_card",
+      "operationIds": [
+        "techstack.createRILActionCard"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.create_install_command",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "create_install_command",
+      "alias": "techstack.create_install_command",
+      "title": "Create a server install command",
+      "description": "Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/create_install_command",
+      "auditEvent": "mcp.customer.techstack.inventory.create_install_command",
+      "operationIds": [
+        "techstack.createInstallCommand"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.create_pairing_token",
@@ -603,6 +1549,755 @@
       "auditEvent": "mcp.customer.techstack.inventory.create_stack",
       "operationIds": [
         "techstack.createStack"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "cost_bearing",
+      "quotaKey": "mcp.usage.techstack.inventory.provision",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.provision",
+      "requiredCapabilities": [
+        "techstack.inventory.provision"
+      ],
+      "costBearing": true,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.create_substrate_appliance",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "create_substrate_appliance",
+      "alias": "techstack.create_substrate_appliance",
+      "title": "Create a Home Assistant appliance on a substrate",
+      "description": "Reserves a guest on a bound substrate (the owner's own Proxmox host, customer custody, local billing, nothing billed by kombify) and submits its creation; the guest is not yet assessed as running (`application_status` is `authenticated_check_pending`). Only the `haos` profile and a placement on this substrate are accepted. The substrate binding must be enabled and its Guard inventory current, and the stack must be owned by the caller. Replaying the same intent with the same Idempotency-Key returns the same guest; a changed intent or a different key for the same stack and node answers 409 `appliance_not_admitted`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "node_id": {
+            "description": "Node the appliance becomes in that stack; one appliance per stack node.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "placement": {
+            "properties": {
+              "accelerator": {
+                "properties": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "root_port": {
+                    "type": "string"
+                  },
+                  "subtree": {
+                    "type": "string"
+                  },
+                  "thunderbolt_unique_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "address"
+                ],
+                "type": "object"
+              },
+              "bridge": {
+                "description": "Active LAN bridge name on the substrate.",
+                "type": "string"
+              },
+              "cpu": {
+                "maximum": 256,
+                "minimum": 2,
+                "type": "integer"
+              },
+              "disk_gib": {
+                "maximum": 65536,
+                "minimum": 32,
+                "type": "integer"
+              },
+              "isolated": {
+                "type": "boolean"
+              },
+              "memory_mib": {
+                "maximum": 1048576,
+                "minimum": 4096,
+                "type": "integer"
+              },
+              "profile_id": {
+                "enum": [
+                  "haos"
+                ],
+                "type": "string"
+              },
+              "requires_accelerator": {
+                "type": "boolean"
+              },
+              "server_id": {
+                "description": "Must equal the substrate server id in the path.",
+                "type": "string"
+              },
+              "storage": {
+                "description": "Active storage id on the substrate holding images, import content and vztmpl.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "server_id",
+              "profile_id",
+              "storage",
+              "bridge",
+              "cpu",
+              "memory_mib",
+              "disk_gib"
+            ],
+            "type": "object"
+          },
+          "server_id": {
+            "description": "Substrate server id.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack that owns the appliance; must belong to the caller.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "node_id",
+          "placement",
+          "stack_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/create_substrate_appliance",
+      "auditEvent": "mcp.customer.techstack.inventory.create_substrate_appliance",
+      "operationIds": [
+        "techstack.createSubstrateAppliance"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "resourceBinding": {
+        "argument": "server_id",
+        "dimension": "techstack.server"
+      },
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.create_wallet_item",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "create_wallet_item",
+      "alias": "techstack.create_wallet_item",
+      "title": "Add wallet item",
+      "description": "Creates a wallet item owned by the caller in the resolved tenant and returns it redacted. The server assigns the id. `secret` and `totp` values are entered by the person in the Wallet and are not part of this contract; an item created here has no secret until the person adds one, and a secret can never be read back through this API without the person's fresh re-authentication. Only deployments that keep credentials in Techstack's own Wallet serve this route; elsewhere it answers 409 `self_hosted_only`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "access_mode": {
+            "enum": [
+              "open",
+              "reveal",
+              "manage"
+            ],
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "item_class": {
+            "enum": [
+              "launch",
+              "user_account",
+              "credential",
+              "recovery",
+              "machine_secret_ref",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "kind": {
+            "description": "Defaults to `other`. Cannot be changed later.",
+            "enum": [
+              "password",
+              "api_key",
+              "ssh_key",
+              "oauth_token",
+              "certificate",
+              "other"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "notes": {
+            "description": "Free text; never put credentials here.",
+            "type": "string"
+          },
+          "service_id": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": "string"
+          },
+          "source_type": {
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack (kit deployment) the item belongs to.",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/create_wallet_item",
+      "auditEvent": "mcp.customer.techstack.inventory.create_wallet_item",
+      "operationIds": [
+        "techstack.createWalletItem"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.create_wizard_run",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "create_wizard_run",
+      "alias": "techstack.create_wizard_run",
+      "title": "Run creation wizard",
+      "description": "Persists one wizard run for the authenticated owner. A found run creates the deployment and its first server, a join run adds a Node and an extend run adds use cases; the first run in a Homelab founds it and later first-run requests are coerced to expansions. The kombify-cloud transport orders a billed managed server, the hypervisor transport creates a guest on the owner's hypervisor and connect-remote enrolls over SSH. Join, extend, managed and hypervisor runs require `X-Idempotency-Key`; a replay with the same key and request returns the original outcome. Requires the `native_v2_wizard` feature for the caller.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "intent": {
+            "additionalProperties": false,
+            "description": "Closed wizard intent (techstack.wizard-intent/v1). The backend projects it onto the pinned StackKits kit seed; owner identity never travels here.",
+            "properties": {
+              "access": {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "enum": [
+                      "local",
+                      "remote-private"
+                    ],
+                    "type": "string"
+                  },
+                  "publications": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exposure": {
+                          "const": "public",
+                          "type": "string"
+                        },
+                        "service_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "service_id",
+                        "exposure"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "backup": {
+                "additionalProperties": false,
+                "properties": {
+                  "offsite": {
+                    "description": "Off-site object backup; available only when founding a cloud-kit deployment.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "domain_base": {
+                "type": "string"
+              },
+              "goals": {
+                "description": "Selected use-case slugs from the released StackKits catalog.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "homelab_id": {
+                "type": "string"
+              },
+              "household": {
+                "additionalProperties": false,
+                "properties": {
+                  "planned_people": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client_ref": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "maxLength": 320,
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "client_ref"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 50,
+                    "type": "array"
+                  },
+                  "profile": {
+                    "enum": [
+                      "solo",
+                      "shared"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "kit_assignment": {
+                "additionalProperties": false,
+                "properties": {
+                  "kit_deployment_id": {
+                    "type": "string"
+                  },
+                  "kit_slug": {
+                    "enum": [
+                      "basement-kit",
+                      "cloud-kit",
+                      "modern-homelab"
+                    ],
+                    "type": "string"
+                  },
+                  "mode": {
+                    "description": "found creates a deployment (kit_slug required); join adds a Node and extend adds use cases to kit_deployment_id.",
+                    "enum": [
+                      "found",
+                      "join",
+                      "extend"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "type": "object"
+              },
+              "layout_recommendation": {
+                "additionalProperties": false,
+                "description": "Accepts a shown layout recommendation (join and extend runs only).",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "proposal_digest": {
+                    "pattern": "^sha256:",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "proposal_digest"
+                ],
+                "type": "object"
+              },
+              "name": {
+                "description": "Display name of the StackKit deployment.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "run_kind": {
+                "enum": [
+                  "first-run",
+                  "expansion"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "const": "techstack.wizard-intent/v1",
+                "type": "string"
+              },
+              "server": {
+                "additionalProperties": false,
+                "properties": {
+                  "environment_class": {
+                    "enum": [
+                      "local",
+                      "cloud"
+                    ],
+                    "type": "string"
+                  },
+                  "existing_server_id": {
+                    "description": "Already enrolled, unassigned canonical server for the first installation (found runs, install-command transport only).",
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "roles": {
+                    "items": {
+                      "description": "controller, worker, storage or edge; the legacy names foundation, standalone, main and control-plane map to controller.",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "site_ref": {
+                    "type": "string"
+                  },
+                  "transport": {
+                    "description": "Provisioning lane; empty means install-command. kombify-cloud orders a billed managed server.",
+                    "enum": [
+                      "install-command",
+                      "connect-remote",
+                      "hypervisor",
+                      "kombify-cloud"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "use_case_capabilities": {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "description": "Capability option id (or \"off\") per capability id, per selected use-case slug.",
+                "type": "object"
+              },
+              "use_case_settings": {
+                "additionalProperties": {
+                  "type": "object"
+                },
+                "description": "Setting decisions per selected use-case slug, as the StackKits catalog declares them.",
+                "type": "object"
+              },
+              "use_case_setup_answers": {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "items": {
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "maxItems": 128,
+                    "type": "array"
+                  },
+                  "maxProperties": 128,
+                  "type": "object"
+                },
+                "maxProperties": 128,
+                "type": "object"
+              }
+            },
+            "required": [
+              "schema",
+              "run_kind",
+              "name",
+              "kit_assignment"
+            ],
+            "type": "object"
+          },
+          "managed": {
+            "additionalProperties": false,
+            "description": "Managed provider selection for the kombify-cloud transport.",
+            "properties": {
+              "ionos_datacenter": {
+                "type": "string"
+              },
+              "provider_id": {
+                "type": "string"
+              },
+              "provider_region": {
+                "type": "string"
+              },
+              "runtime_offering_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider_id"
+            ],
+            "type": "object"
+          },
+          "owner": {
+            "additionalProperties": false,
+            "description": "Owner bootstrap options for a first run; ignored on expansion runs.",
+            "properties": {
+              "owner_bootstrap_mode": {
+                "enum": [
+                  "auto",
+                  "custom",
+                  "none"
+                ],
+                "type": "string"
+              },
+              "owner_display_name": {
+                "type": "string"
+              },
+              "owner_email": {
+                "type": "string"
+              },
+              "owner_source": {
+                "enum": [
+                  "local",
+                  "cloud",
+                  "cloud-linked"
+                ],
+                "type": "string"
+              },
+              "owner_username": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "remote": {
+            "additionalProperties": false,
+            "description": "SSH target for the connect-remote transport. The credential is a Wallet node access item; this contract accepts no plaintext password.",
+            "properties": {
+              "auth_method": {
+                "enum": [
+                  "ssh-key",
+                  "password"
+                ],
+                "type": "string"
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "ssh_key_label": {
+                "description": "Label of a stored SSH key; only on deployments that read the built-in wallet.",
+                "type": "string"
+              },
+              "ssh_wallet_item_id": {
+                "pattern": "^itm_[a-z2-7]{26}$",
+                "type": "string"
+              },
+              "use_sudo": {
+                "type": "boolean"
+              },
+              "user": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "substrate": {
+            "additionalProperties": false,
+            "description": "Guest placement on the owner's connected hypervisor; required for, and only valid with, the hypervisor transport.",
+            "properties": {
+              "accelerator": {
+                "properties": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "root_port": {
+                    "type": "string"
+                  },
+                  "subtree": {
+                    "type": "string"
+                  },
+                  "thunderbolt_unique_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "address"
+                ],
+                "type": "object"
+              },
+              "appliance": {
+                "additionalProperties": false,
+                "properties": {
+                  "bridge": {
+                    "type": "string"
+                  },
+                  "cpu": {
+                    "type": "integer"
+                  },
+                  "disk_gib": {
+                    "type": "integer"
+                  },
+                  "memory_mib": {
+                    "type": "integer"
+                  },
+                  "profile_id": {
+                    "type": "string"
+                  },
+                  "storage": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "profile_id",
+                  "storage",
+                  "bridge",
+                  "cpu",
+                  "memory_mib",
+                  "disk_gib"
+                ],
+                "type": "object"
+              },
+              "bridge": {
+                "type": "string"
+              },
+              "cpu": {
+                "minimum": 2,
+                "type": "integer"
+              },
+              "disk_gib": {
+                "minimum": 32,
+                "type": "integer"
+              },
+              "memory_mib": {
+                "minimum": 2048,
+                "type": "integer"
+              },
+              "profile_id": {
+                "description": "Ubuntu guest profile id.",
+                "type": "string"
+              },
+              "server_id": {
+                "type": "string"
+              },
+              "storage": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "server_id",
+              "profile_id",
+              "storage",
+              "bridge",
+              "cpu",
+              "memory_mib",
+              "disk_gib"
+            ],
+            "type": "object"
+          },
+          "x_idempotency_key": {
+            "description": "Stable attempt key, at most 256 characters. The handler accepts a missing key only for found runs on the install-command or connect-remote transport.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "x_idempotency_key",
+          "intent"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.provision",
+      "entitlementKey": "techstack.inventory.provision",
+      "fgaObject": "tool:techstack/create_wizard_run",
+      "auditEvent": "mcp.customer.techstack.inventory.create_wizard_run",
+      "operationIds": [
+        "techstack.createWizardRun"
       ],
       "risk": "high",
       "approvalPolicy": "human",
@@ -799,6 +2494,114 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.delete_registry_service",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "delete_registry_service",
+      "alias": "techstack.delete_registry_service",
+      "title": "Delete archived service copy",
+      "description": "Removes the registry row of a service copy that a finished move left in the archived state. Any other status is refused with 409; no workload or server is touched. The canonical inventory store currently answers 503 `service_control_server_fence_unavailable`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/delete_registry_service",
+      "auditEvent": "mcp.customer.techstack.inventory.delete_registry_service",
+      "operationIds": [
+        "techstack.deleteRegistryService"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "destructive",
+      "quotaKey": "mcp.usage.techstack.inventory.operate",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.operate",
+      "requiredCapabilities": [
+        "techstack.inventory.operate"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.delete_wallet_item",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "delete_wallet_item",
+      "alias": "techstack.delete_wallet_item",
+      "title": "Delete wallet item",
+      "description": "Deletes an item the caller owns, including its encrypted secret and TOTP. An item owned by someone else answers 404. Only deployments that keep credentials in Techstack's own Wallet serve this route; elsewhere it answers 409 `self_hosted_only`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Resource ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/delete_wallet_item",
+      "auditEvent": "mcp.customer.techstack.inventory.delete_wallet_item",
+      "operationIds": [
+        "techstack.deleteWalletItem"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "destructive",
+      "quotaKey": "mcp.usage.techstack.inventory.operate",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.operate",
+      "requiredCapabilities": [
+        "techstack.inventory.operate"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.deploy_stack",
@@ -1098,6 +2901,176 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.discover_provider_provision",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "discover_provider_provision",
+      "alias": "techstack.discover_provider_provision",
+      "title": "Discover a parked provider provision",
+      "description": "First step of operator resolution for a provision whose outcome is unknown. Reads the provider (read-only) and appends the immutable discovery evidence; it never creates or retries anything at the provider. A replay re-verifies the same observation. The answer names the confirmation string the second step requires. Administrator-only: a non-administrator caller is refused with 403, and the operation must belong to the caller's tenant.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "operation_id": {
+            "description": "Provider operation id (non-empty, at most 256 characters, no whitespace or control characters).",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/discover_provider_provision",
+      "auditEvent": "mcp.customer.techstack.inventory.discover_provider_provision",
+      "operationIds": [
+        "techstack.discoverProviderProvision"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.dismiss_notification",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "dismiss_notification",
+      "alias": "techstack.dismiss_notification",
+      "title": "Dismiss notification",
+      "description": "Removes one item from the authenticated user's notification feed. Techstack signs the call to the notifications engine for the authenticated user, so only that user's own items can be dismissed; an unknown item answers 404. The engine's answer is passed through unchanged and is not wrapped in the `data` envelope.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "description": "Feed item ID",
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/dismiss_notification",
+      "auditEvent": "mcp.customer.techstack.inventory.dismiss_notification",
+      "operationIds": [
+        "techstack.dismissNotification"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.dismiss_wizard_run",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "dismiss_wizard_run",
+      "alias": "techstack.dismiss_wizard_run",
+      "title": "Dismiss wizard run notice",
+      "description": "Hides the dashboard notice of one of the authenticated owner's wizard runs on every device. The run's job is not touched; cancelling is a separate operation. An unknown or foreign run answers 404.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "description": "Wizard run id, as returned by the wizard run.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/dismiss_wizard_run",
+      "auditEvent": "mcp.customer.techstack.inventory.dismiss_wizard_run",
+      "operationIds": [
+        "techstack.dismissWizardRun"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.enable_monthly_runtime_ssh",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -1382,6 +3355,76 @@
       "capabilityBundle": "techstack.inventory.operate",
       "requiredCapabilities": [
         "techstack.inventory.operate"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.execute_action_card",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "execute_action_card",
+      "alias": "techstack.execute_action_card",
+      "title": "Execute action card",
+      "description": "Starts the durable workflow of a card that the owner approved and that holds a live grant, after checking that the caller may operate the card's server. `execution_id`, `trace_id` and `idempotency_key` bind one execution; repeating them returns the stored result. A card of operation class `drift-correction` also needs `compensation_card_id`, any other card must not send it. A missing approval or grant, an expired grant and a connector binding that does not match answer 403 or 409 with a stable `reason_code`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "compensation_card_id": {
+            "description": "Required for drift-correction cards; forbidden for others.",
+            "type": "string"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "execution_idempotency_key": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "execution_id",
+          "execution_idempotency_key",
+          "trace_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/execute_action_card",
+      "auditEvent": "mcp.customer.techstack.inventory.execute_action_card",
+      "operationIds": [
+        "techstack.executeRILActionCard"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
       ],
       "costBearing": false,
       "upstreamKind": "product-native",
@@ -2826,6 +4869,52 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.get_operator_self_disclosure",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_operator_self_disclosure",
+      "alias": "techstack.get_operator_self_disclosure",
+      "title": "Get operator self-disclosure",
+      "description": "Returns the signed-in operator's stored self-disclosure, its source and the capability profile the Unifier derives from it. An operator who never answered gets an empty `disclosure`. Pass the returned `source` and `disclosure` as `if_unchanged` to replace it safely.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_operator_self_disclosure",
+      "auditEvent": "mcp.customer.techstack.inventory.get_operator_self_disclosure",
+      "operationIds": [
+        "techstack.getOperatorSelfDisclosure"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.get_pipeline_status",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -4078,6 +6167,167 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.import_home_assistant_service",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "import_home_assistant_service",
+      "alias": "techstack.import_home_assistant_service",
+      "title": "Link an existing Home Assistant",
+      "description": "Probes a Home Assistant instance from a local executor with the long-lived access token held in the Wallet item `token_wallet_item_id` (a kombify Wallet item assigned to Techstack, or a built-in wallet API key or OAuth token item whose URL names this instance; resolved inside Techstack, never answered) and records a read-only observed service. This contract accepts no token. The token is used for this probe only and is never stored in the registry row. Self-hosted installs only (503 `lan_executor_unavailable` otherwise). The call is idempotent: an already linked instance returns `existing: true` without a new probe.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "installation_method": {
+            "enum": [
+              "haos",
+              "container"
+            ],
+            "type": "string"
+          },
+          "server_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "stack_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "token_wallet_item_id": {
+            "description": "Wallet item holding the Home Assistant long-lived access token.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "url": {
+            "description": "Local Home Assistant endpoint.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "installation_method",
+          "server_id",
+          "stack_id",
+          "token_wallet_item_id",
+          "url"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/import_home_assistant_service",
+      "auditEvent": "mcp.customer.techstack.inventory.import_home_assistant_service",
+      "operationIds": [
+        "techstack.importHomeAssistantService"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.import_registry_service",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "import_registry_service",
+      "alias": "techstack.import_registry_service",
+      "title": "Record an existing service",
+      "description": "Adds an observed (unmanaged) service row for a server of an owned stack. The row is keyed by stack, server and service name, so repeating the call updates the same row. Nothing is deployed or probed. Either `name` or `service_id` is required and is normalized to a lower-case key. A stack the caller does not own is refused with 403 and an unknown stack or server with 404.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "name": {
+            "description": "Service name; used when `service_id` is not set.",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server_id": {
+            "description": "Registry server (node) id of the stack.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "service_id": {
+            "description": "Service key; used only when `name` is not set.",
+            "type": "string"
+          },
+          "stack_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "description": "Service type, for example `media`; defaults to `custom`.",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "stack_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/import_registry_service",
+      "auditEvent": "mcp.customer.techstack.inventory.import_registry_service",
+      "operationIds": [
+        "techstack.importRegistryService"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.import_stack",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -4131,6 +6381,60 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.install_host_dependencies",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "install_host_dependencies",
+      "alias": "techstack.install_host_dependencies",
+      "title": "Install missing host dependencies",
+      "description": "Installs the missing host dependencies (OpenTofu, cloudflared, Docker) on the machine a self-hosted Techstack runs on, all of them or the named ones. Only the owner of a self-hosted Techstack may call it, and an agent acts with the owner's reach there; hosted Techstack refuses every caller with 403 `host_install_unavailable` (reason_code `hosted_control_plane`) before anything is detected.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dependencies": {
+            "description": "Names of the missing dependencies to install; all when omitted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/install_host_dependencies",
+      "auditEvent": "mcp.customer.techstack.inventory.install_host_dependencies",
+      "operationIds": [
+        "techstack.installDependencies"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.instant_monitor_query",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -4181,6 +6485,145 @@
       "capabilityBundle": "techstack.inventory.read",
       "requiredCapabilities": [
         "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.invite_stack_household_member",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "invite_stack_household_member",
+      "alias": "techstack.invite_stack_household_member",
+      "title": "Invite household member",
+      "description": "Invites one person of the household plan to the owned stack. The person must match the persisted Wizard intent (`client_ref`, e-mail and display name), the owner must already be active on the stack, and the body must carry `owner_approved: true`. The body is decoded strictly. The response includes the member's activation URL when one exists.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "client_ref": {
+            "description": "Reference of the planned person in the Wizard household intent.",
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "format": "email",
+            "type": "string"
+          },
+          "owner_approved": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "client_ref",
+          "email",
+          "owner_approved",
+          "username"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/invite_stack_household_member",
+      "auditEvent": "mcp.customer.techstack.inventory.invite_stack_household_member",
+      "operationIds": [
+        "techstack.inviteStackHouseholdMember"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.issue_stack_owner_activation",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "issue_stack_owner_activation",
+      "alias": "techstack.issue_stack_owner_activation",
+      "title": "Issue owner activation link",
+      "description": "Asks the StackKits identity runtime of the owned stack for a link that activates the owner's own account on the stack. The body must carry `owner_approved: true`; any other body is 400 `owner_approval_required`. The response includes the activation URL, which is a one-time sign-in link: hand it to the owner and do not log it. Answers 409 when the pinned StackKits runtime cannot issue activations or issuing fails.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "owner_approved": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "owner_approved"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/issue_stack_owner_activation",
+      "auditEvent": "mcp.customer.techstack.inventory.issue_stack_owner_activation",
+      "operationIds": [
+        "techstack.issueStackOwnerActivation"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
       ],
       "costBearing": false,
       "upstreamKind": "product-native",
@@ -5926,6 +8369,166 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.mark_all_notifications_read",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "mark_all_notifications_read",
+      "alias": "techstack.mark_all_notifications_read",
+      "title": "Mark all notifications read",
+      "description": "Marks all unread items of the authenticated user's notification feed as read, across every section. The body is empty. The engine's answer is passed through unchanged and is not wrapped in the `data` envelope.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/mark_all_notifications_read",
+      "auditEvent": "mcp.customer.techstack.inventory.mark_all_notifications_read",
+      "operationIds": [
+        "techstack.markAllNotificationsRead"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.mark_notification_read",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "mark_notification_read",
+      "alias": "techstack.mark_notification_read",
+      "title": "Mark notification read",
+      "description": "Marks one item of the authenticated user's notification feed as read. Techstack signs the call to the notifications engine for the authenticated user, so only that user's own items can be changed; an unknown item answers 404. The engine's answer is passed through unchanged and is not wrapped in the `data` envelope.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "description": "Feed item ID",
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/mark_notification_read",
+      "auditEvent": "mcp.customer.techstack.inventory.mark_notification_read",
+      "operationIds": [
+        "techstack.markNotificationRead"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.move_registry_service",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "move_registry_service",
+      "alias": "techstack.move_registry_service",
+      "title": "Move a service to another server",
+      "description": "Marks the source service as migrating, creates the target copy pending verification and starts a migration job. The target server must belong to the same stack and differ from the source, and the service must be movable. Today every call answers 501 `Runtime service migration is unavailable` (`migration_available` is false in the registry) until a runtime executor exists; the canonical inventory store additionally answers 503 `service_control_server_fence_unavailable`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "service_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "target_server_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "target_server_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/move_registry_service",
+      "auditEvent": "mcp.customer.techstack.inventory.move_registry_service",
+      "operationIds": [
+        "techstack.migrateRegistryService"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.preflight_managed_runtime_authority",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -6058,6 +8661,101 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.prepare_device_readiness",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "prepare_device_readiness",
+      "alias": "techstack.prepare_device_readiness",
+      "title": "Prepare a device",
+      "description": "Connects to the named machine over SSH, runs the named catalog resolutions in order (only catalog ids are accepted), optionally opens a temporary egress path while they run, and probes again to report the result. Requires the signed techstack.device.prepare entitlement, and techstack.device.egress when egress is true. Registered only on a local (non-SaaS) control plane. The login comes from the Wallet item connection.wallet_item_id, resolved inside Techstack for this request only. A failing resolution stops the run with 409 and the receipts collected so far.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "additionalProperties": false,
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "host_key_fingerprint": {
+                "description": "Key the device must present; omit on the first request.",
+                "type": "string"
+              },
+              "port": {
+                "type": "integer"
+              },
+              "user": {
+                "type": "string"
+              },
+              "wallet_item_id": {
+                "description": "Wallet item holding the SSH key or password; this contract accepts no key, passphrase or password.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "host",
+              "user",
+              "wallet_item_id"
+            ],
+            "type": "object"
+          },
+          "egress": {
+            "description": "Open a temporary way out for the machine while the fixes run.",
+            "type": "boolean"
+          },
+          "interface": {
+            "description": "Interface a fix should act on, when one asks for it.",
+            "type": "string"
+          },
+          "resolutions": {
+            "items": {
+              "description": "Resolution catalog id.",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "connection",
+          "resolutions"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/prepare_device_readiness",
+      "auditEvent": "mcp.customer.techstack.inventory.prepare_device_readiness",
+      "operationIds": [
+        "techstack.prepareDeviceReadiness"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.preview_pipeline",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -6093,6 +8791,488 @@
       "risk": "medium",
       "approvalPolicy": "none",
       "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.preview_wizard",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "preview_wizard",
+      "alias": "techstack.preview_wizard",
+      "title": "Preview wizard spec",
+      "description": "Projects a wizard intent onto the pinned kit seed and validates the result with the pinned StackKits CLI. Safe and idempotent: nothing is persisted. An invalid projection answers 200 with `valid: false` and `validate_error`; join previews need `base_spec`. Requires the `native_v2_wizard` feature for the caller (403 `feature_not_enabled` otherwise).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "base_spec": {
+            "description": "Current spec of the deployment being joined; required for join previews.",
+            "type": "object"
+          },
+          "intent": {
+            "additionalProperties": false,
+            "description": "Closed wizard intent (techstack.wizard-intent/v1). The backend projects it onto the pinned StackKits kit seed; owner identity never travels here.",
+            "properties": {
+              "access": {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "enum": [
+                      "local",
+                      "remote-private"
+                    ],
+                    "type": "string"
+                  },
+                  "publications": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exposure": {
+                          "const": "public",
+                          "type": "string"
+                        },
+                        "service_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "service_id",
+                        "exposure"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "backup": {
+                "additionalProperties": false,
+                "properties": {
+                  "offsite": {
+                    "description": "Off-site object backup; available only when founding a cloud-kit deployment.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "domain_base": {
+                "type": "string"
+              },
+              "goals": {
+                "description": "Selected use-case slugs from the released StackKits catalog.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "homelab_id": {
+                "type": "string"
+              },
+              "household": {
+                "additionalProperties": false,
+                "properties": {
+                  "planned_people": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "client_ref": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "maxLength": 320,
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "client_ref"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 50,
+                    "type": "array"
+                  },
+                  "profile": {
+                    "enum": [
+                      "solo",
+                      "shared"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "kit_assignment": {
+                "additionalProperties": false,
+                "properties": {
+                  "kit_deployment_id": {
+                    "type": "string"
+                  },
+                  "kit_slug": {
+                    "enum": [
+                      "basement-kit",
+                      "cloud-kit",
+                      "modern-homelab"
+                    ],
+                    "type": "string"
+                  },
+                  "mode": {
+                    "description": "found creates a deployment (kit_slug required); join adds a Node and extend adds use cases to kit_deployment_id.",
+                    "enum": [
+                      "found",
+                      "join",
+                      "extend"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "type": "object"
+              },
+              "layout_recommendation": {
+                "additionalProperties": false,
+                "description": "Accepts a shown layout recommendation (join and extend runs only).",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "proposal_digest": {
+                    "pattern": "^sha256:",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "proposal_digest"
+                ],
+                "type": "object"
+              },
+              "name": {
+                "description": "Display name of the StackKit deployment.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "run_kind": {
+                "enum": [
+                  "first-run",
+                  "expansion"
+                ],
+                "type": "string"
+              },
+              "schema": {
+                "const": "techstack.wizard-intent/v1",
+                "type": "string"
+              },
+              "server": {
+                "additionalProperties": false,
+                "properties": {
+                  "environment_class": {
+                    "enum": [
+                      "local",
+                      "cloud"
+                    ],
+                    "type": "string"
+                  },
+                  "existing_server_id": {
+                    "description": "Already enrolled, unassigned canonical server for the first installation (found runs, install-command transport only).",
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "roles": {
+                    "items": {
+                      "description": "controller, worker, storage or edge; the legacy names foundation, standalone, main and control-plane map to controller.",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "site_ref": {
+                    "type": "string"
+                  },
+                  "transport": {
+                    "description": "Provisioning lane; empty means install-command. kombify-cloud orders a billed managed server.",
+                    "enum": [
+                      "install-command",
+                      "connect-remote",
+                      "hypervisor",
+                      "kombify-cloud"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "use_case_capabilities": {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "description": "Capability option id (or \"off\") per capability id, per selected use-case slug.",
+                "type": "object"
+              },
+              "use_case_settings": {
+                "additionalProperties": {
+                  "type": "object"
+                },
+                "description": "Setting decisions per selected use-case slug, as the StackKits catalog declares them.",
+                "type": "object"
+              },
+              "use_case_setup_answers": {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "items": {
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "maxItems": 128,
+                    "type": "array"
+                  },
+                  "maxProperties": 128,
+                  "type": "object"
+                },
+                "maxProperties": 128,
+                "type": "object"
+              }
+            },
+            "required": [
+              "schema",
+              "run_kind",
+              "name",
+              "kit_assignment"
+            ],
+            "type": "object"
+          },
+          "smart_home_context": {
+            "properties": {
+              "cpu": {
+                "type": "integer"
+              },
+              "disk_gib": {
+                "type": "integer"
+              },
+              "exclusive_radio": {
+                "type": "boolean"
+              },
+              "existing": {
+                "type": "boolean"
+              },
+              "lan_reachable": {
+                "type": "boolean"
+              },
+              "memory_mib": {
+                "type": "integer"
+              },
+              "needs_apps": {
+                "type": "boolean"
+              },
+              "needs_radio": {
+                "type": "boolean"
+              },
+              "prefers_appliance_maintenance": {
+                "type": "boolean"
+              },
+              "proxmox_available": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/preview_wizard",
+      "auditEvent": "mcp.customer.techstack.inventory.preview_wizard",
+      "operationIds": [
+        "techstack.previewWizard"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.probe_device_readiness",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "probe_device_readiness",
+      "alias": "techstack.probe_device_readiness",
+      "title": "Check a device is ready",
+      "description": "Opens one SSH session to the named machine, reads its facts (network, proxy, virtualization, enrollment reachability) and answers a readiness report; nothing on the device changes. The login comes from the Wallet item connection.wallet_item_id, resolved inside Techstack for this request only and never answered or stored. Registered only on a local (non-SaaS) control plane and requires the signed techstack.device.prepare entitlement. Unknown body fields are refused. The first request may omit host_key_fingerprint; the answer then carries the key the device presented so it can be pinned on the next call.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "additionalProperties": false,
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "host_key_fingerprint": {
+                "description": "Key the device must present; omit on the first request.",
+                "type": "string"
+              },
+              "port": {
+                "type": "integer"
+              },
+              "user": {
+                "type": "string"
+              },
+              "wallet_item_id": {
+                "description": "Wallet item holding the SSH key or password; this contract accepts no key, passphrase or password.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "host",
+              "user",
+              "wallet_item_id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "connection"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/probe_device_readiness",
+      "auditEvent": "mcp.customer.techstack.inventory.probe_device_readiness",
+      "operationIds": [
+        "techstack.probeDeviceReadiness"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.probe_discovered_device",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "probe_discovered_device",
+      "alias": "techstack.probe_discovered_device",
+      "title": "Probe a discovered device",
+      "description": "Logs in to the device over SSH with the login held in the Wallet item `ssh_wallet_item_id` (a kombify Wallet node access item assigned to Techstack and bound to this IP or to no host, or an SSH key or password item of the built-in wallet whose URL names this IP) and reads its system facts. The login is resolved inside Techstack for this probe only and never answered. This contract accepts no password or private key. Non-admin callers may only probe IPs from their own discovery results; admins may probe arbitrary IPs. Local control planes only (409 `lan_executor_required` on a hosted one).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ip": {
+            "type": "string"
+          },
+          "ssh_port": {
+            "default": 22,
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ssh_user": {
+            "type": "string"
+          },
+          "ssh_wallet_item_id": {
+            "description": "Wallet item holding the SSH key or password.",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 30,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ip",
+          "ssh_user",
+          "ssh_wallet_item_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/probe_discovered_device",
+      "auditEvent": "mcp.customer.techstack.inventory.probe_discovered_device",
+      "operationIds": [
+        "techstack.probeDevice"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
       "quotaKey": "mcp.usage.techstack.inventory.write",
       "upstream": {
         "kind": "product-native",
@@ -6397,6 +9577,286 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.recommend_layout",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "recommend_layout",
+      "alias": "techstack.recommend_layout",
+      "title": "Recommend layout",
+      "description": "Plans where the selected goals run across the nodes of one owned StackKit deployment for an add-server or add-use-case change, verifies the option with the pinned StackKits feasibility check and, when it is feasible, records it as an open recommendation the owner can accept inside a wizard run, reject or snooze. An option that is not verified is returned with state `unverified` and no id. Records the proposal but changes no infrastructure.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "compute_profile": {
+            "type": "string"
+          },
+          "flow": {
+            "enum": [
+              "add-server",
+              "add-use-case"
+            ],
+            "type": "string"
+          },
+          "goals": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "planned_node": {
+            "additionalProperties": false,
+            "description": "The node an add-server run brings, when its size is known before it enrolls.",
+            "properties": {
+              "arch": {
+                "type": "string"
+              },
+              "cpu_cores": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "ram_gb": {
+                "type": "number"
+              },
+              "roles": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "source": {
+                "type": "string"
+              },
+              "storage_gb": {
+                "type": "integer"
+              },
+              "transport": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "cpu_cores",
+              "ram_gb",
+              "storage_gb",
+              "source"
+            ],
+            "type": "object"
+          },
+          "stack_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "use_case_capabilities": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "use_case_settings": {
+            "additionalProperties": {
+              "type": "object"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "flow",
+          "goals",
+          "stack_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/recommend_layout",
+      "auditEvent": "mcp.customer.techstack.inventory.recommend_layout",
+      "operationIds": [
+        "techstack.recommendLayout"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.recommend_stackkits",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "recommend_stackkits",
+      "alias": "techstack.recommend_stackkits",
+      "title": "Recommend StackKits",
+      "description": "Computes ranked StackKit recommendations from the selected goals, the deployment lane and surface, and the authenticated owner's worker inventory and self-disclosure. Safe and idempotent: nothing is stored. A non-ready status (`incomplete`, `stale`, `degraded`) is still a useful answer that names the evidence to supply.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "available_goals": {
+            "description": "Use cases the released catalog offers.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "compute_profile": {
+            "type": "string"
+          },
+          "deployment_lane": {
+            "enum": [
+              "saas",
+              "self-hosted"
+            ],
+            "type": "string"
+          },
+          "goals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "selection_intent": {
+            "description": "all asks which of available_goals the full-homelab template should preselect.",
+            "enum": [
+              "all"
+            ],
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "smart_home_context": {
+            "properties": {
+              "cpu": {
+                "type": "integer"
+              },
+              "disk_gib": {
+                "type": "integer"
+              },
+              "exclusive_radio": {
+                "type": "boolean"
+              },
+              "existing": {
+                "type": "boolean"
+              },
+              "lan_reachable": {
+                "type": "boolean"
+              },
+              "memory_mib": {
+                "type": "integer"
+              },
+              "needs_apps": {
+                "type": "boolean"
+              },
+              "needs_radio": {
+                "type": "boolean"
+              },
+              "prefers_appliance_maintenance": {
+                "type": "boolean"
+              },
+              "proxmox_available": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "smart_home_settings": {
+            "description": "Smart-home setting decisions by id.",
+            "type": "object"
+          },
+          "surface": {
+            "enum": [
+              "easy",
+              "techie"
+            ],
+            "type": "string"
+          },
+          "use_case_capabilities": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "use_case_settings": {
+            "additionalProperties": {
+              "type": "object"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "deployment_lane",
+          "surface"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/recommend_stackkits",
+      "auditEvent": "mcp.customer.techstack.inventory.recommend_stackkits",
+      "operationIds": [
+        "techstack.recommendStackKits"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.reconnect_monthly_runtime",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -6586,6 +10046,60 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.reject_layout_recommendation",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "reject_layout_recommendation",
+      "alias": "techstack.reject_layout_recommendation",
+      "title": "Reject layout recommendation",
+      "description": "Marks an open or snoozed layout recommendation of the authenticated owner as rejected so it is no longer offered, and answers its updated view. A recommendation in any other state answers 409 `layout_recommendation_changed`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "recommendation_id": {
+            "description": "Layout recommendation id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recommendation_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/reject_layout_recommendation",
+      "auditEvent": "mcp.customer.techstack.inventory.reject_layout_recommendation",
+      "operationIds": [
+        "techstack.rejectLayoutRecommendation"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.release_application_lifecycle",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -6712,6 +10226,127 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.remove_cloud_link",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "remove_cloud_link",
+      "alias": "techstack.remove_cloud_link",
+      "title": "Remove Cloud link",
+      "description": "Deletes the stored kombify Cloud profile link of the authenticated operator on this install. The link is per operator; nothing at kombify Cloud changes. When no link exists the call succeeds with `removed: false`. Re-linking is a browser sign-in and is not available to agents.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/remove_cloud_link",
+      "auditEvent": "mcp.customer.techstack.inventory.remove_cloud_link",
+      "operationIds": [
+        "techstack.deleteCloudLink"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "destructive",
+      "quotaKey": "mcp.usage.techstack.inventory.operate",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.operate",
+      "requiredCapabilities": [
+        "techstack.inventory.operate"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.remove_use_case",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "remove_use_case",
+      "alias": "techstack.remove_use_case",
+      "title": "Remove use case",
+      "description": "Retires an installed workload, or every installed workload of a catalog use case, through the native resolver against the baseline named by `expected_spec_hash`, and queues the StackKit lifecycle jobs. The workload stops running but its data is retained (`data_disposition: retain`). The `Idempotency-Key` makes a retry replay the original acceptance; refused with 409 while the stack is busy, a service is locked or a server is in maintenance.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_spec_hash": {
+            "description": "Native baseline hash read from the use-case configuration view.",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "selector_kind": {
+            "enum": [
+              "workload",
+              "use_case"
+            ],
+            "type": "string"
+          },
+          "selector_ref": {
+            "description": "Workload slug or catalog use-case id; no surrounding whitespace.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "expected_spec_hash",
+          "selector_kind",
+          "selector_ref"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/remove_use_case",
+      "auditEvent": "mcp.customer.techstack.inventory.remove_use_case",
+      "operationIds": [
+        "techstack.removeUseCase"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.rename_homelab",
@@ -6950,6 +10585,61 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.reset_onboarding",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "reset_onboarding",
+      "alias": "techstack.reset_onboarding",
+      "title": "Restart onboarding",
+      "description": "Clears the authenticated owner's completed and seen steps in a journey and reactivates it so the tour is shown again. Only the owner's own progress changes; no infrastructure is touched. Answers the resolved journey like the action route.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "journey_id": {
+            "description": "Journey id, for example `techstack.platform`.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "journey_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/reset_onboarding",
+      "auditEvent": "mcp.customer.techstack.inventory.reset_onboarding",
+      "operationIds": [
+        "techstack.resetOnboarding"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.resolve_drift",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -7063,6 +10753,253 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.resolve_provider_provision",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "resolve_provider_provision",
+      "alias": "techstack.resolve_provider_provision",
+      "title": "Resolve a parked provider provision",
+      "description": "Second step of operator resolution. With the exact confirmation from the discovery step it appends one decision against the persisted observation: no candidate, adopt the single exact candidate, or quarantine several. The decision is local custody state and never starts or retries provider creation. Replays return the original decision. Administrator-only; a stale or mismatching observation answers 409.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation": {
+            "description": "Must equal required_confirmation from the discovery step (adopt-provision:<operationId>).",
+            "type": "string"
+          },
+          "operation_id": {
+            "description": "Provider operation id (non-empty, at most 256 characters, no whitespace or control characters).",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "confirmation"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/resolve_provider_provision",
+      "auditEvent": "mcp.customer.techstack.inventory.resolve_provider_provision",
+      "operationIds": [
+        "techstack.resolveProviderProvision"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.resolve_workload_relocation",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "resolve_workload_relocation",
+      "alias": "techstack.resolve_workload_relocation",
+      "title": "Resolve workload relocation",
+      "description": "Re-reads the transfer proof from the source and destination nodes of one relocation and records the verified outcome (`moved` or `aborted`). It is used when a move stopped between transfer and verification. The body is empty. While the nodes cannot both prove the exact transfer the answer is 409 and the relocation stays fenced.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "job_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/resolve_workload_relocation",
+      "auditEvent": "mcp.customer.techstack.inventory.resolve_workload_relocation",
+      "operationIds": [
+        "techstack.resolveWorkloadRelocation"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.restore_home_assistant",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "restore_home_assistant",
+      "alias": "techstack.restore_home_assistant",
+      "title": "Restore Home Assistant to a recovery instance",
+      "description": "Restores a completed retained backup into the isolated recovery binding that belongs to the instance and verifies the result; the running instance itself is not overwritten. Requires the restore grant and an owned recovery binding (403 `recovery_not_authorized` otherwise). `operation_id` is a stable identity. A pending operation answers 202.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_operation_id": {
+            "description": "The completed backup to restore.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "binding_ref": {
+            "description": "Instance binding reference",
+            "type": "string"
+          },
+          "operation_id": {
+            "description": "Stable operation identity.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_ref",
+          "backup_operation_id",
+          "operation_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/restore_home_assistant",
+      "auditEvent": "mcp.customer.techstack.inventory.restore_home_assistant",
+      "operationIds": [
+        "techstack.restoreHomeAssistantInstance"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.resume_remote_enrollment",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "resume_remote_enrollment",
+      "alias": "techstack.resume_remote_enrollment",
+      "title": "Retry remote SSH enrollment",
+      "description": "Re-runs the Guard enrollment over the SSH connection persisted for a connect-remote deployment without rerunning the StackKit rollout. The deployment must belong to the authenticated owner and use the connect-remote transport; the credential comes from the Wallet node access item already bound to it, or from `ssh_wallet_item_id` when the connection should be rebound first. A plaintext password is never accepted by this contract.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ssh_wallet_item_id": {
+            "description": "Wallet node access item to rebind the stack's persisted SSH connection to before the retry.",
+            "pattern": "^itm_[a-z2-7]{26}$",
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/resume_remote_enrollment",
+      "auditEvent": "mcp.customer.techstack.inventory.resume_remote_enrollment",
+      "operationIds": [
+        "techstack.resumeRemoteEnrollment"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.resume_stack_enrollment",
@@ -7275,6 +11212,60 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.roll_back_home_assistant_migration",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "roll_back_home_assistant_migration",
+      "alias": "techstack.roll_back_home_assistant_migration",
+      "title": "Return Home Assistant migration",
+      "description": "Starts the return run for an owned migration that completed or failed and kept its source archive: archive the target, stop it, return the exclusive attachments and start and verify the original. The return run id is the migration run id with `:rollback`, so repeating the call resumes it. Answers 400 when the migration is not in a returnable state and 404 for a run the caller does not own.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "migration_id": {
+            "description": "Migration run id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "migration_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/roll_back_home_assistant_migration",
+      "auditEvent": "mcp.customer.techstack.inventory.roll_back_home_assistant_migration",
+      "operationIds": [
+        "techstack.rollbackHomeAssistantMigration"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.run_managed_service_action",
@@ -7923,6 +11914,389 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.set_notification_preferences",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "set_notification_preferences",
+      "alias": "techstack.set_notification_preferences",
+      "title": "Set notification preferences",
+      "description": "Writes the topic-by-channel preference matrix of the authenticated user. Techstack forwards the body (at most 1 MiB) to the notifications engine unchanged; the engine rejects unknown topics and channels with 400 and silently ignores channels that are locked for a topic. The answer is the fresh matrix, not wrapped in the `data` envelope. Quiet hours and the Telegram link are read-only here.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "only_if_unset": {
+            "description": "When true, a channel the user already set is left as it is.",
+            "type": "boolean"
+          },
+          "topics": {
+            "items": {
+              "properties": {
+                "channels": {
+                  "additionalProperties": {
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ],
+                    "type": "object"
+                  },
+                  "description": "Channel name (email, in_app, slack, sms, push, telegram) to its new state.",
+                  "type": "object"
+                },
+                "topic_key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "topic_key",
+                "channels"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/set_notification_preferences",
+      "auditEvent": "mcp.customer.techstack.inventory.set_notification_preferences",
+      "operationIds": [
+        "techstack.updateNotificationPreferences"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.set_operator_self_disclosure",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "set_operator_self_disclosure",
+      "alias": "techstack.set_operator_self_disclosure",
+      "title": "Set operator self-disclosure",
+      "description": "Replaces the signed-in operator's whole self-disclosure; an unanswered question means \"not told\". The body is decoded strictly and every answer must come from the closed vocabulary below. The capability profile in the answer is derived by the Unifier, never stored from the request. With `if_unchanged` the replacement is applied only when the stored value still equals it, otherwise the answer is 412 `self_disclosure_changed`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "disclosure": {
+            "additionalProperties": false,
+            "properties": {
+              "experience": {
+                "enum": [
+                  "hands-off",
+                  "guided",
+                  "curious",
+                  "techie",
+                  "expert"
+                ],
+                "type": "string"
+              },
+              "goals": {
+                "items": {
+                  "enum": [
+                    "photos",
+                    "media",
+                    "vault",
+                    "files",
+                    "smart-home",
+                    "ai",
+                    "dev",
+                    "mail",
+                    "game"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "hardware": {
+                "items": {
+                  "enum": [
+                    "none-yet",
+                    "old-pc",
+                    "mini-pc",
+                    "nas",
+                    "raspberry-pi",
+                    "rented-server"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "household": {
+                "enum": [
+                  "just-me",
+                  "household",
+                  "friends-family",
+                  "small-team"
+                ],
+                "type": "string"
+              },
+              "motivations": {
+                "items": {
+                  "enum": [
+                    "privacy",
+                    "replace-subscriptions",
+                    "learning",
+                    "family",
+                    "projects"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "notes": {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              "placement": {
+                "enum": [
+                  "home",
+                  "rented",
+                  "both",
+                  "unsure"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "if_unchanged": {
+            "additionalProperties": false,
+            "description": "The stored value this replacement must still match.",
+            "properties": {
+              "disclosure": {
+                "additionalProperties": true,
+                "description": "Same shape as `disclosure`.",
+                "type": "object"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "disclosure"
+            ],
+            "type": "object"
+          },
+          "source": {
+            "description": "link when the answers arrived as URL state and the operator confirmed them; techstack when typed in a Techstack surface.",
+            "enum": [
+              "link",
+              "techstack"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "disclosure",
+          "source"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/set_operator_self_disclosure",
+      "auditEvent": "mcp.customer.techstack.inventory.set_operator_self_disclosure",
+      "operationIds": [
+        "techstack.putOperatorSelfDisclosure"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.set_server_availability",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "set_server_availability",
+      "alias": "techstack.set_server_availability",
+      "title": "Confirm server availability",
+      "description": "The owner says whether the machine is on all the time (`always-on`) or switched off at times (`part-time`). The statement is stored next to what the Guard observed and replaces the observed class for planning. `unknown` or `null` withdraws it. Owner only; any other caller gets 404.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "class": {
+            "description": "always-on or part-time confirms; unknown or null withdraws the confirmation.",
+            "enum": [
+              "always-on",
+              "part-time",
+              "unknown",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "class"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/set_server_availability",
+      "auditEvent": "mcp.customer.techstack.inventory.set_server_availability",
+      "operationIds": [
+        "techstack.setServerAvailability"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "resourceBinding": {
+        "argument": "server_id",
+        "dimension": "techstack.server"
+      },
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.set_substrate_binding",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "set_substrate_binding",
+      "alias": "techstack.set_substrate_binding",
+      "title": "Enable or disable a substrate binding",
+      "description": "Binds the substrate to the Guard's current authenticated inventory (node, guest-id range, image pins) and turns guest placement on or off. Optimistic concurrency: `revision` must equal the current binding revision (0 when none exists) and the answer carries the next one. Refused with 409 while the substrate has no current inventory, no node-local configuration, a revision mismatch, or non-decommissioned guests that still hold custody.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "revision": {
+            "description": "Current binding revision; 0 creates the binding.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server_id": {
+            "description": "Substrate server id.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "enabled",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/set_substrate_binding",
+      "auditEvent": "mcp.customer.techstack.inventory.set_substrate_binding",
+      "operationIds": [
+        "techstack.setSubstrateBinding"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "resourceBinding": {
+        "argument": "server_id",
+        "dimension": "techstack.server"
+      },
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.setup_application_connector",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -7998,6 +12372,131 @@
       "capabilityBundle": "techstack.inventory.operate",
       "requiredCapabilities": [
         "techstack.inventory.operate"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.snooze_layout_recommendation",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "snooze_layout_recommendation",
+      "alias": "techstack.snooze_layout_recommendation",
+      "title": "Snooze layout recommendation",
+      "description": "Hides an open or snoozed layout recommendation of the authenticated owner until `until`, which must lie in the future and within 90 days, and answers its updated view. A recommendation in any other state answers 409 `layout_recommendation_changed`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "recommendation_id": {
+            "description": "Layout recommendation id.",
+            "type": "string"
+          },
+          "until": {
+            "description": "End of the snooze, at most 90 days ahead.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recommendation_id",
+          "until"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/snooze_layout_recommendation",
+      "auditEvent": "mcp.customer.techstack.inventory.snooze_layout_recommendation",
+      "operationIds": [
+        "techstack.snoozeLayoutRecommendation"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.start_home_assistant_migration",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "start_home_assistant_migration",
+      "alias": "techstack.start_home_assistant_migration",
+      "title": "Start Home Assistant migration",
+      "description": "Starts (or resumes) the durable migration run for an authorized local binding: archive the source, provision an isolated target on the owner's own substrate, restore and verify it, then wait for the cutover confirmation. The run id is derived from tenant, owner and target, so repeating the call resumes the same run. The request must match the binding's source service and authorization reference exactly (403 otherwise). Self-hosted installs with a configured local binding only (503 `migration_executor_unavailable` otherwise).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "authorization_ref": {
+            "description": "Opaque reference of the binding's authorization; not a secret.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_service_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "target_binding_ref": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorization_ref",
+          "source_service_id",
+          "target_binding_ref"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/start_home_assistant_migration",
+      "auditEvent": "mcp.customer.techstack.inventory.start_home_assistant_migration",
+      "operationIds": [
+        "techstack.startHomeAssistantMigration"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
       ],
       "costBearing": false,
       "upstreamKind": "product-native",
@@ -8182,6 +12681,116 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.start_workload_relocation",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "start_workload_relocation",
+      "alias": "techstack.start_workload_relocation",
+      "title": "Move workloads to another server",
+      "description": "Starts a verified move of workloads from the source server (this stack, `source_agent_id`) to a destination server of another owned stack. The workloads stop on the source while they transfer and the source is kept until both nodes verify the transfer; it can be resumed with the abort operation. Select either whole `projects` or individual `resource_uuids`. The transfer secret stays in Wallet custody (`wallet_item_id`) and domain switches go only to test domains. Needs exactly one Idempotency-Key; a replay returns the same job. Refused with 409 when a target holds locked services or server maintenance runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "destination_agent_id": {
+            "description": "Guard agent of the destination server; must differ from the source.",
+            "type": "string"
+          },
+          "destination_stack_id": {
+            "type": "string"
+          },
+          "domain_switches": {
+            "items": {
+              "description": "OLD=NEW host names; NEW must be a test domain.",
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "owner_approved": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "projects": {
+            "description": "Whole Coolify projects to move. Mutually exclusive with resource_uuids.",
+            "items": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "resource_uuids": {
+            "description": "Individual Coolify resources to move. Mutually exclusive with projects.",
+            "items": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "source_agent_id": {
+            "description": "Guard agent of the source server in this stack.",
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          },
+          "wallet_item_id": {
+            "description": "Wallet item id (itm_...) of the transfer secret; never the secret itself.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "destination_agent_id",
+          "destination_stack_id",
+          "owner_approved",
+          "source_agent_id",
+          "wallet_item_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/start_workload_relocation",
+      "auditEvent": "mcp.customer.techstack.inventory.start_workload_relocation",
+      "operationIds": [
+        "techstack.startWorkloadRelocation"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.stop_monthly_runtime",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -8282,6 +12891,268 @@
       "liveEnabled": true
     },
     {
+      "toolId": "techstack.sync_stack_identity",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "sync_stack_identity",
+      "alias": "techstack.sync_stack_identity",
+      "title": "Sync stack identity with Cloud",
+      "description": "Takes the kombify Cloud stack identity record (read by the caller through the Gateway with the user's own token; `null` when Cloud has none) and applies the sync rules to the local copy: adopt the Cloud record, confirm an identical one, or answer the body to push to Cloud with the `If-Match` revision. The call itself never writes to Cloud. When no local stack identity exists yet it only reports `homelab_missing`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cloud": {
+            "description": "The Cloud record, or null when Cloud has no stack identity.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "animation_enabled": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "animation_style": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                    "type": "string"
+                  },
+                  "character_id": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                    "type": "string"
+                  },
+                  "glow_color_override": {
+                    "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "icon_style": {
+                    "enum": [
+                      "",
+                      "filled",
+                      "glass",
+                      "gradient",
+                      "outlined"
+                    ],
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 30,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "revision": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "updated_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "name",
+                  "updated_at"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "cloud"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/sync_stack_identity",
+      "auditEvent": "mcp.customer.techstack.inventory.sync_stack_identity",
+      "operationIds": [
+        "techstack.syncStackIdentity"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.test_discovered_device_ssh",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "test_discovered_device_ssh",
+      "alias": "techstack.test_discovered_device_ssh",
+      "title": "Test SSH to a discovered device",
+      "description": "Opens one SSH connection with the login held in the Wallet item `ssh_wallet_item_id` (its key when it holds one, otherwise its password; a built-in wallet item must name this IP as its URL), resolved inside Techstack and never answered; nothing is stored. This contract accepts no password. A failed connection answers 200 with `success: false`. Non-admin callers may only test IPs from their own discovery results; admins may test arbitrary IPs. Local control planes only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ip": {
+            "type": "string"
+          },
+          "port": {
+            "default": 22,
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ssh_wallet_item_id": {
+            "description": "Wallet item holding the SSH key or password.",
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ip",
+          "ssh_wallet_item_id",
+          "user"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/test_discovered_device_ssh",
+      "auditEvent": "mcp.customer.techstack.inventory.test_discovered_device_ssh",
+      "operationIds": [
+        "techstack.testSSH"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.test_remote_ssh",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "test_remote_ssh",
+      "alias": "techstack.test_remote_ssh",
+      "title": "Test remote SSH",
+      "description": "Opens one SSH connection to the given host with a credential held in the Wallet and reports whether it succeeded; nothing is stored. The credential is a Wallet node access item (`ssh_wallet_item_id`, bound to the host) or, on deployments that read the built-in wallet, the label of a stored SSH key. This contract accepts no password or private key. A failed connection answers 200 with `success: false` and the error. Requires the `native_v2_wizard` feature for the caller.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_method": {
+            "default": "ssh-key",
+            "enum": [
+              "ssh-key",
+              "password"
+            ],
+            "type": "string"
+          },
+          "host": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "port": {
+            "default": 22,
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ssh_key_label": {
+            "description": "Label of a stored SSH key; only on deployments that read the built-in wallet.",
+            "type": "string"
+          },
+          "ssh_wallet_item_id": {
+            "description": "Wallet node access item holding the SSH key or password.",
+            "pattern": "^itm_[a-z2-7]{26}$",
+            "type": "string"
+          },
+          "user": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "user"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/test_remote_ssh",
+      "auditEvent": "mcp.customer.techstack.inventory.test_remote_ssh",
+      "operationIds": [
+        "techstack.testWizardRemoteSsh"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.unify_spec",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -8317,6 +13188,87 @@
       "risk": "medium",
       "approvalPolicy": "none",
       "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.update_home_assistant",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "update_home_assistant",
+      "alias": "techstack.update_home_assistant",
+      "title": "Update Home Assistant",
+      "description": "Updates the instance to the exact `version`. It requires a completed backup (`backup_operation_id`) whose archive passed an isolated restore, the update grant on the binding and a pinned version (core `YYYY.M.P`, os `M.N` or `M.N.P`). `operation_id` is a stable identity and an uncertain submission is never repeated. A pending operation answers 202.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_operation_id": {
+            "description": "The verified backup taken before the update.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "binding_ref": {
+            "description": "Instance binding reference",
+            "type": "string"
+          },
+          "operation_id": {
+            "description": "Stable operation identity.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "default": "core",
+            "enum": [
+              "core",
+              "os"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "description": "Exact target version: core `YYYY.M.P`, os `M.N[.P]`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_ref",
+          "backup_operation_id",
+          "operation_id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/update_home_assistant",
+      "auditEvent": "mcp.customer.techstack.inventory.update_home_assistant",
+      "operationIds": [
+        "techstack.updateHomeAssistantInstance"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
       "quotaKey": "mcp.usage.techstack.inventory.write",
       "upstream": {
         "kind": "product-native",
@@ -8386,6 +13338,199 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.update_stack_identity_if_unchanged",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "update_stack_identity_if_unchanged",
+      "alias": "techstack.update_stack_identity_if_unchanged",
+      "title": "Update stack identity if unchanged",
+      "description": "Revision-checked variant of the stack identity update. `If-Match` carries the `local_revision` read from the stack identity, in double quotes (for example `\"3\"`); a stale revision answers 412 and a reused `Idempotency-Key` with different content answers 409. The edit is stored locally and marked pending until it is synced with kombify Cloud. The body is limited to 4096 bytes. Requires the Postgres control plane (503 `stack_identity_store_unavailable` otherwise).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "animation_enabled": {
+            "type": "boolean"
+          },
+          "animation_style": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "character_id": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "glow_color_override": {
+            "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icon_style": {
+            "enum": [
+              "filled",
+              "glass",
+              "gradient",
+              "outlined"
+            ],
+            "type": "string"
+          },
+          "if_match": {
+            "description": "Strong local revision in double quotes, for example `\"3\"`.",
+            "pattern": "^\"[0-9]+\"$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Trimmed, without control characters.",
+            "maxLength": 30,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "if_match",
+          "name"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/update_stack_identity_if_unchanged",
+      "auditEvent": "mcp.customer.techstack.inventory.update_stack_identity_if_unchanged",
+      "operationIds": [
+        "techstack.updateStackIdentityConditional"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.update_wallet_item",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "update_wallet_item",
+      "alias": "techstack.update_wallet_item",
+      "title": "Update wallet item",
+      "description": "Merges the supplied fields into an item the caller owns and returns it redacted. Fields that are not supplied keep their value, including the stored secret and TOTP, which this contract can neither read nor change: the person sets those in the Wallet. The item kind and owner are immutable. An item owned by someone else answers 404. Only deployments that keep credentials in Techstack's own Wallet serve this route; elsewhere it answers 409 `self_hosted_only`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "access_mode": {
+            "enum": [
+              "open",
+              "reveal",
+              "manage"
+            ],
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "Resource ID",
+            "type": "string"
+          },
+          "item_class": {
+            "enum": [
+              "launch",
+              "user_account",
+              "credential",
+              "recovery",
+              "machine_secret_ref",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "notes": {
+            "description": "Free text; never put credentials here.",
+            "type": "string"
+          },
+          "service_id": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": "string"
+          },
+          "source_type": {
+            "type": "string"
+          },
+          "stack_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/update_wallet_item",
+      "auditEvent": "mcp.customer.techstack.inventory.update_wallet_item",
+      "operationIds": [
+        "techstack.updateWalletItem"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.validate_import",
@@ -8651,6 +13796,60 @@
       "capabilityBundle": "techstack.inventory.read",
       "requiredCapabilities": [
         "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.verify_registry_service",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "verify_registry_service",
+      "alias": "techstack.verify_registry_service",
+      "title": "Finish a service move",
+      "description": "Accepts a service copy that is pending verification as running and archives the migrating source copy. Answers 409 when the service is not pending verification. Today every call answers 501 until a runtime executor exists, and the canonical inventory store answers 503 `service_control_server_fence_unavailable`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "service_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/verify_registry_service",
+      "auditEvent": "mcp.customer.techstack.inventory.verify_registry_service",
+      "operationIds": [
+        "techstack.verifyRegistryService"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
       ],
       "costBearing": false,
       "upstreamKind": "product-native",

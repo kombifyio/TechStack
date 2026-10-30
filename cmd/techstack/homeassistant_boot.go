@@ -51,7 +51,7 @@ func registerLocalHomeAssistantMigrations(router *httpx.Router, cfg *config.Conf
 		operations.Bindings = owners
 	}
 	routes.RegisterHomeAssistantOperationRoutes(router, operations)
-	routes.RegisterHomeAssistantEnrollmentRoutes(router, homeAssistantEnrollmentStore(cfg, deps))
+	routes.RegisterHomeAssistantEnrollmentRoutes(router, homeAssistantEnrollmentStore(cfg, deps), walletSecretReferences(deps))
 }
 
 func homeAssistantEnrollmentStore(cfg *config.Config, deps routeDeps) *homeassistant.EnrollmentStore {
