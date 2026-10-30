@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/jackc/pgx/v5"
+	"sort"
 	"strings"
 )
 
@@ -37,6 +38,9 @@ func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 			return err
 		}
 	}
+	// One GRANT per privilege set, object kind: the same grants as one statement
+	// per object, in a few round trips across the fixed database egress.
+	tablesByPrivileges := map[string][]string{}
 	for oid, privileges := range policy.Tables {
 		var selected []string
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
@@ -48,21 +52,42 @@ func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 		if policy.TableNames[oid] == "kombify_ctx.role_class" {
 			table = pgx.Identifier{"kombify_ctx", "role_class"}
 		}
-		if _, err := tx.ExecContext(ctx, "GRANT "+strings.Join(selected, ",")+" ON TABLE "+table.Sanitize()+" TO "+role); err != nil {
+		key := strings.Join(selected, ",")
+		tablesByPrivileges[key] = append(tablesByPrivileges[key], table.Sanitize())
+	}
+	privilegeSets := make([]string, 0, len(tablesByPrivileges))
+	for key := range tablesByPrivileges {
+		privilegeSets = append(privilegeSets, key)
+	}
+	sort.Strings(privilegeSets)
+	for _, key := range privilegeSets {
+		tables := tablesByPrivileges[key]
+		sort.Strings(tables)
+		if _, err := tx.ExecContext(ctx, "GRANT "+key+" ON TABLE "+strings.Join(tables, ",")+" TO "+role); err != nil {
 			return err
 		}
 	}
-	for _, sequence := range policy.Sequences {
-		if _, err := tx.ExecContext(ctx, "GRANT USAGE ON SEQUENCE "+pgx.Identifier{"public", sequence}.Sanitize()+" TO "+role); err != nil {
+	if len(policy.Sequences) > 0 {
+		sequences := make([]string, 0, len(policy.Sequences))
+		for _, sequence := range policy.Sequences {
+			sequences = append(sequences, pgx.Identifier{"public", sequence}.Sanitize())
+		}
+		sort.Strings(sequences)
+		if _, err := tx.ExecContext(ctx, "GRANT USAGE ON SEQUENCE "+strings.Join(sequences, ",")+" TO "+role); err != nil {
 			return err
 		}
 	}
-	for _, signature := range policy.Functions {
-		qualified := "public." + signature
-		if strings.HasPrefix(signature, "kombify_ctx.") {
-			qualified = signature
+	if len(policy.Functions) > 0 {
+		functions := make([]string, 0, len(policy.Functions))
+		for _, signature := range policy.Functions {
+			qualified := "public." + signature
+			if strings.HasPrefix(signature, "kombify_ctx.") {
+				qualified = signature
+			}
+			functions = append(functions, qualified)
 		}
-		if _, err := tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION "+qualified+" TO "+role); err != nil {
+		sort.Strings(functions)
+		if _, err := tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION "+strings.Join(functions, ",")+" TO "+role); err != nil {
 			return err
 		}
 	}

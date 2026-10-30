@@ -76,6 +76,12 @@ type ServiceEvent struct {
 	// EnforceIdentityBinding rejects an event whose identity bindings differ
 	// from the stored aggregate instead of silently rebinding the row.
 	EnforceIdentityBinding bool
+	// FreshnessOnlyUnchanged treats a command that changes nothing but
+	// freshness (observed_at and the inventoryMaterialDigest freshness keys)
+	// as an unchanged replay. The Guard inventory projection sets it: the
+	// snapshot of the row's inventory revision carries that freshness instead
+	// (serviceInventorySeenAtSQL).
+	FreshnessOnlyUnchanged bool
 }
 
 // ServiceEventResult reports the exact write the boundary performed. Applied is
@@ -126,7 +132,8 @@ func prepareServiceEvent(current *serviceAggregateHead, event ServiceEvent, now 
 		return nil, err
 	}
 	transitions := serviceEventTransitions(current, next, event)
-	if len(transitions) == 0 && current != nil && current.Exists && serviceHeadUnchanged(*current, next) {
+	if len(transitions) == 0 && current != nil && current.Exists && (serviceHeadUnchanged(*current, next) ||
+		(event.FreshnessOnlyUnchanged && serviceHeadUnchangedButFreshness(*current, next))) {
 		return &preparedServiceEvent{head: *current, applied: false}, nil
 	}
 	next.Revision++
@@ -696,6 +703,22 @@ func serviceHeadUnchanged(current serviceAggregateHead, next serviceAggregateHea
 		return false
 	}
 	return equalJSONObjects(left.Access, right.Access) && equalJSONObjects(left.Metadata, right.Metadata)
+}
+
+// serviceHeadUnchangedButFreshness is serviceHeadUnchanged for an observation
+// that may only move forward in time and refresh freshness fields.
+func serviceHeadUnchangedButFreshness(current serviceAggregateHead, next serviceAggregateHead) bool {
+	if current.Runtime.ObservedAt == nil || next.Runtime.ObservedAt == nil ||
+		next.Runtime.ObservedAt.Before(*current.Runtime.ObservedAt) {
+		return false
+	}
+	material := func(head serviceAggregateHead) serviceAggregateHead {
+		head.Runtime.ObservedAt = current.Runtime.ObservedAt
+		head.Runtime.Access, _ = inventoryMaterialValue(head.Runtime.Access).(map[string]any)
+		head.Runtime.Metadata, _ = inventoryMaterialValue(head.Runtime.Metadata).(map[string]any)
+		return head
+	}
+	return serviceHeadUnchanged(material(current), material(next))
 }
 
 func normalizeServiceState(value string) string {

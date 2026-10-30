@@ -4,7 +4,7 @@
     {
       "id": "coolify",
       "repository": "https://github.com/coollabsio/coolify",
-      "commit": "72c8209285dcd09291cca16f2acaf14dacf3ac43",
+      "commit": "b3ec26c3b1771654cae4b4ebc06d14a164bd8824",
       "license": "Apache-2.0",
       "path": "templates/compose"
     },

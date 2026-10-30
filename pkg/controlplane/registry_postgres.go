@@ -158,9 +158,7 @@ func (s *PostgresStore) GetService(ctx context.Context, tenantID, serviceID stri
 	var out *Service
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
 		service, err := scanService(tx.QueryRowContext(ctx, `
-			SELECT id, tenant_id, instance_id, stack_id, node_id, service_key, name, status,
-				source, url, migration_status, metadata_json::text, management_state,
-				created_at, updated_at
+			SELECT `+serviceReadColumns+`
 			FROM services
 			WHERE tenant_id = $1 AND id = $2
 		`, tenantID, serviceID))
@@ -201,7 +199,7 @@ func (s *PostgresStore) ListNodesByTenant(ctx context.Context, tenantID string) 
 
 func (s *PostgresStore) ListServicesByStack(ctx context.Context, tenantID, stackID string) ([]Service, error) {
 	return queryTenantRows(ctx, s, tenantID, `
-		SELECT `+serviceColumns+`
+		SELECT `+serviceReadColumns+`
 		FROM services
 		WHERE tenant_id = $1 AND stack_id = $2
 		ORDER BY created_at ASC, id ASC
@@ -212,7 +210,7 @@ func (s *PostgresStore) ListServicesByStack(ctx context.Context, tenantID, stack
 // one transaction.
 func (s *PostgresStore) ListServicesByTenant(ctx context.Context, tenantID string) ([]Service, error) {
 	return queryTenantRows(ctx, s, tenantID, `
-		SELECT `+serviceColumns+`
+		SELECT `+serviceReadColumns+`
 		FROM services
 		WHERE tenant_id = $1
 		ORDER BY created_at ASC, id ASC

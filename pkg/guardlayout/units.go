@@ -22,6 +22,20 @@ const (
 	EnrollmentFile = "/etc/techstack/agent-enrollment.json"
 )
 
+// ExecutorInstancePrefix starts the name of every instance systemd spawns
+// from ExecutorUnit: the socket accepts each connection into its own unit
+// (techstack-guard-executor@<n>-<pid>-<uid>.service), one per Guard command.
+const ExecutorInstancePrefix = "techstack-guard-executor@"
+
+// IsExecutorInstance reports whether a systemd unit name is one per-connection
+// executor instance. Such an instance is Guard plumbing that lives for one
+// command, never a service of the host.
+func IsExecutorInstance(unit string) bool {
+	unit = strings.ToLower(strings.TrimSpace(unit))
+	return strings.HasPrefix(unit, ExecutorInstancePrefix) && strings.HasSuffix(unit, ".service") &&
+		len(unit) > len(ExecutorInstancePrefix)+len(".service")
+}
+
 // UnitParams parameterize the embedded units.
 type UnitParams struct {
 	BinaryPath     string

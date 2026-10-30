@@ -63,7 +63,7 @@ func (s *PostgresStore) GetServiceRuntime(ctx context.Context, tenantID, service
 	var out *ServiceRuntime
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
 		service, queryErr := scanServiceRuntime(tx.QueryRowContext(ctx, `
-			SELECT `+serviceRuntimeColumns+`
+			SELECT `+serviceRuntimeReadColumns+`
 			FROM services WHERE tenant_id = $1 AND id = $2
 				AND (server_id IS NOT NULL OR target_kind = 'managed_workload')
 		`, tenantID, serviceID))
@@ -98,7 +98,7 @@ func (s *PostgresStore) ListServiceRuntimes(ctx context.Context, tenantID, stack
 	out := make([]ServiceRuntime, 0)
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
 		rows, queryErr := tx.QueryContext(ctx, `
-			SELECT `+serviceRuntimeColumns+`
+			SELECT `+serviceRuntimeReadColumns+`
 			FROM services
 			WHERE tenant_id = $1 AND (server_id IS NOT NULL OR target_kind = 'managed_workload')
 				AND ($2 = '' OR stack_id = $2) AND ($3 = '' OR server_id = $3)

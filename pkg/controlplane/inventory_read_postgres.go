@@ -151,10 +151,10 @@ func (s *PostgresStore) CountInventoryServers(ctx context.Context, scope Invento
 	return count, err
 }
 
-const inventoryServiceReadCTE = `
+var inventoryServiceReadCTE = `
 	WITH inventory_services AS (
 		SELECT measured.*
-		FROM (SELECT ` + serviceRuntimeColumns + ` FROM services) measured
+		FROM (SELECT ` + serviceRuntimeReadColumns + ` FROM services) measured
 		JOIN servers owned_server
 			ON owned_server.tenant_id = measured.tenant_id AND owned_server.id = measured.server_id
 			AND ($2 = '' OR owned_server.owner_subject_id = $2)

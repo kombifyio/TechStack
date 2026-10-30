@@ -13,6 +13,7 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/guardlayout"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
@@ -382,9 +383,21 @@ func (req *workerInventoryRequest) normalize(runtimeAgentID string) error {
 		req.Host.Network.normalize()
 	}
 	req.Host.Hardware = req.Host.Hardware.Sanitized()
+	services := req.Services[:0]
 	for i := range req.Services {
 		req.Services[i].normalize()
+		// Older Guards report their own per-command executor units;
+		// each lives for one command, so keeping them as services grew one
+		// row per command on every long-lived server.
+		if req.Services[i].PlatformType == "systemd" && guardlayout.IsExecutorInstance(req.Services[i].Name) {
+			if req.Services[i].Source == serviceregistry.SourceObserved && req.DiscoveredServiceCount > 0 {
+				req.DiscoveredServiceCount--
+			}
+			continue
+		}
+		services = append(services, req.Services[i])
 	}
+	req.Services = services
 	for i := range req.Endpoints {
 		req.Endpoints[i].normalize()
 	}

@@ -59,6 +59,19 @@ type GuardInventoryProjectionResult struct {
 type guardInventoryRetainedServices struct {
 	IDs           []string
 	DiscoveredIDs []string
+	// absent holds the discovered IDs already recorded as absent, which a
+	// reconciling inventory leaves as they are.
+	absent map[string]bool
+}
+
+func (retained guardInventoryRetainedServices) discoveredPresentIDs() []string {
+	ids := make([]string, 0, len(retained.DiscoveredIDs))
+	for _, id := range retained.DiscoveredIDs {
+		if !retained.absent[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // GuardInventoryProjectionStore is the atomic persistence seam for a complete

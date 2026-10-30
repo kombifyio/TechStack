@@ -10,7 +10,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/guardlayout"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
+	"github.com/kombifyio/techstack/pkg/serviceregistry"
+)
+
+// The projection writes a retained row only when this inventory changes it, so
+// an unchanged inventory rewrites no service row.
+const (
+	// guardInventoryStampChangedSQL: $6 inventory revision, $7 observed flag.
+	guardInventoryStampChangedSQL = `(metadata_json->>'inventory_revision' IS DISTINCT FROM ($6::bigint)::text
+		OR metadata_json->'` + guardInventoryObservedKey + `' IS DISTINCT FROM to_jsonb($7::boolean))`
+	guardInventoryUnobservedStampChangedSQL = `metadata_json->>'inventory_revision' IS DISTINCT FROM ($6::bigint)::text
+		OR metadata_json->'` + guardInventoryObservedKey + `' IS DISTINCT FROM 'false'::jsonb`
+	guardInventoryArchivedSQL = `(lower(btrim(COALESCE(migration_status, ''))) = 'archived' OR lower(btrim(status)) = 'archived')`
+	guardInventoryPrunedAccessSQL = `(CASE WHEN ` + guardInventoryArchivedSQL + `
+		THEN '` + guardInventoryArchivedUnavailableJSON + `'::jsonb
+		ELSE '` + guardInventoryMigrationUnavailableJSON + `'::jsonb END)`
+	guardInventoryNoEvidenceAccessSQL = `(CASE WHEN ` + guardInventoryArchivedSQL + `
+		THEN '` + guardInventoryArchivedUnavailableJSON + `'::jsonb
+		ELSE '` + guardInventoryNoEvidenceJSON + `'::jsonb END)`
+	// A retained row keeps the freshness readers saw (serviceInventorySeenAtSQL)
+	// when its write stops binding it to the inventory or moves its revision.
+	guardInventoryKeptObservedAtSQL = `COALESCE(` + serviceInventorySeenAtSQL + `, observed_at)`
+	guardInventoryKeptMetadataSQL   = `(CASE WHEN ` + serviceInventorySeenAtSQL + ` IS NULL THEN COALESCE(metadata_json, '{}'::jsonb)
+		ELSE jsonb_set(COALESCE(metadata_json, '{}'::jsonb), '{observed_at}', to_jsonb(to_char(` + serviceInventorySeenAtSQL +
+		` AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')), false) END)`
+	// guardDiscoveredServiceAbsentAccessJSON is the access guardDiscoveredServiceAbsentEvent writes.
+	guardDiscoveredServiceAbsentAccessJSON = `{"` + legacyServiceAccessModeKey + `":"` + legacyServiceRuntimeUnavailable +
+		`","` + guardServiceAccessReasonKey + `":"` + guardServiceDiscoveryAbsentReason + `"}`
 )
 
 const (
@@ -90,6 +118,9 @@ func applyGuardInventoryProjectionTx(
 	}
 	retainedServices := guardInventoryRetainedServices{}
 	if !guardInventoryProjectionFenced(*current, prepared.command.Event) {
+		if err := deleteGuardExecutorInstanceServicesTx(ctx, tx, prepared.command); err != nil {
+			return nil, err
+		}
 		retainedServices, err = listGuardInventoryRetainedServicesTx(ctx, tx, prepared.command)
 		if err != nil {
 			return nil, err
@@ -124,6 +155,7 @@ func applyGuardInventoryProjectionTx(
 		return nil, err
 	}
 	for _, service := range projection.Services {
+		service.Runtime.Metadata[guardInventoryObservedKey] = true
 		// Provenance is per row: normalizeGuardInventoryServiceProjection has
 		// already resolved and validated it, defaulting to the batch source.
 		if err := upsertGuardInventoryServiceTx(
@@ -155,9 +187,10 @@ func applyGuardInventoryProjectionTx(
 		}
 	}
 	if len(retainedServices.DiscoveredIDs) > 0 {
-		if guardInventoryDiscoveryCanReconcile(projection) {
+		reconciled := guardInventoryDiscoveryCanReconcile(projection)
+		if reconciled {
 			if err := markGuardDiscoveredServicesAbsentTx(
-				ctx, tx, projection, retainedServices.DiscoveredIDs,
+				ctx, tx, projection, retainedServices.discoveredPresentIDs(),
 				serverEvent.Inventory.Revision, databaseNow.UTC(),
 			); err != nil {
 				return nil, err
@@ -166,7 +199,7 @@ func applyGuardInventoryProjectionTx(
 		if err := stampGuardInventoryServicesRevisionTx(
 			ctx, tx, tenantID, projection.Event.Runtime.StackID,
 			projection.Event.ServerID, serviceSourceObserved, retainedServices.DiscoveredIDs,
-			serverEvent.Inventory.Revision,
+			serverEvent.Inventory.Revision, reconciled,
 		); err != nil {
 			return nil, err
 		}
@@ -250,7 +283,9 @@ func upsertGuardInventoryServiceTx(
 	serviceSource string,
 	now time.Time,
 ) error {
-	_, err := applyServiceEventTx(ctx, tx, guardInventoryServiceEvent(projection, serviceSource), now)
+	event := guardInventoryServiceEvent(projection, serviceSource)
+	event.FreshnessOnlyUnchanged = true
+	_, err := applyServiceEventTx(ctx, tx, event, now)
 	return err
 }
 
@@ -308,7 +343,12 @@ func listGuardInventoryRetainedServicesTx(
 		return guardInventoryRetainedServices{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, lower(btrim(source)) FROM services
+		SELECT id, lower(btrim(source)),
+			COALESCE(lower(btrim(source)) = lower(btrim($8)) AND server_id = $3 AND node_id = $3
+				AND observed_state = $10 AND health_state = $11 AND status = $10
+				AND COALESCE(url, '') = '' AND migration_status IS NULL
+				AND access_json = $12::jsonb, false)
+		FROM services
 		WHERE tenant_id = $1 AND stack_id = $2
 			AND (server_id = $3 OR (server_id IS NULL AND node_id = $3))
 			AND (
@@ -336,7 +376,8 @@ func listGuardInventoryRetainedServicesTx(
 		FOR UPDATE
 	`, command.Event.TenantID, command.Event.Runtime.StackID, command.Event.ServerID,
 		command.ServiceSource, managedJSON, command.ManifestObserved, len(managed) > 0,
-		serviceSourceObserved, discoveredJSON)
+		serviceSourceObserved, discoveredJSON,
+		string(serviceregistry.ObservedStopped), string(serviceregistry.HealthUnknown), guardDiscoveredServiceAbsentAccessJSON)
 	if err != nil {
 		return guardInventoryRetainedServices{}, err
 	}
@@ -344,12 +385,19 @@ func listGuardInventoryRetainedServicesTx(
 	retained := guardInventoryRetainedServices{}
 	for rows.Next() {
 		var id, source string
-		if err := rows.Scan(&id, &source); err != nil {
+		var absent bool
+		if err := rows.Scan(&id, &source, &absent); err != nil {
 			return guardInventoryRetainedServices{}, err
 		}
 		retained.IDs = append(retained.IDs, id)
 		if strings.EqualFold(source, serviceSourceObserved) {
 			retained.DiscoveredIDs = append(retained.DiscoveredIDs, id)
+			if absent {
+				if retained.absent == nil {
+					retained.absent = map[string]bool{}
+				}
+				retained.absent[id] = true
+			}
 		}
 	}
 	return retained, rows.Err()
@@ -379,6 +427,7 @@ func stampGuardInventoryServicesRevisionTx(
 	tenantID, stackID, serverID, serviceSource string,
 	serviceIDs []string,
 	inventoryRevision int64,
+	observed bool,
 ) error {
 	if len(serviceIDs) == 0 {
 		return nil
@@ -391,7 +440,9 @@ func stampGuardInventoryServicesRevisionTx(
 	}
 	_, err = tx.ExecContext(ctx, `
 		UPDATE services SET
-			metadata_json = COALESCE(metadata_json, '{}'::jsonb) || jsonb_build_object('inventory_revision', $6::bigint)
+			observed_at = `+guardInventoryKeptObservedAtSQL+`,
+			metadata_json = `+guardInventoryKeptMetadataSQL+` ||
+				jsonb_build_object('inventory_revision', $6::bigint, '`+guardInventoryObservedKey+`', $7::boolean)
 		WHERE tenant_id = $1 AND stack_id = $2
 			AND (server_id = $3 OR (server_id IS NULL AND node_id = $3))
 			AND lower(btrim(source)) = lower(btrim($4))
@@ -399,7 +450,8 @@ func stampGuardInventoryServicesRevisionTx(
 				SELECT 1 FROM jsonb_array_elements_text($5::jsonb) AS retained(service_id)
 				WHERE retained.service_id = services.id
 			)
-	`, tenantID, stackID, serverID, serviceSource, idsJSON, inventoryRevision)
+			AND `+guardInventoryStampChangedSQL+`
+	`, tenantID, stackID, serverID, serviceSource, idsJSON, inventoryRevision, observed)
 	return err
 }
 
@@ -420,11 +472,10 @@ func pruneGuardInventoryServicesTx(
 		UPDATE services SET
 			server_id = $3,
 			url = NULL,
-			metadata_json = COALESCE(metadata_json, '{}'::jsonb) || jsonb_build_object('inventory_revision', $6::bigint),
-			access_json = CASE WHEN
-				lower(btrim(COALESCE(migration_status, ''))) = 'archived' OR lower(btrim(status)) = 'archived'
-				THEN '`+guardInventoryArchivedUnavailableJSON+`'::jsonb
-				ELSE '`+guardInventoryMigrationUnavailableJSON+`'::jsonb END,
+			observed_at = `+guardInventoryKeptObservedAtSQL+`,
+			metadata_json = `+guardInventoryKeptMetadataSQL+` ||
+				jsonb_build_object('inventory_revision', $6::bigint, '`+guardInventoryObservedKey+`', false),
+			access_json = `+guardInventoryPrunedAccessSQL+`,
 			updated_at = now()
 		WHERE tenant_id = $1 AND stack_id = $2
 			AND (server_id = $3 OR (server_id IS NULL AND node_id = $3))
@@ -437,6 +488,9 @@ func pruneGuardInventoryServicesTx(
 				SELECT 1 FROM jsonb_array_elements_text($5::jsonb) AS observed(service_id)
 				WHERE observed.service_id = services.id
 			)
+			AND (server_id IS DISTINCT FROM $3 OR url IS NOT NULL
+				OR access_json IS DISTINCT FROM `+guardInventoryPrunedAccessSQL+`
+				OR `+guardInventoryUnobservedStampChangedSQL+`)
 	`, tenantID, stackID, serverID, serviceSource, idsJSON, inventoryRevision)
 	if err != nil {
 		return err
@@ -469,16 +523,38 @@ func markGuardInventoryServicesUnavailableTx(
 	_, err := tx.ExecContext(ctx, `
 		UPDATE services SET
 			url = NULL,
-			metadata_json = COALESCE(metadata_json, '{}'::jsonb) || jsonb_build_object('inventory_revision', $5::bigint),
-			access_json = CASE WHEN
-				lower(btrim(COALESCE(migration_status, ''))) = 'archived' OR lower(btrim(status)) = 'archived'
-				THEN '`+guardInventoryArchivedUnavailableJSON+`'::jsonb
-				ELSE '`+guardInventoryNoEvidenceJSON+`'::jsonb END,
+			observed_at = `+guardInventoryKeptObservedAtSQL+`,
+			metadata_json = `+guardInventoryKeptMetadataSQL+` ||
+				jsonb_build_object('inventory_revision', $5::bigint, '`+guardInventoryObservedKey+`', false),
+			access_json = `+guardInventoryNoEvidenceAccessSQL+`,
 			updated_at = now()
 		WHERE tenant_id = $1 AND stack_id = $2
 			AND (server_id = $3 OR (server_id IS NULL AND node_id = $3))
 			AND lower(btrim(source)) = lower(btrim($4))
+			AND (url IS NOT NULL OR access_json IS DISTINCT FROM `+guardInventoryNoEvidenceAccessSQL+`
+				OR `+strings.ReplaceAll(guardInventoryUnobservedStampChangedSQL, "$6", "$5")+`)
 	`, tenantID, stackID, serverID, serviceSource, inventoryRevision)
+	return err
+}
+
+// deleteGuardExecutorInstanceServicesTx removes discovered rows of the Guard's
+// own per-command executor units (guardlayout.IsExecutorInstance). Older
+// Guards reported them, and as each instance ends with its command, a
+// long-lived server kept one retained row per command it ever ran. The batch is
+// bounded so the cleanup stays inside one inventory request.
+func deleteGuardExecutorInstanceServicesTx(ctx context.Context, tx *sql.Tx, command GuardInventoryProjection) error {
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM services WHERE tenant_id = $1 AND id IN (
+			SELECT id FROM services
+			WHERE tenant_id = $1 AND (server_id = $2 OR (server_id IS NULL AND node_id = $2))
+				AND lower(btrim(source)) = $3 AND metadata_json->>'platform_type' = 'systemd'
+				AND lower(name) LIKE $4 AND lower(service_key) LIKE 'systemd/%'
+			ORDER BY id
+			LIMIT 1000
+		)
+	`, command.Event.TenantID, command.Event.ServerID, serviceSourceObserved,
+		// "_%" keeps the bare template (no instance) out, as IsExecutorInstance does.
+		guardlayout.ExecutorInstancePrefix+"_%.service")
 	return err
 }
 

@@ -36,7 +36,7 @@ func serverMaintenanceImpactTx(ctx context.Context, tx *sql.Tx, tenantID, server
 		return nil, err
 	}
 	// Service authority writes lock these same rows. Acquire locks in ID order.
-	rows, err := tx.QueryContext(ctx, `SELECT `+serviceRuntimeColumns+` FROM services
+	rows, err := tx.QueryContext(ctx, `SELECT `+serviceRuntimeReadColumns+` FROM services
 		WHERE tenant_id = $1 AND server_id = $2 AND EXISTS (
 			SELECT 1 FROM stacks WHERE stacks.tenant_id = services.tenant_id AND stacks.id = services.stack_id
 				AND stacks.owner_subject_id = $3 AND stacks.deleted_at IS NULL)
