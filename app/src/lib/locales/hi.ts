@@ -2976,8 +2976,6 @@ export const hi: Record<string, string> = {
     "रिमोट SSH एनरोलमेंट की प्रगति जाँची नहीं जा सकी।",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
     "कनेक्शन कमांड तैयार नहीं हो सका।",
-  "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier":
-    "पहले वाला पंजीकरण फिर से शुरू नहीं हो सका। इसके बजाय नया प्रयास शुरू कीजिए।",
   "ui.stacksCreatingCreation-controller.couldNotResumeTheOverdue":
     "देरी से चल रही प्रबंधित रनटाइम प्रतीक्षा फिर से शुरू नहीं हो सकी।",
   "ui.stacksCreatingCreation-controller.couldNotRetryRemoteSSH":
@@ -3007,8 +3005,6 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.nodeConnected": "सर्वर जुड़ गया",
   "ui.stacksCreatingCreation-controller.nodeConnectionReady":
     "सर्वर कनेक्शन तैयार",
-  "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "सर्वर पंजीकरण ने कोई निर्माण जॉब नहीं लौटाया।",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
     "सर्वर पंजीकरण तैयार",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
@@ -3018,8 +3014,6 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
     "{name} ने संपर्क कर लिया है और अब आपके Homelab का हिस्सा है।",
   "ui.stacksCreatingCreation-controller.restoreDrill": "रिस्टोर ड्रिल",
-  "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "पिछला सर्वर पंजीकरण प्रयास फिर शुरू हो रहा है…",
   "ui.stacksCreatingCreation-controller.retryDeployment":
     "डिप्लॉयमेंट दोबारा आज़माएँ",
   "ui.stacksCreatingCreation-controller.retryRollout": "रोलआउट दोबारा आज़माएँ",
@@ -3045,8 +3039,6 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.stackkitRollout": "StackKit रोलआउट",
   "ui.stacksCreatingCreation-controller.stackkitRuntimeVerificationMissing":
     "StackKit रनटाइम सत्यापन गायब है",
-  "ui.stacksCreatingCreation-controller.startFreshAttempt":
-    "नया प्रयास शुरू करें",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
     "सर्वर जोड़ने का अनुरोध 2 मिनट से ज़्यादा समय से चल रहा है। इस मार्ग को केवल अतिरिक्त सर्वर का अनुरोध या तैयारी करनी चाहिए, पूरा StackKit रोलआउट नहीं चलाना चाहिए। ऑपरेशन खोलकर जाँचें कि सर्वर अनुरोध बना या नहीं, और अगर कोई नया सर्वर न दिखे तो सर्वर जोड़ना दोबारा आज़माएँ।",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
@@ -3065,8 +3057,6 @@ export const hi: Record<string, string> = {
     "आरक्षित सर्वर की जाँच नहीं हो सकी। सर्वर इन्वेंटरी फिर उपलब्ध होने पर सहेजे गए कनेक्शन पर SSH एनरोलमेंट दोबारा आज़माएँ।",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "इस पेज को सेटअप विज़ार्ड से job_id चाहिए। कृपया /stacks/new से सेटअप दोबारा शुरू करें।",
-  "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "चुने गए StackKit को सत्यापित किया जा रहा है और सर्वर तैयार हो रहा है...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
     "आपकी रिमोट सर्वर कॉन्फ़िगरेशन रोलआउट के लिए तैयार है",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
@@ -3151,16 +3141,12 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
     '"{operation}" बनाना "{step}" चरण पर इस त्रुटि के साथ विफल हुआ:\n\n{error}\n\nक्या गलत हुआ, और मुझे आगे क्या करना चाहिए?',
   "ui.stacksCreatingCreationFailure.possibleSolutions": "संभावित समाधान:",
-  "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
-    "पिछला प्रयास फिर शुरू करें",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
     "SSH एनरोलमेंट पूरा हो गया और सर्वर आपके Homelab में दिख रहा है। केवल StackKit की तैयारी या रोलआउट विफल हुआ। दोबारा कोशिश जुड़े हुए सर्वर पर आगे बढ़ती है, SSH एनरोलमेंट दोहराए बिना।",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "सटीक रीट्राई एंडपॉइंट मौजूदा सर्वर पर आगे बढ़ने से पहले इस विफल जॉब और लीज़ को सत्यापित करता है।",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "रोलआउट मौजूदा प्रबंधित VM तक पहुँच गया।",
-  "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "इस ब्राउज़र ने किसी दूसरे सबमिशन की प्रयास कुंजी दोबारा इस्तेमाल की। पिछले रन ने शायद पहले ही सर्वर पंजीकरण बना दिया हो। उस प्रयास को फिर शुरू करें, या नई कुंजी के साथ नए सिरे से शुरू करें।",
   "ui.stacksCreatingCreationFailure.troubleshooting": "समस्या निवारण",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
     "VPS प्रोविज़निंग पूरी हो गई। केवल StackKit आर्टिफ़ैक्ट, डोमेन रूटिंग या बाद का रोलआउट कार्य विफल हुआ।",

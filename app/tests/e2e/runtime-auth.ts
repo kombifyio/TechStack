@@ -299,7 +299,6 @@ async function fillAuth0UniversalLogin(
     'input[type="email"], input[name="email"], input[name="username"], #username',
   );
   await waitForAuth0Field(page, emailInput, "email");
-  await emailInput.first().fill(email, { timeout: 5_000 });
   const passwordInput = visibleLocator(
     page,
     'input[type="password"]:not([aria-hidden="true"]):not(.hide), input[name="password"]:not([aria-hidden="true"]):not(.hide), #password:not([aria-hidden="true"]):not(.hide)',
@@ -310,15 +309,35 @@ async function fillAuth0UniversalLogin(
       .isVisible()
       .catch(() => false))
   ) {
-    // Auth0's branded identifier action can consume both pointer and keyboard
-    // events without posting in headless Linux. Submit the real primary form;
-    // this preserves its state, PKCE and connection fields.
-    const identifierForm = emailInput
-      .first()
-      .locator('xpath=ancestor::form[@data-form-primary="true"][1]');
-    await identifierForm.evaluate((form: HTMLFormElement) => {
-      HTMLFormElement.prototype.submit.call(form);
-    });
+    // Auth0's automatic passkey POST can replace this document. Fill and
+    // submit the same identifier form in one browser task so navigation
+    // cannot discard the username between separate Playwright operations.
+    await emailInput.first().evaluate((input, { identifier, expectedOrigin }) => {
+      if (location.origin.toLowerCase() !== expectedOrigin) {
+        throw new Error("Refusing to enter Auth0 identifier on unexpected issuer");
+      }
+      if (
+        !(input instanceof HTMLInputElement) ||
+        !input.form ||
+        input.disabled ||
+        input.readOnly
+      ) {
+        throw new Error("Auth0 identifier field is not editable in a form");
+      }
+      const form = input.form;
+      const submitter = form.querySelector(
+        'button[type="submit"][name="action"]',
+      );
+      if (!(submitter instanceof HTMLButtonElement)) {
+        throw new Error("Auth0 identifier form has no Continue submitter");
+      }
+      input.value = identifier;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      form.requestSubmit(submitter);
+    }, { identifier: email, expectedOrigin });
+  } else {
+    await fillSecret(emailInput.first(), email);
   }
   await waitForAuth0Field(page, passwordInput, "password");
   assertExpectedIssuer(page, expectedOrigin);

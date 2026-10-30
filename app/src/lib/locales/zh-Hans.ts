@@ -2750,8 +2750,6 @@ export const zhHans: Record<string, string> = {
     "无法检查远程 SSH 注册进度。",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
     "无法准备连接命令。",
-  "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier":
-    "无法恢复之前的注册。请改为重新开始。",
   "ui.stacksCreatingCreation-controller.couldNotResumeTheOverdue":
     "无法恢复已超时的托管运行时等待。",
   "ui.stacksCreatingCreation-controller.couldNotRetryRemoteSSH":
@@ -2780,8 +2778,6 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.noJobFound": "未找到作业",
   "ui.stacksCreatingCreation-controller.nodeConnected": "服务器已连接",
   "ui.stacksCreatingCreation-controller.nodeConnectionReady": "服务器连接已就绪",
-  "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "服务器注册未返回创建作业。",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
     "服务器注册已就绪",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
@@ -2791,8 +2787,6 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
     "{name} 已报到，现已加入你的 Homelab。",
   "ui.stacksCreatingCreation-controller.restoreDrill": "恢复演练",
-  "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "正在继续之前的服务器注册尝试…",
   "ui.stacksCreatingCreation-controller.retryDeployment": "重试部署",
   "ui.stacksCreatingCreation-controller.retryRollout": "重试推出",
   "ui.stacksCreatingCreation-controller.retryServerRequest": "重试服务器请求",
@@ -2814,7 +2808,6 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.stackkitRollout": "StackKit 推出",
   "ui.stacksCreatingCreation-controller.stackkitRuntimeVerificationMissing":
     "缺少 StackKit 运行时验证",
-  "ui.stacksCreatingCreation-controller.startFreshAttempt": "开始新的尝试",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
     "“添加服务器”请求已运行超过 2 分钟。此路径只应请求或准备额外的服务器，而不应执行完整的 StackKit 推出。请打开“操作”查看服务器请求是否已创建；如果没有出现新的服务器，请重试“添加服务器”。",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
@@ -2833,8 +2826,6 @@ export const zhHans: Record<string, string> = {
     "无法检查已预留的服务器。服务器清单再次可用后，请在已保存的连接上重试 SSH 注册。",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "此页面需要来自设置向导的 job_id。请通过 /stacks/new 重新开始设置。",
-  "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "正在验证所选 StackKit 并准备服务器...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
     "你的远程服务器配置已可用于推出",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
@@ -2910,15 +2901,12 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
     "创建“{operation}”在步骤“{step}”失败，错误如下：\n\n{error}\n\n出了什么问题？我下一步该怎么做？",
   "ui.stacksCreatingCreationFailure.possibleSolutions": "可能的解决方法：",
-  "ui.stacksCreatingCreationFailure.resumePreviousAttempt": "继续上一次尝试",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
     "SSH 注册已完成，服务器已在你的 Homelab 中可见。仅 StackKit 准备或推出失败。重试将在已连接的服务器上继续，无需重复 SSH 注册。",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "精确的重试端点会先验证此失败的作业和租约，然后在现有服务器上继续。",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "推出已到达现有的托管 VM。",
-  "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "此浏览器复用了来自另一次提交的尝试密钥。之前的运行可能已经创建了服务器注册。请继续该次尝试，或使用新密钥重新开始。",
   "ui.stacksCreatingCreationFailure.troubleshooting": "故障排查",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
     "VPS 配置已完成。仅 StackKit 制品、域名路由或后续推出工作失败。",

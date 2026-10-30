@@ -247,6 +247,9 @@ func runTechstack(ctx context.Context) error {
 	if handled, err := handleEarlyCommand(ctx, os.Args); handled {
 		return err
 	}
+	if handled, err := superviseNativePostgres(ctx); handled {
+		return err
+	}
 	if err := checkPublicBackupCustody(); err != nil {
 		return err
 	}
@@ -295,20 +298,7 @@ func runTechstack(ctx context.Context) error {
 	}
 	stackroutes.ConfigureKombifyWallet(walletClient)
 	log.Info("wallet_source_ready", "source", string(walletSource))
-	// The installed Windows client starts the runtime with TECHSTACK_EMBEDDED_POSTGRES=1 and no
-	// DATABASE_URL: the embedded server started here supplies it.
-	localPostgres, err := maybeStartEmbeddedPostgres(startup.cfg, log)
-	if err != nil {
-		return fmt.Errorf("start embedded postgres: %w", err)
-	}
-	defer func() {
-		if localPostgres != nil {
-			if err := localPostgres.Stop(); err != nil {
-				log.Warn("embedded_postgres_stop_failed", "error", err)
-			}
-		}
-	}()
-	// The database requirement is judged after the embedded server had its chance to supply the URL.
+	// Native supervision has already supplied a bounded child connection.
 	if strings.TrimSpace(os.Getenv(db.EnvDatabaseURL)) == "" {
 		return fmt.Errorf("canonical PostgreSQL database is required: configure %s before starting the supported runtime", db.EnvDatabaseURL)
 	}
@@ -592,6 +582,8 @@ func handleEarlyCommand(ctx context.Context, args []string) (bool, error) {
 		return false, nil
 	}
 	switch args[1] {
+	case "local-database":
+		return true, runLocalDatabase(ctx, args[2:])
 	case "owner":
 		return true, runOwnerBootstrap(ctx, args[2:])
 	case "version":
@@ -711,6 +703,12 @@ func bootCanonicalV2(ctx context.Context, cfg *config.Config, log *logger.Logger
 }
 
 func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.DB {
+	if !hostedRuntime(cfg) {
+		if err := checkNativeServingCustody(); err != nil {
+			log.Error("v2_db_runtime_role_refused", "error", err)
+			return nil
+		}
+	}
 	dbCfg, err := db.ConfigFromEnv()
 	if err != nil {
 		log.Error("v2_db_config_invalid", "error", err)
@@ -723,12 +721,12 @@ func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.D
 	// application login (D-2026-10-22-02), in production and in the
 	// non-production instance alike (D-2026-10-22-04).
 	posture := db.RuntimeRoleLocalOwner
+	if err := db.VerifyHostedRuntimeMigrationMode(); err != nil {
+		log.Error("v2_db_runtime_role_refused", "error", err)
+		return nil
+	}
 	if hostedRuntime(cfg) {
 		posture = db.RuntimeRoleHosted
-		if err := db.VerifyHostedRuntimeMigrationMode(); err != nil {
-			log.Error("v2_db_runtime_role_refused", "error", err)
-			return nil
-		}
 	}
 	opened, err := db.Open(dbCfg)
 	if err != nil {

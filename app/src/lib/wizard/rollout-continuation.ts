@@ -1,4 +1,6 @@
-export type CreationOperation = "stack" | "add-server";
+import type { CreationOperation } from "#lib/creation/core/index.js";
+
+export type { CreationOperation };
 
 /** The durable wizard ledger is the receipt authority after reload. */
 export function readApplianceReceipt(

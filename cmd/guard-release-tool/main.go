@@ -4,6 +4,7 @@
 //	guard-release-tool tree-digest <dir>          digest of a StackKits runtime tree
 //	guard-release-tool archive-digest <file.tgz>  the same digest of a bundle archive
 //	guard-release-tool verify <dir>               verify the release in <dir> the way a Guard does
+//	guard-release-tool r2-mirror <dir>            copy the indexed delivery files to private R2
 //
 // The digests are the lowercase hex values pkg/guardrelease.TreeDigest defines.
 // verify reads release-manifest.json, release-manifest.sigstore.json and, for
@@ -30,7 +31,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: guard-release-tool tree-digest <dir> | archive-digest <file.tar.gz> | verify <dir> [--expected-source <40-character SHA>] [--require-runtime-bundles] [--require-current-policy | --refresh-published]")
+		fmt.Fprintln(os.Stderr, "usage: guard-release-tool tree-digest <dir> | archive-digest <file.tar.gz> | verify <dir> [--expected-source <40-character SHA>] [--require-runtime-bundles] [--require-current-policy | --refresh-published] | r2-mirror <dir>")
 		os.Exit(64)
 	}
 	output, err := run(os.Args[1], os.Args[2], os.Args[3:]...)
@@ -62,6 +63,8 @@ func run(command, arg string, extra ...string) (string, error) {
 			return "", err
 		}
 		return releaseArtifactIndex(arg)
+	case "r2-mirror":
+		return mirrorReleaseToR2(arg)
 	case "tree-digest":
 		return guardrelease.TreeDigest(arg)
 	case "archive-digest":

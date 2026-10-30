@@ -1,6 +1,5 @@
 import { tr } from "#lib/i18n.svelte.js";
 import { goto } from "$app/navigation";
-import { page } from "$app/state";
 import { getClientBootstrap } from "#lib/client/bootstrap.js";
 import * as Sentry from "@sentry/sveltekit";
 import { sanitizeSensitiveText } from "#lib/security/sensitive-data.js";
@@ -19,14 +18,12 @@ import {
   type StackJobAcceptedResponse,
 } from "#lib/api/stacks.js";
 import {
-  createWizardRun,
   getActiveWizardRun,
   wizardRunNeedsAttention,
-  type WizardRunRequest,
-  type WizardRunResponse,
   type WizardApplianceReceipt,
 } from "#lib/api/wizardRuns.js";
 import { ApiRequestError } from "#lib/api/client.js";
+import type { CreationOperation } from "#lib/creation/core/index.js";
 import { parseApiError } from "#lib/api/errors.js";
 import {
   listCanonicalServers,
@@ -94,14 +91,9 @@ import {
 } from "#lib/wizard/index.js";
 import {
   clearJoinWizardIdempotencyKeys,
-  clearSubmittedJoinWizardIdempotencyKey,
   clearStackLifecycleRetryIdempotencyKey,
   mintStackLifecycleRetryIdempotencyKey,
 } from "#lib/wizard/idempotency-keys.js";
-import {
-  isWizardIdempotencyConflict,
-  parseWizardConflictRecovery,
-} from "#lib/wizard/wizard-conflict-recovery.js";
 import {
   asRecord,
   buildFailureDetails,
@@ -146,18 +138,13 @@ export type DegradedComponentView = DegradedComponent & {
   repairMessage?: string;
 };
 
-type WizardRunSubmission = {
-  request: WizardRunRequest;
-  idempotencyKey: string;
-};
-
 const runtimeTaskIds = new Set(RUNTIME_TASKS.map((task) => task.id));
 
 let stackName = $state("");
 let stackId = $state("");
 let jobId = $state("");
 let applianceReceipt = $state<WizardApplianceReceipt>();
-let creationOperation = $state<"stack" | "add-server">("stack");
+let creationOperation = $state<CreationOperation>("stack");
 let registrationToken = $state("");
 let stackKitHandoff = $state<StackKitIdentityHandoff | null>(null);
 let lease = $state<LeaseSummary | null>(null);
@@ -310,8 +297,6 @@ let waitingRecoveryAvailable = $derived(
 );
 let retryingRollout = $state(false);
 let retryError = $state("");
-let wizardIdempotencyConflictFailed = $state(false);
-let replayableWizardSubmission: WizardRunSubmission | null = null;
 let jobRetryable = $state<boolean | undefined>(undefined);
 // Ticks once per second so the phase timers and the time-weighted progress
 // bar keep moving between backend updates.
@@ -482,7 +467,9 @@ let hasManagedLeaseReference = $derived(Boolean(lease?.id));
 let creationHeaderLabel = $derived(
   creationOperation === "add-server"
     ? tr("ui.stacksCreatingCreation-controller.additionalNode")
-    : stackName ||
+    : creationOperation === "add-use-case"
+      ? tr("layout.addUseCases.title")
+      : stackName ||
         tr("ui.stacksCreatingCreation-controller.creatingStackKitDeployment"),
 );
 let postLeaseManagedCloudFailure = $derived(
@@ -516,9 +503,7 @@ let connectRemoteStackKitFailed = $derived(
 let failurePrimaryActionLabel = $derived(
   retryingRollout
     ? tr("ui.stacksCreatingCreation-controller.retrying")
-    : wizardIdempotencyConflictFailed
-      ? tr("ui.stacksCreatingCreation-controller.startFreshAttempt")
-      : connectRemoteStackKitFailed && failureRetryDispatch
+    : connectRemoteStackKitFailed && failureRetryDispatch
         ? failureRetryDispatch.kind === "rollout"
           ? tr(
               "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected",
@@ -539,9 +524,7 @@ let failurePrimaryActionLabel = $derived(
               : tr("ui.login.tryAgain"),
 );
 let failurePrimaryActionDisabled = $derived(retryingRollout);
-let failurePrimaryActionAvailable = $derived(
-  wizardIdempotencyConflictFailed || jobRetryable !== false,
-);
+let failurePrimaryActionAvailable = $derived(jobRetryable !== false);
 let completionTitle = $derived(
   degradedCompletion
     ? degradedCompletion.components.length > 1
@@ -1523,6 +1506,8 @@ async function adoptActiveWizardRun(expectedJobId = ""): Promise<boolean> {
     if (resultName) stackName = resultName;
     if (result.kit_assignment_mode === "join") {
       creationOperation = "add-server";
+    } else if (result.kit_assignment_mode === "extend") {
+      creationOperation = "add-use-case";
     }
     const mode = getString(resume, ["server_provisioning_mode"]);
     if (isServerProvisioningMode(mode)) {
@@ -1565,62 +1550,6 @@ async function adoptActiveWizardRun(expectedJobId = ""): Promise<boolean> {
   }
 }
 
-function pendingWizardRunSubmission(): WizardRunSubmission | null {
-  const candidate = (page.state as { wizardRunSubmission?: unknown })
-    .wizardRunSubmission;
-  if (!candidate || typeof candidate !== "object") return null;
-  const submission = candidate as Partial<WizardRunSubmission>;
-  if (
-    !submission.request ||
-    typeof submission.request !== "object" ||
-    typeof submission.idempotencyKey !== "string" ||
-    !submission.idempotencyKey
-  ) {
-    return null;
-  }
-  return submission as WizardRunSubmission;
-}
-
-function markWizardSubmissionRunning() {
-  latestJobMessage = tr(
-    "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd",
-  );
-  jobState = "running";
-  tasks = tasks.map((task, index) =>
-    index === 0
-      ? { ...task, status: "running", message: latestJobMessage }
-      : task,
-  );
-}
-
-function applyCreationHandoffToSearchParams(params: URLSearchParams) {
-  if (stackId) params.set("stack_id", stackId);
-  if (stackName) params.set("name", stackName);
-  if (creationOperation === "add-server") {
-    params.set("operation", "add-server");
-  }
-  if (jobId) params.set("job_id", jobId);
-  if (pairingJobId) params.set("pairing_job_id", pairingJobId);
-}
-
-async function clearWizardSubmissionState(run?: WizardRunResponse) {
-  const params = new URLSearchParams(window.location.search);
-  if (run) {
-    applianceReceipt = readApplianceReceipt(run.appliance);
-    stackId = run.kit_deployment_id || stackId;
-    stackName = run.name || stackName;
-    jobId = run.job_id || run.pairing_job_id || "";
-    pairingJobId = run.pairing_job_id || "";
-    applyPlannedServerTarget(run as unknown as Record<string, unknown>);
-  }
-  applyCreationHandoffToSearchParams(params);
-  await goto(`/stacks/creating?${params.toString()}`, {
-    replace: true,
-    shallow: true,
-    state: {},
-  });
-}
-
 function beginJobTracking() {
   if (!jobId || pageDestroyed) return;
   restoreTaskTimeline();
@@ -1632,106 +1561,6 @@ function beginJobTracking() {
   void pollJobStatus();
   pollingInterval = setInterval(pollJobStatus, BASE_POLL_INTERVAL);
   startJobStream();
-}
-
-async function resumeWizardRunFromConflict(error: unknown): Promise<boolean> {
-  clearJoinWizardIdempotencyKeys(stackId);
-  if (await adoptActiveWizardRun()) {
-    wizardIdempotencyConflictFailed = false;
-    initError = null;
-    beginJobTracking();
-    return Boolean(jobId);
-  }
-  if (error == null) return false;
-  const recovery = parseWizardConflictRecovery(parseApiError(error).details);
-  const nextStackId = recovery.stackId || stackId;
-  const nextJobId = recovery.jobId || recovery.pairingJobId;
-  if (!nextStackId || !nextJobId) return false;
-  stackId = nextStackId;
-  jobId = recovery.jobId || nextJobId;
-  pairingJobId = recovery.pairingJobId || pairingJobId;
-  creationOperation = "add-server";
-  wizardIdempotencyConflictFailed = false;
-  initError = null;
-  jobState = "running";
-  latestJobMessage = tr(
-    "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration",
-  );
-  tasks = tasks.map((task, index) =>
-    index === 0
-      ? { ...task, status: "running", message: latestJobMessage }
-      : task,
-  );
-  syncTaskListForOperation();
-  beginJobTracking();
-  return true;
-}
-
-function wizardSubmissionErrorDetails(details: unknown): string {
-  if (details == null) return "";
-  try {
-    return sanitizeSensitiveText(JSON.stringify(details, null, 2));
-  } catch {
-    return sanitizeSensitiveText(details);
-  }
-}
-
-async function submitPendingWizardRun(
-  submission: WizardRunSubmission,
-): Promise<boolean> {
-  const transport = submission.request.intent.server.transport;
-  if (isServerProvisioningMode(transport)) {
-    serverProvisioningMode = transport;
-    syncTaskListForOperation();
-  }
-  markWizardSubmissionRunning();
-  replayableWizardSubmission = null;
-  let run: WizardRunResponse | undefined;
-  try {
-    run = await createWizardRun(submission.request, submission.idempotencyKey);
-    if (!run.job_id && !run.pairing_job_id) {
-      throw new Error(
-        tr("ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn"),
-      );
-    }
-    if (submission.request.intent.kit_assignment.mode === "found") {
-      clearSubmittedJoinWizardIdempotencyKey(submission.idempotencyKey);
-    } else {
-      clearJoinWizardIdempotencyKeys(stackId);
-    }
-    await clearWizardSubmissionState(run);
-    await adoptActiveWizardRun(jobId);
-    return true;
-  } catch (error) {
-    if (isWizardIdempotencyConflict(error)) {
-      if (await resumeWizardRunFromConflict(error)) {
-        await clearWizardSubmissionState();
-        return true;
-      }
-      wizardIdempotencyConflictFailed = true;
-    }
-    // No answer (network, timeout) or a gateway answer (502/503/504, e.g.
-    // during a deploy) leaves the server outcome unknown: the run may already
-    // be persisted, so only a replay under the same key is a safe retry.
-    if (
-      !run &&
-      (!(error instanceof ApiRequestError) || error.retryable === true)
-    ) {
-      replayableWizardSubmission = submission;
-    }
-    const parsed = parseApiError(error);
-    jobState = "failed";
-    tasks = updateTasksWithError(tasks, {
-      step: tasks[0]?.id,
-      error:
-        parsed.message ||
-        tr("ui.managedCreationFlow.failedToPrepareNodeRegistration"),
-      error_details: wizardSubmissionErrorDetails(parsed.details),
-      state: "failed",
-    });
-    await clearWizardSubmissionState();
-    return false;
-  }
 }
 
 function resetCreationState() {
@@ -1802,8 +1631,6 @@ function resetCreationState() {
   retryingRollout = false;
   retryError = "";
   jobRetryable = undefined;
-  wizardIdempotencyConflictFailed = false;
-  replayableWizardSubmission = null;
   initError = null;
   capturedCreationFailureJobIds.clear();
   capturedRolloutResultKeys.clear();
@@ -1836,12 +1663,7 @@ async function mount() {
   creationOperation =
     normalizeCreationOperation(params.get("operation")) || "stack";
   syncTaskListForOperation();
-  const pendingSubmission = pendingWizardRunSubmission();
-  if (pendingSubmission) {
-    await submitPendingWizardRun(pendingSubmission);
-  } else {
-    await adoptActiveWizardRun(jobId);
-  }
+  await adoptActiveWizardRun(jobId);
   if (pageDestroyed) return;
   pairingJobId = pairingJobId || params.get("pairing_job_id") || "";
   syncTaskListForOperation();
@@ -2192,59 +2014,15 @@ function retryFromStart() {
   if (stackId) {
     clearJoinWizardIdempotencyKeys(stackId);
   }
+  const flow = { "add-server": "servers", "add-use-case": "use-cases" } as const;
   goto(
-    creationOperation === "add-server" && stackId
-      ? `/stacks/${encodeURIComponent(stackId)}/servers/new`
+    creationOperation !== "stack" && stackId
+      ? `/stacks/${encodeURIComponent(stackId)}/${flow[creationOperation]}/new`
       : NEW_SERVER_CREATION_HREF,
   );
 }
 
-async function resumePreviousWizardAttempt() {
-  if (retryingRollout) return;
-  retryError = "";
-  retryingRollout = true;
-  try {
-    if (await resumeWizardRunFromConflict(null)) {
-      await clearWizardSubmissionState();
-      return;
-    }
-    if (await adoptActiveWizardRun()) {
-      wizardIdempotencyConflictFailed = false;
-      initError = null;
-      beginJobTracking();
-      return;
-    }
-    retryError = tr(
-      "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier",
-    );
-  } finally {
-    retryingRollout = false;
-  }
-}
-
-async function replayWizardSubmission(submission: WizardRunSubmission) {
-  if (retryingRollout) return;
-  retryError = "";
-  retryingRollout = true;
-  try {
-    if (await submitPendingWizardRun(submission)) {
-      beginJobTracking();
-      startRemoteEnrollmentPolling();
-    }
-  } finally {
-    retryingRollout = false;
-  }
-}
-
 async function handleFailurePrimaryAction() {
-  if (replayableWizardSubmission) {
-    await replayWizardSubmission(replayableWizardSubmission);
-    return;
-  }
-  if (wizardIdempotencyConflictFailed) {
-    retryFromStart();
-    return;
-  }
   if (failureRetryDispatch?.kind === "rollout") {
     await retryStackKitRollout();
     return;
@@ -2972,9 +2750,6 @@ export const creation = {
   get connectRemoteStackKitFailed() {
     return connectRemoteStackKitFailed;
   },
-  get wizardIdempotencyConflictFailed() {
-    return wizardIdempotencyConflictFailed;
-  },
   get failurePrimaryActionDisabled() {
     return failurePrimaryActionDisabled;
   },
@@ -3042,18 +2817,11 @@ export const creation = {
   copyErrorDetails,
   applyJobResult,
   adoptActiveWizardRun,
-  pendingWizardRunSubmission,
-  markWizardSubmissionRunning,
-  isWizardIdempotencyConflict,
-  wizardSubmissionErrorDetails,
-  clearWizardSubmissionState,
-  submitPendingWizardRun,
   resetCreationState,
   mount,
   unmount,
   goToStack,
   retryFromStart,
-  resumePreviousWizardAttempt,
   handleFailurePrimaryAction,
   askCompanionAboutFailure,
   askCompanionAboutDegraded,

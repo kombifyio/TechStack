@@ -4,6 +4,32 @@
 // i18n.ts.
 export const creationFlowMessages = {
   en: {
+    "placement.preferred.missing":
+      "The server you started from is no longer available. Choose another target.",
+    "placement.preferred.incompatible":
+      "{name} runs a StackKit that cannot take this selection right now. Another target is preselected.",
+    "placement.preferred.notReady":
+      "{name} cannot take a use case right now. Check its connection, or choose another target.",
+    "wizard.summary.goals.one":
+      "{count} use case",
+    "wizard.summary.goals.other":
+      "{count} use cases",
+    "wizard.summary.server.installCommand":
+      "Install command",
+    "wizard.summary.server.connectRemote":
+      "Connect by SSH",
+    "wizard.summary.server.managed":
+      "Managed server",
+    "wizard.summary.server.hypervisor":
+      "Proxmox guest",
+    "wizard.summary.users.solo":
+      "Only you",
+    "wizard.summary.users.shared":
+      "Shared household",
+    "wizard.summary.users.people.one":
+      "{count} person",
+    "wizard.summary.users.people.other":
+      "{count} people",
     "placement.chooseTitle": "Where should your next use case run?",
     "placement.chooseBody":
       "Use one of your StackKits or enrolled servers, or set up a new server. You choose the use cases next.",
@@ -105,6 +131,32 @@ export const creationFlowMessages = {
       "If it keeps happening, contact support and share the technical details",
   },
   de: {
+    "placement.preferred.missing":
+      "Der Server, von dem du gestartet bist, ist nicht mehr verfügbar. Wähle ein anderes Ziel.",
+    "placement.preferred.incompatible":
+      "{name} läuft mit einem StackKit, das diese Auswahl gerade nicht aufnehmen kann. Ein anderes Ziel ist vorausgewählt.",
+    "placement.preferred.notReady":
+      "{name} kann gerade keinen Use Case aufnehmen. Prüfe die Verbindung oder wähle ein anderes Ziel.",
+    "wizard.summary.goals.one":
+      "{count} Use Case",
+    "wizard.summary.goals.other":
+      "{count} Use Cases",
+    "wizard.summary.server.installCommand":
+      "Installationsbefehl",
+    "wizard.summary.server.connectRemote":
+      "Verbindung per SSH",
+    "wizard.summary.server.managed":
+      "Verwalteter Server",
+    "wizard.summary.server.hypervisor":
+      "Proxmox-Gast",
+    "wizard.summary.users.solo":
+      "Nur du",
+    "wizard.summary.users.shared":
+      "Gemeinsamer Haushalt",
+    "wizard.summary.users.people.one":
+      "{count} Person",
+    "wizard.summary.users.people.other":
+      "{count} Personen",
     "placement.chooseTitle": "Wo soll dein nächster Anwendungsfall laufen?",
     "placement.chooseBody":
       "Nutze eines deiner StackKits oder einen verbundenen Server, oder richte einen neuen Server ein. Die Anwendungsfälle wählst du im nächsten Schritt.",
@@ -208,6 +260,32 @@ export const creationFlowMessages = {
       "Falls es wieder passiert, wende dich an den Support und nenne die technischen Details",
   },
   es: {
+    "placement.preferred.missing":
+      "El servidor desde el que empezaste ya no está disponible. Elige otro destino.",
+    "placement.preferred.incompatible":
+      "{name} ejecuta un StackKit que ahora no puede aceptar esta selección. Hay otro destino preseleccionado.",
+    "placement.preferred.notReady":
+      "{name} no puede aceptar un caso de uso ahora. Revisa su conexión o elige otro destino.",
+    "wizard.summary.goals.one":
+      "{count} caso de uso",
+    "wizard.summary.goals.other":
+      "{count} casos de uso",
+    "wizard.summary.server.installCommand":
+      "Comando de instalación",
+    "wizard.summary.server.connectRemote":
+      "Conexión por SSH",
+    "wizard.summary.server.managed":
+      "Servidor gestionado",
+    "wizard.summary.server.hypervisor":
+      "Invitado de Proxmox",
+    "wizard.summary.users.solo":
+      "Solo tú",
+    "wizard.summary.users.shared":
+      "Hogar compartido",
+    "wizard.summary.users.people.one":
+      "{count} persona",
+    "wizard.summary.users.people.other":
+      "{count} personas",
     "placement.chooseTitle": "¿Dónde debe ejecutarse tu próximo caso de uso?",
     "placement.chooseBody":
       "Usa uno de tus StackKits o servidores registrados, o configura un servidor nuevo. Después eliges los casos de uso.",
@@ -310,6 +388,32 @@ export const creationFlowMessages = {
       "Si sigue ocurriendo, ponte en contacto con el soporte y comparte los detalles técnicos",
   },
   "zh-Hans": {
+    "placement.preferred.missing":
+      "你开始时使用的服务器已不可用。请选择其他目标。",
+    "placement.preferred.incompatible":
+      "{name} 运行的 StackKit 目前无法容纳此选择。已预选其他目标。",
+    "placement.preferred.notReady":
+      "{name} 目前无法接收用例。请检查其连接或选择其他目标。",
+    "wizard.summary.goals.one":
+      "{count} 个用例",
+    "wizard.summary.goals.other":
+      "{count} 个用例",
+    "wizard.summary.server.installCommand":
+      "安装命令",
+    "wizard.summary.server.connectRemote":
+      "通过 SSH 连接",
+    "wizard.summary.server.managed":
+      "托管服务器",
+    "wizard.summary.server.hypervisor":
+      "Proxmox 虚拟机",
+    "wizard.summary.users.solo":
+      "仅你自己",
+    "wizard.summary.users.shared":
+      "共享家庭",
+    "wizard.summary.users.people.one":
+      "{count} 人",
+    "wizard.summary.users.people.other":
+      "{count} 人",
     "placement.chooseTitle": "你的下一个使用场景应在哪里运行？",
     "placement.chooseBody":
       "使用你现有的 StackKit 或已注册的服务器，或设置一台新服务器。接下来再选择使用场景。",
@@ -399,6 +503,32 @@ export const creationFlowMessages = {
     "creation.failure.contactSupport": "如果问题持续，请联系支持并提供技术详情",
   },
   hi: {
+    "placement.preferred.missing":
+      "जिस सर्वर से आपने शुरू किया था वह अब उपलब्ध नहीं है। कोई दूसरा लक्ष्य चुनें।",
+    "placement.preferred.incompatible":
+      "{name} पर चल रहा StackKit अभी यह चयन नहीं ले सकता। दूसरा लक्ष्य पहले से चुना गया है।",
+    "placement.preferred.notReady":
+      "{name} अभी कोई उपयोग मामला नहीं ले सकता। उसका कनेक्शन जाँचें या दूसरा लक्ष्य चुनें।",
+    "wizard.summary.goals.one":
+      "{count} उपयोग मामला",
+    "wizard.summary.goals.other":
+      "{count} उपयोग मामले",
+    "wizard.summary.server.installCommand":
+      "इंस्टॉल कमांड",
+    "wizard.summary.server.connectRemote":
+      "SSH से कनेक्ट",
+    "wizard.summary.server.managed":
+      "प्रबंधित सर्वर",
+    "wizard.summary.server.hypervisor":
+      "Proxmox गेस्ट",
+    "wizard.summary.users.solo":
+      "केवल आप",
+    "wizard.summary.users.shared":
+      "साझा घर",
+    "wizard.summary.users.people.one":
+      "{count} व्यक्ति",
+    "wizard.summary.users.people.other":
+      "{count} लोग",
     "placement.chooseTitle": "आपका अगला यूज़ केस कहाँ चलना चाहिए?",
     "placement.chooseBody":
       "अपने किसी StackKit या पंजीकृत सर्वर का उपयोग करें, या नया सर्वर सेट करें। यूज़ केस आप अगले चरण में चुनेंगे।",
@@ -500,6 +630,32 @@ export const creationFlowMessages = {
       "अगर यह बार-बार हो, तो सहायता से संपर्क करें और तकनीकी विवरण साझा करें",
   },
   ar: {
+    "placement.preferred.missing":
+      "لم يعد الخادم الذي بدأت منه متاحًا. اختر وجهة أخرى.",
+    "placement.preferred.incompatible":
+      "يشغّل {name} حزمة StackKit لا يمكنها استيعاب هذا الاختيار الآن. تم تحديد وجهة أخرى مسبقًا.",
+    "placement.preferred.notReady":
+      "لا يمكن لـ {name} استقبال حالة استخدام الآن. تحقق من اتصاله أو اختر وجهة أخرى.",
+    "wizard.summary.goals.one":
+      "حالة استخدام واحدة ({count})",
+    "wizard.summary.goals.other":
+      "{count} حالات استخدام",
+    "wizard.summary.server.installCommand":
+      "أمر التثبيت",
+    "wizard.summary.server.connectRemote":
+      "الاتصال عبر SSH",
+    "wizard.summary.server.managed":
+      "خادم مُدار",
+    "wizard.summary.server.hypervisor":
+      "ضيف Proxmox",
+    "wizard.summary.users.solo":
+      "أنت فقط",
+    "wizard.summary.users.shared":
+      "منزل مشترك",
+    "wizard.summary.users.people.one":
+      "شخص واحد ({count})",
+    "wizard.summary.users.people.other":
+      "{count} أشخاص",
     "placement.chooseTitle": "أين يجب أن تعمل حالة الاستخدام التالية؟",
     "placement.chooseBody":
       "استخدم إحدى حزم StackKit أو أحد الخوادم المسجلة لديك، أو أعدّ خادمًا جديدًا. تختار حالات الاستخدام في الخطوة التالية.",

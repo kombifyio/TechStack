@@ -5,15 +5,15 @@
   import type {
     AccessModeValue,
     BundleChoiceDefinition,
-    StackConfig,
   } from "#lib/wizard/index.js";
+  import type { AccessView } from "#lib/creation/core/index.js";
   import { tr } from "#lib/i18n.svelte.js";
   import "../substep-rail.css";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
   import { useWizardField } from "#lib/wizard/validation-context.js";
 
   interface Props {
-    config: StackConfig;
+    config: AccessView;
     accessQuestions?: BundleChoiceDefinition[];
     vpnQuestions?: BundleChoiceDefinition[];
     onAccessModeSelect: (value: AccessModeValue) => void;

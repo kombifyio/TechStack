@@ -10,6 +10,7 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/authlocal"
 	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	"github.com/kombifyio/techstack/internal/breakglass"
+	"github.com/kombifyio/techstack/internal/localdb"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
@@ -61,6 +62,20 @@ func openOperatorBootstrapService(ctx context.Context) (service *authlocal.Servi
 	if err != nil {
 		return nil, nil, errors.New("owner bootstrap requires the existing installation database configuration")
 	}
+	var nativePin *db.ExpectedDatabaseIdentity
+	if strings.TrimSpace(os.Getenv(db.EnvDatabaseURL)) == "" && localdb.EnabledFromEnv() {
+		cfg, loadErr := config.Load("")
+		if loadErr != nil {
+			return nil, nil, loadErr
+		}
+		connection, readErr := localdb.ReadApplicationConnection(cfg.Server.DataDir)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		name, system, _ := strings.Cut(connection.PhysicalIdentity, "@")
+		nativePin = &db.ExpectedDatabaseIdentity{DatabaseName: name, SystemIdentifier: system}
+		dbConfig.Backend, dbConfig.DSN = db.StoreBackendPostgres, connection.DSN
+	}
 	database, err := db.Open(dbConfig)
 	if err != nil {
 		return nil, nil, errors.New("owner bootstrap could not open the existing installation database")
@@ -73,6 +88,14 @@ func openOperatorBootstrapService(ctx context.Context) (service *authlocal.Servi
 	}()
 	if err = db.VerifyExpectedDatabaseIdentity(ctx, database.DB); err != nil {
 		return nil, nil, errors.New("owner bootstrap installation database identity was not verified")
+	}
+	if nativePin != nil {
+		if err = database.VerifyMigrationsWithIdentity(ctx, *nativePin); err != nil {
+			return nil, nil, errors.New("owner bootstrap native physical identity or schema was not verified")
+		}
+	}
+	if err = db.VerifyRuntimeRolePosture(ctx, database.DB, db.RuntimeRoleLocalOwner); err != nil {
+		return nil, nil, err
 	}
 	tenant := v2DefaultTenantIDFromEnv()
 	authority := controlplane.NewPostgresStore(database.DB)

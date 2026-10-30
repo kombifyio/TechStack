@@ -18,18 +18,17 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// embeddedRuntimeOwner is the login role the local runtime migrates and runs
-// as. Migrations 153 to 155 refuse a superuser or BYPASSRLS migration owner,
+// embeddedRuntimeOwner is the private native migration login. It never serves
+// HTTP. Migrations 153 to 155 refuse a superuser or BYPASSRLS migration owner,
 // so the bootstrap superuser only prepares this role and the migration
 // prerequisites (migrationSystemRolesSQL) and never serves the app.
 const embeddedRuntimeOwner = "techstack_owner"
 
-// ensureRuntimeOwner makes embeddedRuntimeOwner a NOSUPERUSER NOBYPASSRLS
-// login that owns the database, every non-system schema and every object in
-// them, then returns its DSN. A fresh random password is set on every start
-// and held only in memory; the statement carries a SCRAM verifier, never the
-// password. It is idempotent: a data dir migrated by the bootstrap superuser
-// (or by an earlier start) is re-owned in place before the posture is proven.
+// ensureRuntimeOwner prepares the private NOSUPERUSER NOBYPASSRLS migration
+// login. Only an empty native database transfers its database/public ownership;
+// an existing installation must already have the expected owner. Unknown user
+// objects are never reassigned. Its random credential stays in the supervisor;
+// SQL carries a SCRAM verifier, never the plaintext password.
 func ensureRuntimeOwner(ctx context.Context, adminDSN string, port uint32) (string, error) {
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
@@ -73,13 +72,19 @@ func ensureRuntimeOwner(ctx context.Context, adminDSN string, port uint32) (stri
 	if _, err := tx.Exec(ctx, "GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO "+role+" WITH GRANT OPTION"); err != nil {
 		return "", fmt.Errorf("grant local runtime owner the control-system identity read failed (SQLSTATE %s)", sqlState(err))
 	}
-	if _, err := tx.Exec(ctx, "ALTER DATABASE "+pgx.Identifier{embeddedDatabase}.Sanitize()+" OWNER TO "+role); err != nil {
-		return "", fmt.Errorf("transfer local database ownership: %w", err)
+	var databaseOwner, schemaOwner string
+	var objects int
+	if err := tx.QueryRow(ctx, `SELECT (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()),
+	 (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'),
+	 (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public')`).Scan(&databaseOwner, &schemaOwner, &objects); err != nil {
+		return "", err
 	}
-	// REASSIGN OWNED cannot run for the bootstrap superuser (it owns system
-	// objects), so each user object outside the system schemas moves alone.
-	if _, err := tx.Exec(ctx, reownUserObjectsSQL(embeddedRuntimeOwner)); err != nil {
-		return "", fmt.Errorf("transfer local schema object ownership: %w", err)
+	if databaseOwner == embeddedUsername && schemaOwner == "pg_database_owner" && objects == 0 {
+		if _, err := tx.Exec(ctx, "ALTER DATABASE "+pgx.Identifier{embeddedDatabase}.Sanitize()+" OWNER TO "+role+"; ALTER SCHEMA public OWNER TO "+role); err != nil {
+			return "", err
+		}
+	} else if databaseOwner != embeddedRuntimeOwner || schemaOwner != embeddedRuntimeOwner {
+		return "", errors.New("native database ownership is not the recognized installation; foreign objects were not changed")
 	}
 	if err := verifyRuntimeOwnerPosture(ctx, tx); err != nil {
 		return "", err
@@ -117,52 +122,6 @@ BEGIN
         END IF;
     END LOOP;
 END $techstack_local_system_roles$`
-
-func reownUserObjectsSQL(owner string) string {
-	return `DO $techstack_local_owner$
-DECLARE
-    target text := ` + quoteLiteral(owner) + `;
-    target_oid oid := (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = target);
-    item record;
-BEGIN
-    FOR item IN SELECT n.nspname FROM pg_catalog.pg_namespace n
-        WHERE n.nspowner <> target_oid AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
-          AND n.nspname NOT LIKE 'pg\_temp\_%' AND n.nspname NOT LIKE 'pg\_toast\_temp\_%' LOOP
-        EXECUTE format('ALTER SCHEMA %I OWNER TO %I', item.nspname, target);
-    END LOOP;
-    FOR item IN SELECT c.oid, c.relkind FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relowner <> target_oid AND c.relkind IN ('r','p','v','m','f','S')
-          AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
-          AND n.nspname NOT LIKE 'pg\_temp\_%' AND n.nspname NOT LIKE 'pg\_toast\_temp\_%'
-          AND NOT (c.relkind = 'S' AND EXISTS (SELECT 1 FROM pg_catalog.pg_depend d
-              WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid
-                AND d.refclassid = 'pg_catalog.pg_class'::regclass AND d.deptype IN ('a','i'))) LOOP
-        EXECUTE format('ALTER %s %s OWNER TO %I',
-            CASE item.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW'
-                WHEN 'f' THEN 'FOREIGN TABLE' WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END,
-            item.oid::regclass, target);
-    END LOOP;
-    FOR item IN SELECT p.oid, p.prokind FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        WHERE p.proowner <> target_oid
-          AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
-          AND n.nspname NOT LIKE 'pg\_temp\_%' AND n.nspname NOT LIKE 'pg\_toast\_temp\_%' LOOP
-        EXECUTE format('ALTER %s %s OWNER TO %I',
-            CASE item.prokind WHEN 'a' THEN 'AGGREGATE' ELSE 'ROUTINE' END,
-            item.oid::regprocedure, target);
-    END LOOP;
-    FOR item IN SELECT t.oid, t.typtype FROM pg_catalog.pg_type t
-        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-        WHERE t.typowner <> target_oid AND t.typtype IN ('e','d','r','c')
-          AND (t.typtype <> 'c' OR (SELECT c.relkind FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid) = 'c')
-          AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
-          AND n.nspname NOT LIKE 'pg\_temp\_%' AND n.nspname NOT LIKE 'pg\_toast\_temp\_%' LOOP
-        EXECUTE format('ALTER %s %s OWNER TO %I',
-            CASE item.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END, item.oid::regtype, target);
-    END LOOP;
-END $techstack_local_owner$`
-}
 
 // verifyRuntimeOwnerPosture proves, before commit, the exact owner posture the
 // migration guards check: no superuser or BYPASSRLS attribute, ownership of

@@ -8,7 +8,7 @@
   } from "@lucide/svelte";
   import { tr } from "#lib/i18n.svelte.js";
   import { testWizardRemoteSSH } from "#lib/api/wizardRemoteSSH.js";
-  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { useCreationContext } from "#lib/creation/context.js";
   import WalletServerAccessPicker from "#lib/kombify-wallet/components/WalletServerAccessPicker.svelte";
   import type { StackConfig } from "#lib/wizard/index.js";
   import { NODE_GUIDES } from "#lib/docs-links.js";
@@ -28,7 +28,8 @@
   const remote = $derived(config.serverProvisioning.remote);
   const remoteUsesPasswordAuth = $derived(remote.authMethod === "password");
   // Hosted Techstack keeps the SSH credential in the person's kombify Wallet.
-  const useWallet = $derived(authStore.walletSource === "kombify");
+  const creation = useCreationContext();
+  const useWallet = $derived(creation.auth.walletSource === "kombify");
   $effect(() => {
     void [
       remote.host,

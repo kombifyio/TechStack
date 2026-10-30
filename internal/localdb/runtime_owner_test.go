@@ -11,54 +11,42 @@ import (
 	"github.com/kombifyio/techstack/pkg/db"
 )
 
-// Regression (kombify-Techstack-8pzz): an existing local store whose schema was
-// migrated by the bootstrap superuser must, after a restart, be migratable by
-// the runtime DSN under the guard of migrations 153 to 155 (exact non-bypass
-// owner of a FORCE RLS table and of the public schema).
-func TestRestartedStoreRunsUnderNonBypassMigrationOwner(t *testing.T) {
+// Regression: native owner preparation must preserve customer objects rather
+// than taking ownership from another principal during a restart or adoption.
+func TestOwnerPreparationRefusesForeignObjectsAndPreservesData(t *testing.T) {
 	dataDir := t.TempDir()
+	t.Setenv(db.EnvExpectedDatabaseIdentity, "")
 	t.Setenv(EnvEmbeddedPostgresDir, filepath.Join(dataDir, "postgres"))
 	t.Setenv(EnvEmbeddedPostgresPort, "")
 	t.Setenv(EnvEmbeddedPostgresBundleDir, "")
-
 	first, err := StartEmbeddedPostgres(dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec(t, first.BootstrapDSN(), `CREATE TABLE public.legacy_stacks (tenant_id text NOT NULL);
-		INSERT INTO public.legacy_stacks VALUES ('retained');
-		CREATE FUNCTION public.legacy_wake() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`)
-	if err := first.Stop(); err != nil {
-		t.Fatal(err)
-	}
-
-	second, err := StartEmbeddedPostgres(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() {
-		if err := second.Stop(); err != nil {
+		if err := first.Stop(); err != nil {
 			t.Error(err)
 		}
 	})
-	exec(t, second.DSN(), `ALTER TABLE public.legacy_stacks ENABLE ROW LEVEL SECURITY;
-		ALTER TABLE public.legacy_stacks FORCE ROW LEVEL SECURITY;
-		DO $guard$
-		DECLARE owner_oid oid := (SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user);
-		BEGIN
-		    IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class WHERE oid='public.legacy_stacks'::regclass
-		        AND relowner=owner_oid AND relrowsecurity AND relforcerowsecurity)
-		        OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc WHERE oid='public.legacy_wake()'::regprocedure AND proowner=owner_oid)
-		        OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='public' AND nspowner=owner_oid)
-		        OR EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE oid=owner_oid AND (rolsuper OR rolbypassrls)) THEN
-		        RAISE EXCEPTION 'requires the exact non-bypass migration owner and FORCE RLS' USING ERRCODE='42501';
-		    END IF;
-		END $guard$`)
-
-	var visible int
-	conn := connect(t, second.BootstrapDSN())
-	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM public.legacy_stacks").Scan(&visible); err != nil || visible != 1 {
-		t.Fatalf("retained rows = %d, err = %v", visible, err)
+	exec(t, first.BootstrapDSN(), "CREATE TABLE public.legacy_stacks (tenant_id text NOT NULL); INSERT INTO public.legacy_stacks VALUES ('retained')")
+	cfg, err := pgx.ParseConfig(first.BootstrapDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureRuntimeOwner(t.Context(), first.BootstrapDSN(), uint32(cfg.Port)); err == nil {
+		t.Fatal("owner preparation adopted a foreign-owned customer table")
+	}
+	var owner string
+	var retained int
+	conn := connect(t, first.BootstrapDSN())
+	if err := conn.QueryRow(t.Context(), "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_stacks'::regclass").Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM public.legacy_stacks WHERE tenant_id='retained'").Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if owner != embeddedUsername || retained != 1 {
+		t.Fatalf("foreign customer ownership/data changed: owner=%s rows=%d", owner, retained)
 	}
 }
 

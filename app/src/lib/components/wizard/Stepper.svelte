@@ -33,6 +33,8 @@
     ondeploy?: () => void;
     /** Steps that open with a click on their indicator. */
     reachableSteps?: number[];
+    /** One line about what a reached step holds. */
+    stepSummaries?: Record<number, string>;
     onselect?: (stepId: number) => void;
     navigationOnly?: boolean;
   }
@@ -40,6 +42,7 @@
   let {
     steps,
     disabledStepReasons = {},
+    stepSummaries = {},
     currentStep,
     canGoNext = true,
     canDeploy = false,
@@ -193,6 +196,14 @@
         : 'text-muted-foreground'}"
     >
       {step.label}
+      {#if stepSummaries[step.id] && !disabledReason}
+        <span
+          class="hidden max-w-[9rem] truncate text-xs font-normal text-muted-foreground sm:block"
+          data-testid={`wizard-step-${step.id}-summary`}
+        >
+          {stepSummaries[step.id]}
+        </span>
+      {/if}
       {#if state === "complete"}
         <span class="sr-only">, {tr("wizard.stepper.completed")}</span>
       {:else if disabledReason}

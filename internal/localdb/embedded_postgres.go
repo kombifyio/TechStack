@@ -2,6 +2,7 @@ package localdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -27,6 +28,8 @@ const (
 
 const (
 	embeddedUsername = "techstack"
+	// The old public password is admitted only by an explicit, physically
+	// pinned legacy transition. Fresh and ordinary starts never use it.
 	embeddedPassword = "techstack-local"
 	embeddedDatabase = "techstack"
 )
@@ -36,6 +39,7 @@ type EmbeddedPostgres struct {
 	logFile  *os.File
 	adminDSN string
 	dsn      string
+	custody  *operatorCustody
 }
 
 func EnabledFromEnv() bool {
@@ -48,6 +52,12 @@ func EnabledFromEnv() bool {
 }
 
 func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
+	return StartEmbeddedPostgresWithAdoption(dataDir, "")
+}
+
+// StartEmbeddedPostgresWithAdoption is an operator-only entry point. A legacy
+// profile without private custody requires an explicit verified physical pin.
+func StartEmbeddedPostgresWithAdoption(dataDir, adoptIdentity string) (*EmbeddedPostgres, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return nil, fmt.Errorf("data dir is required")
 	}
@@ -89,6 +99,25 @@ func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
 	if err := ensureDataDirCompatible(filepath.Join(baseDir, "data")); err != nil {
 		return nil, err
 	}
+	custody, err := openOperatorCustody(baseDir, adoptIdentity)
+	if err != nil {
+		return nil, err
+	}
+	success := false
+	defer func() {
+		if !success {
+			custody.close()
+		}
+	}()
+	startupNonce, err := randomCredential()
+	if err != nil {
+		return nil, err
+	}
+	custody.startupNonce = "kombify-native-" + startupNonce[:24]
+	custody.dataDirectory, err = filepath.Abs(filepath.Join(baseDir, "data"))
+	if err != nil {
+		return nil, err
+	}
 
 	logPath := filepath.Join(baseDir, "postgres.log")
 	// #nosec G703 -- logPath is fixed beneath the operator-selected embedded database directory.
@@ -100,13 +129,14 @@ func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
 	cfg := embeddedpostgres.DefaultConfig().
 		Version(embeddedpostgres.V16).
 		Username(embeddedUsername).
-		Password(embeddedPassword).
+		Password(custody.record.Password).
 		Database(embeddedDatabase).
 		Port(port).
 		CachePath(cacheDir).
 		RuntimePath(filepath.Join(baseDir, "runtime")).
 		DataPath(filepath.Join(baseDir, "data")).
 		StartTimeout(embeddedPostgresStartTimeout()).
+		StartParameters(map[string]string{"cluster_name": custody.startupNonce}).
 		Logger(logFile)
 
 	if repoURL := strings.TrimSpace(os.Getenv(EnvEmbeddedPostgresRepositoryURL)); repoURL != "" {
@@ -117,29 +147,64 @@ func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
 	}
 
 	pg := embeddedpostgres.NewDatabase(cfg)
-	if err := pg.Start(); err != nil {
-		_ = logFile.Close()
-		return nil, fmt.Errorf("start embedded postgres: %w", err)
-	}
-
 	started := &EmbeddedPostgres{
 		db:       pg,
 		logFile:  logFile,
-		adminDSN: fmt.Sprintf("postgres://%s:%s@127.0.0.1:%d/%s?sslmode=disable", embeddedUsername, embeddedPassword, port, embeddedDatabase),
+		adminDSN: fmt.Sprintf("postgres://%s:%s@127.0.0.1:%d/%s?sslmode=disable", embeddedUsername, custody.record.Password, port, embeddedDatabase),
+		custody:  custody,
+	}
+	legacyDSN := fmt.Sprintf("postgres://%s:%s@127.0.0.1:%d/%s?sslmode=disable", embeddedUsername, embeddedPassword, port, embeddedDatabase)
+	// The pinned library authenticates its configured credential before Start
+	// returns. A pending legacy transition must therefore qualify the exact
+	// running cluster during that readiness phase, not after it. The library
+	// still uses only the new credential; HBA and password policy never widen.
+	var qualification <-chan error
+	cancelQualification := func() {}
+	if custody.record.State == "legacy-pending" {
+		qualificationContext, cancel := context.WithTimeout(context.Background(), embeddedPostgresStartTimeout()+runtimeOwnerSetupTimeout)
+		cancelQualification = cancel
+		result := make(chan error, 1)
+		qualification = result
+		go func() { result <- custody.qualify(qualificationContext, started.adminDSN, legacyDSN) }()
+	}
+	startErr := pg.Start()
+	var qualificationErr error
+	if startErr != nil {
+		cancelQualification()
+	}
+	if qualification != nil {
+		qualificationErr = <-qualification
+	}
+	cancelQualification()
+	if startErr != nil {
+		_ = pg.Stop()
+		_ = logFile.Close()
+		return nil, errors.Join(qualificationErr, fmt.Errorf("start embedded postgres: %w", startErr))
+	}
+	if qualificationErr != nil {
+		stopErr := started.Stop()
+		return nil, errors.Join(qualificationErr, stopErr)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeOwnerSetupTimeout)
 	defer cancel()
+	if qualification == nil {
+		if err := custody.qualify(ctx, started.adminDSN, legacyDSN); err != nil {
+			_ = started.Stop()
+			return nil, err
+		}
+	}
 	dsn, err := ensureRuntimeOwner(ctx, started.adminDSN, port)
 	if err != nil {
 		_ = started.Stop()
 		return nil, fmt.Errorf("prepare embedded postgres runtime owner: %w", err)
 	}
 	started.dsn = dsn
+	success = true
 	return started, nil
 }
 
-// DSN is the runtime connection: the NOSUPERUSER NOBYPASSRLS role that owns
-// the database and runs migrations and the application.
+// DSN is private migration custody for the operator process. A server must use
+// PrepareApplication's bounded connection in a separately executed process.
 func (pg *EmbeddedPostgres) DSN() string {
 	if pg == nil {
 		return ""
@@ -148,7 +213,7 @@ func (pg *EmbeddedPostgres) DSN() string {
 }
 
 // BootstrapDSN is the embedded server's bootstrap superuser. It exists only for
-// local role setup and disposable test harnesses; never hand it to the runtime.
+// local operator setup; never hand it or the EmbeddedPostgres object to a server.
 func (pg *EmbeddedPostgres) BootstrapDSN() string {
 	if pg == nil {
 		return ""
@@ -169,7 +234,19 @@ func (pg *EmbeddedPostgres) Stop() error {
 			stopErr = err
 		}
 	}
+	if stopErr == nil && pg.custody != nil {
+		pg.custody.close()
+		pg.custody = nil
+	}
 	return stopErr
+}
+
+// PhysicalIdentity is metadata derived by the supervisor from its real cluster.
+func (pg *EmbeddedPostgres) PhysicalIdentity() string {
+	if pg == nil || pg.custody == nil {
+		return ""
+	}
+	return pg.custody.record.PhysicalIdentity
 }
 
 func embeddedPostgresPort() (uint32, error) {

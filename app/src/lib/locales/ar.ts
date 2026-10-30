@@ -2899,8 +2899,6 @@ export const ar: Record<string, string> = {
     "تعذّر التحقق من تقدم تسجيل SSH البعيد.",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
     "تعذّر تجهيز أمر الاتصال.",
-  "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier":
-    "تعذّر استئناف التسجيل السابق. ابدأ محاولة جديدة بدلًا من ذلك.",
   "ui.stacksCreatingCreation-controller.couldNotResumeTheOverdue":
     "تعذّر استئناف انتظار وقت التشغيل المُدار المتأخر.",
   "ui.stacksCreatingCreation-controller.couldNotRetryRemoteSSH":
@@ -2929,8 +2927,6 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.noJobFound": "لم يتم العثور على مهمة",
   "ui.stacksCreatingCreation-controller.nodeConnected": "الخادم متصل",
   "ui.stacksCreatingCreation-controller.nodeConnectionReady": "اتصال الخادم جاهز",
-  "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "لم يُعِد تسجيل الخادم مهمة إنشاء.",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
     "تسجيل الخادم جاهز",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
@@ -2940,8 +2936,6 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
     "اتصل {name} وأصبح جزءًا من الـ Homelab الخاص بك.",
   "ui.stacksCreatingCreation-controller.restoreDrill": "تدريب الاستعادة",
-  "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "جارٍ استئناف محاولة تسجيل الخادم السابقة…",
   "ui.stacksCreatingCreation-controller.retryDeployment": "إعادة محاولة النشر",
   "ui.stacksCreatingCreation-controller.retryRollout": "إعادة محاولة الطرح",
   "ui.stacksCreatingCreation-controller.retryServerRequest":
@@ -2966,7 +2960,6 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.stackkitRollout": "طرح StackKit",
   "ui.stacksCreatingCreation-controller.stackkitRuntimeVerificationMissing":
     "التحقق من بيئة تشغيل StackKit مفقود",
-  "ui.stacksCreatingCreation-controller.startFreshAttempt": "بدء محاولة جديدة",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
     "طلب «إضافة خادم» يعمل منذ أكثر من دقيقتين. ينبغي لهذا المسار أن يطلب الخادم الإضافي أو يجهّزه فقط، لا أن يشغّل طرح StackKit الكامل. افتح العمليات للتحقق مما إذا تم إنشاء طلب الخادم، ثم أعد محاولة «إضافة خادم» إذا لم يظهر خادم جديد.",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
@@ -2985,8 +2978,6 @@ export const ar: Record<string, string> = {
     "تعذّر فحص الخادم المحجوز. أعد محاولة تسجيل SSH على الاتصال المحفوظ عندما يتوفر جرد الخوادم مرة أخرى.",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "تتطلب هذه الصفحة job_id من معالج الإعداد. يُرجى إعادة بدء الإعداد عبر /stacks/new.",
-  "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "جارٍ التحقق من StackKit المحدد وتحضير الخادم...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
     "إعداد الخادم البعيد الخاص بك جاهز للطرح",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
@@ -3063,16 +3054,12 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
     'فشل إنشاء "{operation}" في الخطوة "{step}" بهذا الخطأ:\n\n{error}\n\nما الذي حدث، وما الذي يجب أن أفعله بعد ذلك؟',
   "ui.stacksCreatingCreationFailure.possibleSolutions": "الحلول الممكنة:",
-  "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
-    "استئناف المحاولة السابقة",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
     "اكتمل تسجيل SSH وأصبح الخادم ظاهرًا في Homelab الخاص بك. فشل فقط تحضير StackKit أو الطرح. تستمر إعادة المحاولة على الخادم المتصل دون تكرار تسجيل SSH.",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "تتحقق نقطة إعادة المحاولة المحددة من هذه المهمة الفاشلة وعقد الإيجار قبل المتابعة على الخادم الموجود.",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "وصل الطرح إلى VM المُدارة الموجودة.",
-  "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "أعاد هذا المتصفح استخدام مفتاح محاولة من عملية إرسال مختلفة. ربما أنشأ التشغيل السابق تسجيل خادم بالفعل. استأنف تلك المحاولة أو ابدأ من جديد بمفتاح جديد.",
   "ui.stacksCreatingCreationFailure.troubleshooting":
     "استكشاف الأخطاء وإصلاحها",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":

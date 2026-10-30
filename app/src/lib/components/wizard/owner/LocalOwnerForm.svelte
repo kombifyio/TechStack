@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { StackConfig } from "#lib/wizard/index.js";
+  import type { OwnerSlice } from "#lib/creation/core/index.js";
   import { tr } from "#lib/i18n.svelte.js";
   import { useWizardField } from "#lib/wizard/validation-context.js";
-  let { config }: { config: StackConfig } = $props();
+  let { config }: { config: OwnerSlice } = $props();
   const emailField = useWizardField("owner-email");
 </script>
 

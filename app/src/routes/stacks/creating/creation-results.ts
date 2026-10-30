@@ -1,3 +1,4 @@
+import type { CreationOperation } from "#lib/creation/core/index.js";
 import type { ServerProvisioningMode, Task } from "#lib/wizard/index.js";
 import { sanitizeSensitiveText } from "#lib/security/sensitive-data.js";
 
@@ -75,14 +76,14 @@ export function isServerProvisioningMode(
 
 export function normalizeCreationOperation(
   value: unknown,
-): "stack" | "add-server" | "" {
+): CreationOperation | "" {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toLowerCase().replace(/_/g, "-");
-  return normalized === "add-server" || normalized === "addserver"
-    ? "add-server"
-    : normalized === "stack"
-      ? "stack"
-      : "";
+  if (normalized === "add-server" || normalized === "addserver")
+    return "add-server";
+  return normalized === "stack" || normalized === "add-use-case"
+    ? normalized
+    : "";
 }
 
 export function asRecord(value: unknown): Record<string, unknown> | null {

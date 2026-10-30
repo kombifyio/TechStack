@@ -9,19 +9,21 @@
   import { authStore } from "#lib/stores/auth.svelte.js";
   import SessionRenewalPanel from "#lib/components/SessionRenewalPanel.svelte";
   import { loadFeatures } from "#lib/stores/features.js";
-  import { createWizardRun } from "#lib/api/wizardRuns.js";
   import { getHomelab } from "#lib/api/homelab.js";
   import { storedBlockedWizardConfig } from "#lib/wizard/stored-decisions.js";
+  import { WizardInputError } from "#lib/wizard/wizardRunRequest.js";
+  import { CREATION_PROCESSES } from "#lib/creation/core/index.js";
   import {
-    WizardInputError,
-    buildFoundRunRequest,
-  } from "#lib/wizard/wizardRunRequest.js";
+    creationScreenHref,
+    forgetCreationAttempt,
+    submitCreationRun,
+  } from "#lib/creation/submit.js";
   import { refreshEmbeddedCloudSession } from "#lib/auth/embedded-session.js";
   import { CircleAlert, ExternalLink, Lock } from "@lucide/svelte";
   import Button from "#lib/components/ui/Button.svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
-  import { EasyWizard } from "#lib/components/wizard/index.js";
+  import { CreationPageFrame } from "#lib/components/wizard/index.js";
   import {
     createErrorAiHandoverContext,
     type ErrorAiHandoverContext,
@@ -465,18 +467,11 @@
     if (lastAttempt && !isDeploying) void handleCreate(lastAttempt);
   }
 
-  const creationIdempotencyStorageKey = "stackCreationIdempotencyKey";
-
-  function creationIdempotencyKey(): string {
-    const existing = sessionStorage.getItem(creationIdempotencyStorageKey);
-    if (existing) return existing;
-    const generated =
-      typeof crypto?.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `create-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    sessionStorage.setItem(creationIdempotencyStorageKey, generated);
-    return generated;
-  }
+  const process = $derived(
+    existingServerId
+      ? CREATION_PROCESSES["place-on-server"]
+      : CREATION_PROCESSES.stack,
+  );
 
   function openConflictStack() {
     if (conflictStackId) {
@@ -489,9 +484,9 @@
   // A blocked run may save desired decisions without dispatching a runtime.
   async function createViaWizardRun(config: StackConfig) {
     validationStage = tr("ui.configurationFlow.validatingWithStackkits");
-    const request = buildFoundRunRequest(config, existingServerId);
-    const idempotencyKey = creationIdempotencyKey();
-    const run = await createWizardRun(request, idempotencyKey);
+    const { run, request } = await submitCreationRun(process, config, {
+      existingServerId,
+    });
     captureStackCreationEvent(
       "techstack:stack_created",
       stackCreationAnalyticsInput(config, {
@@ -501,17 +496,9 @@
       }),
     );
 
-    const persistedName = run.name || request.intent.name;
-    const jobId = run.job_id || "";
-    sessionStorage.removeItem(creationIdempotencyStorageKey);
-
-    const params = new URLSearchParams();
-    params.set("operation", "stack");
-    params.set("stack_id", run.kit_deployment_id);
-    if (jobId) params.set("job_id", jobId);
-    params.set("name", persistedName);
-    if (run.pairing_job_id) params.set("pairing_job_id", run.pairing_job_id);
-    await navigate(`/stacks/creating?${params.toString()}`);
+    await navigate(
+      creationScreenHref(process, run, run.name || request.intent.name),
+    );
   }
 
   async function handleCreate(config: StackConfig) {
@@ -667,7 +654,7 @@
         ) {
           // The owner decisions are durably saved. A later edited decision is
           // a new request, while this saved request keeps its original key.
-          sessionStorage.removeItem(creationIdempotencyStorageKey);
+          forgetCreationAttempt(process, {});
           conflictStackId = null;
           conflictStackName = null;
           showCreateError({
@@ -685,7 +672,7 @@
           // The session's attempt key already completed a DIFFERENT run.
           // Discard it so the next submit mints a fresh key instead of
           // dead-ending every retry on the same 409.
-          sessionStorage.removeItem(creationIdempotencyStorageKey);
+          forgetCreationAttempt(process, {});
           conflictStackId = conflictDetails.stackId || null;
           conflictStackName = null;
           showCreateError({
@@ -836,12 +823,11 @@
       </div>
     </ErrorCallout>
   {:else if !holdWizardForSelfDisclosure}
-    <EasyWizard
+    <CreationPageFrame
+      {process}
       oncreate={handleCreate}
       {isDeploying}
       initialConfig={wizardPrefill}
-      inheritServer={Boolean(existingServerId)}
-      reuseExistingOwner={Boolean(existingServerId)}
       draftKey={existingServerId
         ? `stack-install-${existingServerId}`
         : "stack-create"}
@@ -987,6 +973,6 @@
           </div>
         {/if}
       {/snippet}
-    </EasyWizard>
+    </CreationPageFrame>
   {/if}
 </div>

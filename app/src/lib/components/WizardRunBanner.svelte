@@ -123,6 +123,8 @@
     }
     if (run.result?.kit_assignment_mode === "join") {
       params.set("operation", "add-server");
+    } else if (run.result?.kit_assignment_mode === "extend") {
+      params.set("operation", "add-use-case");
     }
     const resultName = run.result?.name;
     if (typeof resultName === "string" && resultName) {
