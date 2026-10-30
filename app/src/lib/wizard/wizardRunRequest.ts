@@ -48,7 +48,7 @@ export class WizardInputError extends Error {
   }
 }
 
-/** The wizard's fallback deployment name (EasyWizard has no name input). */
+/** The wizard's fallback deployment name (CreationPageFrame has no name input). */
 const DEFAULT_RUN_NAME = "homelab";
 
 /**
@@ -111,18 +111,6 @@ export function normalizeRunKitSlug(config: StackConfig): string {
     config.serverProvisioning.stackkitFoundation || config.kit || "",
     config.serverProvisioning.mode === "kombify-cloud",
   );
-}
-
-/**
- * Whether a run request carries a credential that must never reach browser
- * storage. The add-Node handoff keeps the request in memory only when this is
- * true; an SSH password is never written to sessionStorage and is re-entered
- * after a reload (the server wallet takes over custody once the run exists).
- */
-export function wizardRunRequestCarriesSecret(
-  request: WizardRunRequest,
-): boolean {
-  return (request.remote?.password ?? "") !== "";
 }
 
 function runTransport(

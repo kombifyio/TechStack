@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { page } from "$app/state";
   import {
     ArrowRight,
     ArrowUpRight,
@@ -28,8 +27,7 @@
     type ManagedProviderID,
   } from "#lib/wizard/index.js";
   import { tr } from "#lib/i18n.svelte.js";
-  import { features, loadFeatures } from "#lib/stores/features.js";
-  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { useCreationContext } from "#lib/creation/context.js";
   import { shouldDowngradeManagedRuntimeSelection } from "#lib/wizard/managed-runtime-selection.js";
   import { managedProviders } from "#lib/wizard/managed-providers.js";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
@@ -71,10 +69,11 @@
     descriptionKey: "wizard.server.partner.description",
     testId: "server-mode-partner",
   };
-  const allFeatures = features.allFeatures;
-  const featuresReady = features.ready;
-  const featuresLoading = features.loading;
-  const featuresErrorKind = features.errorKind;
+  const creation = useCreationContext();
+  const allFeatures = creation.features.all;
+  const featuresReady = creation.features.ready;
+  const featuresLoading = creation.features.loading;
+  const featuresErrorKind = creation.features.errorKind;
   const entitlementVerificationFailed = $derived(Boolean($featuresErrorKind));
   const monthlyRuntimeAvailable = $derived(
     $featuresReady &&
@@ -167,7 +166,7 @@
   let notifiedManagedProvider: ManagedProviderID | null = null;
 
   onMount(() => {
-    void loadFeatures();
+    void creation.features.load();
   });
 
   async function selectMode(mode: string, reveal = true) {
@@ -231,7 +230,7 @@
     if (
       config.serverProvisioning.mode === "kombify-cloud" &&
       shouldDowngradeManagedRuntimeSelection({
-        authenticated: authStore.isAuthenticated,
+        authenticated: creation.auth.isAuthenticated,
         featuresReady: $featuresReady,
         featuresLoading: $featuresLoading,
         verificationFailed: entitlementVerificationFailed,
@@ -387,7 +386,7 @@
       <p>{managedUnavailableReason}</p>
       {#if entitlementVerificationFailed}<button
           type="button"
-          onclick={() => void loadFeatures(true)}
+          onclick={() => void creation.features.load(true)}
           disabled={$featuresLoading}
           data-testid="retry-entitlement-check"
           >{tr("wizard.server.managed.retry")}</button
@@ -523,7 +522,7 @@
               >{tr("wizard.preview.back")}</a
             >{:else}<HypervisorSelection
               bind:config
-              deploymentId={page.params.id}
+              deploymentId={creation.deploymentId}
             />{/if}
         {:else if selectedEntry === "install-command"}
           <p class="path-intro">{tr("wizard.server.oneliner.info")}</p>

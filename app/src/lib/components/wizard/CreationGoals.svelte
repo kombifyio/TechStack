@@ -40,7 +40,6 @@
   import {
     getEasyGoalQuestions,
     type GoalConfigKey,
-    type StackConfig,
     type BundleQuestionDefinition,
   } from "#lib/wizard/index.js";
   import {
@@ -52,13 +51,13 @@
   import { brandDomainForTool } from "#lib/brand-logo.js";
   import { useCaseGuideUrl } from "#lib/docs-links.js";
   import { getLocale, tr } from "#lib/i18n.svelte.js";
-  import { theme } from "#lib/stores/theme.js";
   import UseCaseServicePicker from "./UseCaseServicePicker.svelte";
   import UseCaseSettings from "./UseCaseSettings.svelte";
   import BrandLogoIcon from "../BrandLogoIcon.svelte";
   import BrandLogoScope from "../BrandLogoScope.svelte";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
-  import { operatorExperience } from "#lib/stores/operatorExperience.svelte.js";
+  import { useCreationContext } from "#lib/creation/context.js";
+  import type { GoalsSlice } from "#lib/creation/core/index.js";
 
   let {
     config = $bindable(),
@@ -73,7 +72,7 @@
     afterCards,
     hardware = {},
   }: {
-    config: StackConfig;
+    config: GoalsSlice;
     catalog: Map<string, UseCaseCatalogView>;
     onGoalChange: (goal: GoalConfigKey, value: boolean) => void;
     onSettingChange: (
@@ -116,12 +115,13 @@
     trigger: HTMLButtonElement;
   } | null>(null);
   let activeTransition: ViewTransition | undefined;
+  const creation = useCreationContext();
   let goalsGrid = $state<HTMLDivElement>();
   let disclosureRevision = 0;
   let globalAdvanced = $state(false);
 
   onMount(() => {
-    void operatorExperience.load();
+    void creation.experience.load();
     // A link that hands over setup answers opens that use case's card.
     const handed = Object.keys(config.useCaseSetupAnswers ?? {});
     const target = available.find((card) => card.id === handed[0]);
@@ -295,8 +295,8 @@
   /** How many steps the person sees follows the detail level they chose in
    * the kombify Cloud account setup; every other step keeps its
    * recommendation and opens under the setup's "More settings". */
-  const level = $derived(experienceLevel(operatorExperience.experience));
-  const appearance = theme.resolved;
+  const level = $derived(experienceLevel(creation.experience.level));
+  const appearance = creation.appearance;
   function answersOf(card: CreationGoal) {
     return setupAnswersFor(
       setupFor(card),

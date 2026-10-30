@@ -37,6 +37,50 @@ export default ts.config(
     },
   },
   {
+    // The flow core is plain TypeScript, so a frame can mount it anywhere.
+    files: ["src/lib/creation/core/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "svelte",
+                "svelte/*",
+                "$app/*",
+                "#lib/stores/*",
+                "#lib/i18n*",
+              ],
+              message: "The creation core takes what it needs as data.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // A step gets its surroundings from the creation context of its frame.
+    files: ["src/lib/components/wizard/**"],
+    ignores: [
+      "src/lib/components/wizard/CreationPageFrame.svelte",
+      "src/lib/components/wizard/CreationWizardPreview.svelte",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["$app/*", "#lib/stores/*", "#lib/api/workers*"],
+              message: "Use useCreationContext(): the frame provides this.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     ignores: [
       "build/",
       "build-static/",

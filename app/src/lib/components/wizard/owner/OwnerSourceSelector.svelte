@@ -6,7 +6,8 @@
     BadgeCheck,
     House,
   } from "@lucide/svelte";
-  import type { StackConfig, WizardDeploymentLane } from "#lib/wizard/index.js";
+  import type { WizardDeploymentLane } from "#lib/wizard/index.js";
+  import type { OwnerSlice } from "#lib/creation/core/index.js";
   import type { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
   import { tr } from "#lib/i18n.svelte.js";
   import CloudLinkCard from "./CloudLinkCard.svelte";
@@ -16,7 +17,7 @@
     owner,
     lane,
   }: {
-    config: StackConfig;
+    config: OwnerSlice;
     owner: OwnerStepState;
     lane: WizardDeploymentLane;
   } = $props();

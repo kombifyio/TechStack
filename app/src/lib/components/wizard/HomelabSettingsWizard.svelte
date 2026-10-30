@@ -13,7 +13,13 @@
   import { tr } from "#lib/i18n.svelte.js";
   import { EASY_STEPS } from "#lib/wizard/index.js";
   import { addServerHref } from "#lib/server-links.js";
-  import { operationStepPlan } from "#lib/wizard/operation-steps.js";
+  import {
+    CREATION_PROCESSES,
+    createCreationSession,
+    creationStepKey,
+    creationStepNumber,
+    type CreationStepKey,
+  } from "#lib/creation/core/index.js";
 
   interface Props {
     deploymentId: string;
@@ -22,14 +28,18 @@
   let { deploymentId }: Props = $props();
 
   const steps = EASY_STEPS;
-  const inactiveReasons: Record<number, string> = {
-    1: tr("wizard.settings.goalsElsewhere"),
-    2: tr("wizard.settings.serverElsewhere"),
-    3: tr("wizard.settings.accessUnsupported"),
-  };
-  const plan = operationStepPlan(steps, inactiveReasons);
-  let step = $state(plan.first);
-  const stepKey = $derived(steps.find((item) => item.id === step)?.key);
+  const process = CREATION_PROCESSES["homelab-settings"];
+  const inactiveReasons: Record<number, string> = Object.fromEntries(
+    Object.entries(process.inactive).map(([key, reason]) => [
+      creationStepNumber(key as CreationStepKey),
+      tr(reason),
+    ]),
+  );
+  // Nothing here has to be complete before the other module opens: each acts on
+  // the running homelab by itself.
+  const session = createCreationSession({ process, isComplete: () => true });
+  const stepKey = $derived($session.current);
+  const step = $derived(creationStepNumber(stepKey));
 </script>
 
 <div class="w-full min-w-0" data-testid="homelab-settings-wizard">
@@ -38,8 +48,13 @@
     disabledStepReasons={inactiveReasons}
     currentStep={step}
     showDeploy={false}
-    onprev={() => (step = plan.previous(step) ?? step)}
-    onnext={() => (step = plan.next(step) ?? step)}
+    onprev={session.prev}
+    onnext={session.next}
+    reachableSteps={session.activeSteps().map(creationStepNumber)}
+    onselect={(id) => {
+      const key = creationStepKey(id);
+      if (key) session.open(key);
+    }}
   />
 
   <ul class="mb-6 grid gap-2 text-sm sm:grid-cols-3" data-testid="homelab-settings-inactive">

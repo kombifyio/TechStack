@@ -12,7 +12,8 @@
     CircleCheck,
   } from "@lucide/svelte";
   import { UseCaseAdvanced } from "@kombiverselabs/ui/usecase";
-  import type { StackConfig, WizardDeploymentLane } from "#lib/wizard/index.js";
+  import type { WizardDeploymentLane } from "#lib/wizard/index.js";
+  import type { OwnerSlice } from "#lib/creation/core/index.js";
   import type { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
   import { ownerUsernameFromEmail } from "#lib/wizard/session-owner.js";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
@@ -26,7 +27,7 @@
     owner,
     lane,
   }: {
-    config: StackConfig;
+    config: OwnerSlice;
     owner: OwnerStepState;
     lane: WizardDeploymentLane;
   } = $props();

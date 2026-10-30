@@ -12,6 +12,26 @@ import (
 // Production changes only the explicit application's direct capabilities.
 // PUBLIC/default/foreign-owner excess fails closed; no blanket custody reset.
 func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal ApplicationPrincipal) error {
+	pin, pinned, err := ExpectedDatabaseIdentityFromEnv()
+	if err != nil {
+		return err
+	}
+	if !pinned {
+		return fmt.Errorf("application preparation requires the exact physical identity pin")
+	}
+	return InstallApplicationCapabilitiesWithIdentity(ctx, tx, principal, pin)
+}
+
+// InstallApplicationCapabilitiesWithIdentity shares the canonical policy with
+// a native operator whose independently verified installation is not Stage.
+// It never changes process-wide database admission or migration settings.
+func InstallApplicationCapabilitiesWithIdentity(ctx context.Context, tx *sql.Tx, principal ApplicationPrincipal, pin ExpectedDatabaseIdentity) error {
+	if pin.DatabaseName == "" || pin.SystemIdentifier == "" {
+		return fmt.Errorf("application preparation requires the exact physical identity pin")
+	}
+	if err := verifyMigrationIdentity(ctx, tx, pin); err != nil {
+		return err
+	}
 	if err := principal.validate(); err != nil {
 		return err
 	}
@@ -90,13 +110,6 @@ func InstallApplicationCapabilities(ctx context.Context, tx *sql.Tx, principal A
 		if _, err := tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION "+strings.Join(functions, ",")+" TO "+role); err != nil {
 			return err
 		}
-	}
-	pin, pinned, err := ExpectedDatabaseIdentityFromEnv()
-	if err != nil {
-		return err
-	}
-	if !pinned || pin.SystemIdentifier == "" {
-		return fmt.Errorf("application preparation requires the exact physical identity pin")
 	}
 	if _, err = tx.ExecContext(ctx, "GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO "+role); err != nil {
 		return err

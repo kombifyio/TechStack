@@ -8,7 +8,7 @@ export { default as WizardHintZone } from "./WizardHintZone.svelte";
 export { default as ServerProvisioningStep } from "./ServerProvisioningStep.svelte";
 export { default as ServerRegistryPanel } from "./ServerRegistryPanel.svelte";
 export { default as ServiceRegistrySelector } from "./ServiceRegistrySelector.svelte";
-export { default as EasyWizard } from "./EasyWizard.svelte";
+export { default as CreationPageFrame } from "./CreationPageFrame.svelte";
 // Embeddable wizard step modules (ADR-0036 / D4c): the services dashboard and
 // expansion runs reuse these with host-owned state.
 export { default as GoalsStep } from "./steps/GoalsStep.svelte";

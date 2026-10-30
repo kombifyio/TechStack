@@ -12,8 +12,8 @@
   import type {
     AudienceConfigKey,
     BundleQuestionDefinition,
-    StackConfig,
   } from "#lib/wizard/index.js";
+  import type { UsersView } from "#lib/creation/core/index.js";
   import {
     createHouseholdPersonDraft,
     type HouseholdPersonDraft,
@@ -24,7 +24,7 @@
   import "../substep-rail.css";
 
   interface Props {
-    config: StackConfig;
+    config: UsersView;
     audienceQuestions?: BundleQuestionDefinition<AudienceConfigKey>[];
     householdProfile?: HouseholdProfile;
     peopleDrafts?: HouseholdPersonDraft[];

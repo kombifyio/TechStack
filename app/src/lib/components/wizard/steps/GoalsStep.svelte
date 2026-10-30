@@ -9,7 +9,8 @@
   import { tr } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
   import type { WizardRecommendation } from "#lib/api/unifier.js";
-  import { listWorkers } from "#lib/api/workers.js";
+  import { useCreationContext } from "#lib/creation/context.js";
+  import type { GoalsSlice } from "#lib/creation/core/index.js";
   import {
     acceleratorFromGpu,
     type SetupHardwareHints,
@@ -20,7 +21,6 @@
   import type {
     BundleQuestionDefinition,
     GoalConfigKey,
-    StackConfig,
   } from "#lib/wizard/index.js";
 
   let {
@@ -38,7 +38,7 @@
     onLayoutRetry,
     ondisclose,
   }: {
-    config: StackConfig;
+    config: GoalsSlice;
     primaryGoalQuestions: BundleQuestionDefinition<GoalConfigKey>[];
     advancedGoalQuestions: BundleQuestionDefinition<GoalConfigKey>[];
     onGoalChange: (goal: GoalConfigKey, value: boolean) => void;
@@ -77,8 +77,10 @@
   // guided setup's hardware recommendations. Without servers or access the
   // catalog defaults stay.
   let hardware = $state<SetupHardwareHints>({});
+  const creation = useCreationContext();
   onMount(() => {
-    listWorkers()
+    creation.inventory
+      .listWorkers()
       .then((workers) => {
         const best = workers
           .filter((worker) => worker.approved)

@@ -16,11 +16,14 @@
   import ThemeToggle from "../ui/ThemeToggle.svelte";
   import ServerStep from "./steps/ServerStep.svelte";
   import { NEW_SERVER_CREATION_HREF } from "#lib/server-links.js";
+  import { appCreationContext } from "#lib/creation/app-context.svelte.js";
+  import { provideCreationContext } from "#lib/creation/context.js";
 
   let {
     initialVariant = "discover",
     catalogTag = "latest",
   }: { initialVariant?: CreationVariant; catalogTag?: string } = $props();
+  provideCreationContext(appCreationContext());
   // The tiles of exactly one StackKits release: the repin renders the same
   // response the runtime API serves into static/preview-catalogs/<tag>.json.
   let catalog = $state(new Map<string, UseCaseCatalogView>());

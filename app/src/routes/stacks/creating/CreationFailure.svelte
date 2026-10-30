@@ -85,28 +85,6 @@
             </div>
           {/if}
 
-          {#if creation.wizardIdempotencyConflictFailed}
-            <div
-              class="bg-primary/10 border border-primary/25 rounded-xl p-4 mb-6"
-              data-testid="wizard-idempotency-conflict-summary"
-            >
-              <p class="text-sm font-medium text-foreground mb-2">
-                {tr("ui.stacksCreatingCreationFailure.earlierRegistrationAttemptAlreadyCompleted")}
-              </p>
-              <p class="text-sm text-muted-foreground">
-                {tr("ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt")}
-              </p>
-              <button
-                type="button"
-                data-kx="control"
-                class="mt-4 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium"
-                onclick={creation.resumePreviousWizardAttempt}
-              >
-                {tr("ui.stacksCreatingCreationFailure.resumePreviousAttempt")}
-              </button>
-            </div>
-          {/if}
-
           {#if creation.retryError}
             <ErrorCallout
               class="mb-6"

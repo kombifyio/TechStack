@@ -7,12 +7,12 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { StackConfig } from "#lib/wizard/index.js";
+  import type { OwnerSlice } from "#lib/creation/core/index.js";
   import type { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
   import { tr } from "#lib/i18n.svelte.js";
 
   interface Props {
-    config: StackConfig;
+    config: OwnerSlice;
     owner: OwnerStepState;
     flat?: boolean;
   }

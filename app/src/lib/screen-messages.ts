@@ -1707,8 +1707,6 @@ export const screenMessages = {
       "Could not check remote SSH enrollment progress.",
     "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
       "Could not prepare the connection command.",
-    "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier":
-      "Could not resume the earlier registration. Start a fresh attempt instead.",
     "ui.stacksCreatingCreation-controller.couldNotResumeTheOverdue":
       "Could not resume the overdue managed runtime wait.",
     "ui.stacksCreatingCreation-controller.couldNotRetryRemoteSSH":
@@ -1738,8 +1736,6 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.nodeConnected": "Server connected",
     "ui.stacksCreatingCreation-controller.nodeConnectionReady":
       "Server connection ready",
-    "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-      "Server registration did not return a creation job.",
     "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
       "Server registration ready",
     "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
@@ -1749,8 +1745,6 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
       "{name} has checked in and is part of your Homelab.",
     "ui.stacksCreatingCreation-controller.restoreDrill": "Restore drill",
-    "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-      "Resuming the earlier server registration attempt…",
     "ui.stacksCreatingCreation-controller.retryDeployment": "Retry deployment",
     "ui.stacksCreatingCreation-controller.retryRollout": "Retry rollout",
     "ui.stacksCreatingCreation-controller.retryServerRequest":
@@ -1775,8 +1769,6 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.stackkitRollout": "StackKit rollout",
     "ui.stacksCreatingCreation-controller.stackkitRuntimeVerificationMissing":
       "StackKit runtime verification missing",
-    "ui.stacksCreatingCreation-controller.startFreshAttempt":
-      "Start fresh attempt",
     "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
       "The Add server request has been running for over 2 minutes. This path should only request or prepare the additional server, not run the full StackKit rollout. Open Operations to check whether the server request was created, then retry Add server if no new server appears.",
     "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
@@ -1795,8 +1787,6 @@ export const screenMessages = {
       "The reserved server could not be checked. Retry SSH enrollment on the saved connection once the server inventory is available again.",
     "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
       "This page requires a job_id from the setup wizard. Please restart setup via /stacks/new.",
-    "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-      "Validating the selected StackKit and preparing the server...",
     "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
       "Your remote server configuration is ready for rollout",
     "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
@@ -1882,16 +1872,12 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.askCompanionPrompt":
       'Creating "{operation}" failed at the step "{step}" with this error:\n\n{error}\n\nWhat went wrong, and what should I do next?',
     "ui.stacksCreatingCreationFailure.possibleSolutions": "Possible solutions:",
-    "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
-      "Resume previous attempt",
     "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
       "SSH enrollment completed and the server is visible in your homelab. Only StackKit preparation or rollout failed. Retry continues on the connected server without repeating SSH enrollment.",
     "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
       "The exact retry endpoint validates this failed job and lease before continuing on the existing server.",
     "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
       "The rollout reached the existing managed VM.",
-    "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-      "This browser reused an attempt key from a different submission. The earlier run may already have created a server registration. Resume that attempt, or start fresh with a new key.",
     "ui.stacksCreatingCreationFailure.troubleshooting": "Troubleshooting",
     "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
       "VPS provisioning completed. Only StackKit artifact, domain routing, or later rollout work failed.",
@@ -4490,8 +4476,6 @@ export const screenMessages = {
       "Der Fortschritt der Remote-SSH-Registrierung konnte nicht geprüft werden.",
     "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
       "Der Verbindungsbefehl konnte nicht vorbereitet werden.",
-    "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier":
-      "Die frühere Registrierung konnte nicht fortgesetzt werden. Starte stattdessen einen neuen Versuch.",
     "ui.stacksCreatingCreation-controller.couldNotResumeTheOverdue":
       "Das überfällige Warten auf die verwaltete Runtime konnte nicht fortgesetzt werden.",
     "ui.stacksCreatingCreation-controller.couldNotRetryRemoteSSH":
@@ -4522,8 +4506,6 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.nodeConnected": "Server verbunden",
     "ui.stacksCreatingCreation-controller.nodeConnectionReady":
       "Server-Verbindung bereit",
-    "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-      "Die Server-Registrierung hat keinen Erstellungs-Job zurückgegeben.",
     "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
       "Server-Registrierung bereit",
     "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
@@ -4534,8 +4516,6 @@ export const screenMessages = {
       "{name} hat sich gemeldet und gehört jetzt zu deinem Homelab.",
     "ui.stacksCreatingCreation-controller.restoreDrill":
       "Wiederherstellungsübung",
-    "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-      "Früherer Server-Registrierungsversuch wird fortgesetzt…",
     "ui.stacksCreatingCreation-controller.retryDeployment":
       "Deployment erneut versuchen",
     "ui.stacksCreatingCreation-controller.retryRollout":
@@ -4563,8 +4543,6 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.stackkitRollout": "StackKit-Rollout",
     "ui.stacksCreatingCreation-controller.stackkitRuntimeVerificationMissing":
       "StackKit-Runtime-Verifizierung fehlt",
-    "ui.stacksCreatingCreation-controller.startFreshAttempt":
-      "Neuen Versuch starten",
     "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
       "Die Anfrage „Server hinzufügen“ läuft seit über 2 Minuten. Dieser Pfad soll den zusätzlichen Server nur anfordern oder vorbereiten, nicht den vollständigen StackKit-Rollout ausführen. Öffne die Vorgänge, um zu prüfen, ob die Server-Anfrage erstellt wurde, und versuche „Server hinzufügen“ erneut, wenn kein neuer Server erscheint.",
     "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
@@ -4583,8 +4561,6 @@ export const screenMessages = {
       "Der reservierte Server konnte nicht geprüft werden. Versuche die SSH-Registrierung über die gespeicherte Verbindung erneut, sobald das Server-Inventar wieder verfügbar ist.",
     "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
       "Diese Seite benötigt eine job_id vom Einrichtungsassistenten. Bitte starte die Einrichtung über /stacks/new neu.",
-    "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-      "Das ausgewählte StackKit wird validiert und der Server vorbereitet...",
     "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
       "Deine Remote-Server-Konfiguration ist bereit für den Rollout",
     "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
@@ -4675,16 +4651,12 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.askCompanionPrompt":
       'Das Erstellen von "{operation}" ist im Schritt "{step}" mit diesem Fehler fehlgeschlagen:\n\n{error}\n\nWas ist schiefgelaufen, und was soll ich als Nächstes tun?',
     "ui.stacksCreatingCreationFailure.possibleSolutions": "Mögliche Lösungen:",
-    "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
-      "Vorherigen Versuch fortsetzen",
     "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
       "Die SSH-Registrierung wurde abgeschlossen und der Server ist in deinem Homelab sichtbar. Nur die StackKit-Vorbereitung oder der Rollout ist fehlgeschlagen. Ein erneuter Versuch läuft auf dem verbundenen Server weiter, ohne die SSH-Registrierung zu wiederholen.",
     "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
       "Der genaue Retry-Endpunkt validiert diesen fehlgeschlagenen Job und Lease, bevor er auf dem bestehenden Server fortfährt.",
     "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
       "Der Rollout hat die bestehende verwaltete VM erreicht.",
-    "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-      "Dieser Browser hat einen Versuchsschlüssel aus einer anderen Übermittlung wiederverwendet. Der frühere Lauf hat möglicherweise bereits eine Server-Registrierung erstellt. Setze diesen Versuch fort oder starte mit einem neuen Schlüssel neu.",
     "ui.stacksCreatingCreationFailure.troubleshooting": "Fehlerbehebung",
     "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
       "Die VPS-Bereitstellung wurde abgeschlossen. Nur das StackKit-Artefakt, das Domain-Routing oder spätere Rollout-Arbeiten sind fehlgeschlagen.",

@@ -3057,8 +3057,6 @@ export const es: Record<string, string> = {
     "No se pudo comprobar el progreso del registro SSH remoto.",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
     "No se pudo preparar el comando de conexión.",
-  "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier":
-    "No se pudo reanudar el registro anterior. Inicia un intento nuevo.",
   "ui.stacksCreatingCreation-controller.couldNotResumeTheOverdue":
     "No se pudo reanudar la espera vencida del runtime gestionado.",
   "ui.stacksCreatingCreation-controller.couldNotRetryRemoteSSH":
@@ -3090,8 +3088,6 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.nodeConnected": "Servidor conectado",
   "ui.stacksCreatingCreation-controller.nodeConnectionReady":
     "Conexión del servidor lista",
-  "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "El registro del servidor no devolvió ningún trabajo de creación.",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
     "Registro del servidor listo",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
@@ -3102,8 +3098,6 @@ export const es: Record<string, string> = {
     "{name} se ha comunicado y ya forma parte de tu Homelab.",
   "ui.stacksCreatingCreation-controller.restoreDrill":
     "Simulacro de restauración",
-  "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "Reanudando el intento anterior de registro del servidor…",
   "ui.stacksCreatingCreation-controller.retryDeployment":
     "Reintentar el despliegue",
   "ui.stacksCreatingCreation-controller.retryRollout":
@@ -3131,8 +3125,6 @@ export const es: Record<string, string> = {
     "Despliegue de StackKit",
   "ui.stacksCreatingCreation-controller.stackkitRuntimeVerificationMissing":
     "Falta la verificación del runtime de StackKit",
-  "ui.stacksCreatingCreation-controller.startFreshAttempt":
-    "Empezar un intento nuevo",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
     "La solicitud de añadir servidor lleva más de 2 minutos en ejecución. Esta ruta solo debería solicitar o preparar el servidor adicional, no ejecutar el despliegue completo de StackKit. Abre Operaciones para comprobar si se creó la solicitud del servidor y vuelve a intentar Añadir servidor si no aparece ningún servidor nuevo.",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
@@ -3151,8 +3143,6 @@ export const es: Record<string, string> = {
     "No se pudo comprobar el servidor reservado. Reintenta la inscripción por SSH en la conexión guardada cuando el inventario de servidores vuelva a estar disponible.",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "Esta página requiere un job_id del asistente de configuración. Reinicia la configuración desde /stacks/new.",
-  "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "Validando el StackKit seleccionado y preparando el servidor...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
     "La configuración de tu servidor remoto está lista para el despliegue",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
@@ -3242,16 +3232,12 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
     'La creación de "{operation}" falló en el paso "{step}" con este error:\n\n{error}\n\n¿Qué salió mal y qué debo hacer ahora?',
   "ui.stacksCreatingCreationFailure.possibleSolutions": "Posibles soluciones:",
-  "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
-    "Reanudar el intento anterior",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
     "La inscripción por SSH se completó y el servidor es visible en tu Homelab. Solo falló la preparación o el despliegue del StackKit. El reintento continúa en el servidor conectado sin repetir la inscripción por SSH.",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "El endpoint de reintento exacto valida este trabajo fallido y el arrendamiento antes de continuar en el servidor existente.",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "El despliegue llegó a la VM gestionada existente.",
-  "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "Este navegador reutilizó una clave de intento de otro envío. Es posible que la ejecución anterior ya haya creado un registro de servidor. Reanuda ese intento o empieza de cero con una clave nueva.",
   "ui.stacksCreatingCreationFailure.troubleshooting": "Solución de problemas",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
     "El aprovisionamiento del VPS se completó. Solo fallaron el artefacto de StackKit, el enrutamiento de dominios o el trabajo de despliegue posterior.",

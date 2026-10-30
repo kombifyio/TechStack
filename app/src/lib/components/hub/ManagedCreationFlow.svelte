@@ -1,21 +1,20 @@
 <script lang="ts">
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { goto as svelteGoto } from "$app/navigation";
   import { onMount } from "svelte";
   import { getKitDeployment, type KitDeployment } from "#lib/api/stacks.js";
   import type { RegistryKitDeployment } from "#lib/api/registry.js";
   import { parseApiError } from "#lib/api/errors.js";
-  import {
-    mintJoinWizardIdempotencyKey,
-    type WizardJoinAdditionMode,
-  } from "#lib/wizard/idempotency-keys.js";
-  import type { WizardRunRequest } from "#lib/api/wizardRuns.js";
   import type { LayoutRecommendationAcceptance } from "#lib/api/layout.js";
+  import { isWizardIdempotencyConflict } from "#lib/wizard/wizard-conflict-recovery.js";
+  import { CREATION_PROCESSES } from "#lib/creation/core/index.js";
   import {
-    buildFoundRunRequest,
-    buildJoinRunRequest,
-    wizardRunRequestCarriesSecret,
-  } from "#lib/wizard/wizardRunRequest.js";
+    creationScreenHref,
+    creationScreenHrefForConflict,
+    forgetCreationAttempt,
+    submitCreationRun,
+  } from "#lib/creation/submit.js";
   import SubstrateEnrollment from "./SubstrateEnrollment.svelte";
   import InfoTip from "#lib/components/wizard/InfoTip.svelte";
   import { NODE_GUIDES } from "#lib/docs-links.js";
@@ -27,18 +26,13 @@
     readRuntimeOfferingID,
     type StackConfig,
   } from "#lib/wizard/index.js";
-  import { EasyWizard } from "#lib/components/wizard/index.js";
-
-  type NavigateOptions = Parameters<typeof svelteGoto>[1];
+  import { CreationPageFrame } from "#lib/components/wizard/index.js";
 
   interface Props {
     stackId: string;
     /** Remove page-owned chrome and spacing when mounted by a Home Hub host. */
     embedded?: boolean;
-    onNavigate?: (
-      href: string,
-      options?: NavigateOptions,
-    ) => void | Promise<void>;
+    onNavigate?: (href: string) => void | Promise<void>;
   }
 
   let {
@@ -68,16 +62,21 @@
     },
   ] as const);
 
-  async function navigate(href: string, options?: NavigateOptions) {
+  async function navigate(href: string) {
     if (onNavigate) {
-      await onNavigate(href, options);
+      await onNavigate(href);
       return;
     }
-    await svelteGoto(href, options);
+    await svelteGoto(href);
   }
 
   let config = $state<StackConfig>(createExpansionConfig());
   let additionMode = $state<"join" | "found" | "substrate">("join");
+  const process = $derived(
+    additionMode === "found"
+      ? CREATION_PROCESSES["add-server-found"]
+      : CREATION_PROCESSES["add-server"],
+  );
 
   function chooseAddition(
     mode: typeof additionMode,
@@ -97,6 +96,7 @@
   let loading = $state(true);
   let preparing = $state(false);
   let error = $state<string | null>(null);
+  let submitError = $state<string | null>(null);
   let requiresProviderReselection = $state(false);
   let offeringReadbackFailed = $state(false);
   let stackDefaultsApplied = false;
@@ -197,30 +197,21 @@
     );
   }
 
-  function selectedServiceKeys(source: StackConfig): string[] {
-    return Object.entries(source.services)
-      .filter(([, enabled]) => enabled)
-      .map(([name]) => name);
-  }
-
-  function joinIdempotencyKey(
-    id: string,
-    mode: WizardJoinAdditionMode = "join",
-  ): string {
-    return mintJoinWizardIdempotencyKey(id, mode);
-  }
-
   async function prepareRegistration(
     wizardConfig: StackConfig = config,
     extras?: { layoutRecommendation?: LayoutRecommendationAcceptance },
   ) {
-    const currentStackId = stackId;
-    if (!currentStackId) {
+    const target = {
+      stackId,
+      stackName: deployment?.name || "",
+      layoutRecommendation: extras?.layoutRecommendation,
+    };
+    if (!stackId) {
       error = tr("ui.managedCreationFlow.stackkitDeploymentNotFound");
       return;
     }
     preparing = true;
-    error = null;
+    submitError = null;
     try {
       if (wizardConfig.serverProvisioning.mode === "kombify-cloud") {
         if (offeringReadbackFailed) {
@@ -232,59 +223,44 @@
           );
         }
       }
-      const request =
-        additionMode === "found"
-          ? buildFoundRunRequest(wizardConfig)
-          : buildJoinRunRequest(
-              wizardConfig,
-              currentStackId,
-              deployment?.name || "",
-              selectedServiceKeys(wizardConfig),
-              extras?.layoutRecommendation,
-            );
-      await openCreationScreen(
-        request,
-        joinIdempotencyKey(
-          currentStackId,
-          additionMode === "found" ? "found" : "join",
+      const { run } = await submitCreationRun(process, wizardConfig, target);
+      if (!run.job_id && !run.pairing_job_id) {
+        throw new Error(
+          tr("ui.managedCreationFlow.failedToPrepareNodeRegistration"),
+        );
+      }
+      await navigate(
+        creationScreenHref(
+          process,
+          run,
+          run.name || deployment?.name || wizardConfig.name || "Techstack",
         ),
-        currentStackId,
-        wizardConfig,
       );
     } catch (err) {
+      // The server already knows this attempt: its run is followed, not repeated.
+      if (isWizardIdempotencyConflict(err)) {
+        forgetCreationAttempt(process, target);
+        const screen = await creationScreenHrefForConflict(
+          process,
+          err,
+          target,
+        );
+        if (screen) {
+          await navigate(screen);
+        } else {
+          submitError = tr(
+            "ui.stacksCreatingCreationFailure.earlierRegistrationAttemptAlreadyCompleted",
+          );
+        }
+        return;
+      }
       const parsed = parseApiError(err);
-      error = parsed.message || tr("ui.managedCreationFlow.failedToPrepareNodeRegistration");
+      submitError =
+        parsed.message ||
+        tr("ui.managedCreationFlow.failedToPrepareNodeRegistration");
     } finally {
       preparing = false;
     }
-  }
-
-  async function openCreationScreen(
-    request: WizardRunRequest,
-    idempotencyKey: string,
-    currentStackId: string,
-    source: StackConfig,
-  ) {
-    const stackName = deployment?.name || source.name || "Techstack";
-
-    const params = new URLSearchParams({
-      name: stackName,
-    });
-    if (additionMode === "join") {
-      params.set("operation", "add-server");
-      params.set("stack_id", currentStackId);
-    }
-    await navigate(`/stacks/creating?${params.toString()}`, {
-      state: {
-        wizardRunSubmission: { request, idempotencyKey },
-      },
-      // The handoff survives a reload until the server returns a durable job,
-      // but only when it carries no credential: an SSH password stays in
-      // memory for client-side navigation and is never written to
-      // sessionStorage. Reloading such a request requires re-entering the
-      // password in the wizard.
-      persistState: !wizardRunRequestCarriesSecret(request),
-    });
   }
 </script>
 
@@ -315,19 +291,14 @@
     {#snippet substrateContent()}
       <SubstrateEnrollment deploymentId={stackId} />
     {/snippet}
-    <EasyWizard
+    <CreationPageFrame
+      {process}
       initialConfig={config}
       oncreate={prepareRegistration}
       isDeploying={preparing}
       submitLabel={tr("ui.managedCreationFlow.addNode")}
       submittingLabel={tr("ui.managedCreationFlow.preparingNode")}
-      showServerRole={true}
-      showServerServices={false}
-      applyDeploymentLaneDefaults={false}
-      reuseExistingOwner={true}
-      joinExistingDeployment={additionMode !== "found"}
       layoutStackId={stackId}
-      layoutFlow="add-server"
       nodeAlternative={additionMode === "substrate"
         ? substrateContent
         : undefined}
@@ -336,6 +307,11 @@
         requiresProviderReselection = false;
       }}
     >
+      {#snippet footerNotice()}
+        {#if submitError}
+          <ErrorCallout message={submitError} testId="add-server-notice" />
+        {/if}
+      {/snippet}
       {#snippet nodeOptions(wizardConfig)}
         <div class="mb-6" data-substep>
         <fieldset class="flex flex-wrap gap-3">
@@ -371,6 +347,6 @@
           </div>
         {/if}
       {/snippet}
-    </EasyWizard>
+    </CreationPageFrame>
   {/if}
 </div>

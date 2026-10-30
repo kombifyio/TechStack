@@ -644,6 +644,24 @@ jobs:
           cp dist/release-manifest.json dist/release-manifest-seed.json
           cp dist/release-manifest.sigstore.json dist/release-manifest-seed.sigstore.json
 
+      # Guards download only from private R2 (CI-CD "Render download
+      # prohibition"). The Gateway Worker resolves the index a control plane
+      # admits by its digest in R2 and streams only objects whose R2-stored
+      # SHA-256 equals the index entry, so no Gateway repin follows a release.
+      # The mirror runs before the index becomes a release asset: no image can
+      # bake an index whose files R2 does not hold yet. Idempotent on reruns.
+      - name: Mirror the delivery files to private R2
+        if: env.RELEASE_MODE == 'publish' && steps.binaries.outputs.built == 'true' && steps.binaries.outputs.runtime_assets == '2' && steps.version.outputs.public != 'true'
+        shell: bash
+        env:
+          GUARD_RELEASE_R2_ACCOUNT_ID: ${{ secrets.GUARD_RELEASE_R2_ACCOUNT_ID }}
+          GUARD_RELEASE_R2_BUCKET: ${{ secrets.GUARD_RELEASE_R2_BUCKET }}
+          GUARD_RELEASE_R2_ACCESS_KEY_ID: ${{ secrets.GUARD_RELEASE_R2_ACCESS_KEY_ID }}
+          GUARD_RELEASE_R2_SECRET_ACCESS_KEY: ${{ secrets.GUARD_RELEASE_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          guard-release-tool r2-mirror dist | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Creating the guard-v<version> release creates its tag, and the
       # repository now refuses a tag from any token without the workflows
       # permission (HTTP 403 "Resource not accessible by integration";

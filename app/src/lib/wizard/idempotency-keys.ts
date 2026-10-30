@@ -2,6 +2,26 @@ export type WizardJoinAdditionMode = "join" | "found";
 
 const JOIN_WIZARD_IDEMPOTENCY_STORAGE_PREFIX = "wizardJoinIdempotencyKey:";
 
+const STACK_CREATION_IDEMPOTENCY_STORAGE_KEY = "stackCreationIdempotencyKey";
+
+/** The attempt of a new deployment in this tab; a replay keeps its key. */
+export function mintStackCreationIdempotencyKey(): string {
+  const existing = sessionStorage.getItem(
+    STACK_CREATION_IDEMPOTENCY_STORAGE_KEY,
+  );
+  if (existing) return existing;
+  const generated =
+    typeof crypto?.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `create-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  sessionStorage.setItem(STACK_CREATION_IDEMPOTENCY_STORAGE_KEY, generated);
+  return generated;
+}
+
+export function clearStackCreationIdempotencyKey(): void {
+  sessionStorage.removeItem(STACK_CREATION_IDEMPOTENCY_STORAGE_KEY);
+}
+
 export function legacyJoinWizardIdempotencyStorageKey(stackId: string): string {
   return `${JOIN_WIZARD_IDEMPOTENCY_STORAGE_PREFIX}${stackId}`;
 }

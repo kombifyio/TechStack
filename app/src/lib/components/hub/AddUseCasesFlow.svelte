@@ -13,13 +13,12 @@
   import { onMount, untrack } from "svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
-  import { EasyWizard } from "#lib/components/wizard/index.js";
+  import { CreationPageFrame } from "#lib/components/wizard/index.js";
   import { getKitDeployment } from "#lib/api/stacks.js";
   import { parseApiError } from "#lib/api/errors.js";
-  import {
-    createWizardRun,
-    type WizardRunResponse,
-  } from "#lib/api/wizardRuns.js";
+  import type { WizardRunResponse } from "#lib/api/wizardRuns.js";
+  import { CREATION_PROCESSES } from "#lib/creation/core/index.js";
+  import { creationScreenHref, submitCreationRun } from "#lib/creation/submit.js";
   import {
     layoutErrorReasonCode,
     layoutReplacementFromError,
@@ -27,15 +26,10 @@
     type LayoutRecommendationView,
   } from "#lib/api/layout.js";
   import {
-    buildExtendRunRequest,
     createExpansionConfig,
     WizardInputError,
     type StackConfig,
   } from "#lib/wizard/index.js";
-  import {
-    clearExtendWizardIdempotencyKey,
-    mintExtendWizardIdempotencyKey,
-  } from "#lib/wizard/idempotency-keys.js";
   import { START_PAGE_HREF } from "#lib/navigation.js";
   import { tr } from "#lib/i18n.svelte.js";
 
@@ -55,6 +49,8 @@
     initialGoals = [],
     initialConfig,
   }: Props = $props();
+
+  const process = CREATION_PROCESSES["add-use-case"];
 
   interface Notice {
     tone: "warning" | "error" | "info";
@@ -157,20 +153,11 @@
     submitting = true;
     notice = null;
     try {
-      const request = buildExtendRunRequest(
-        wizardConfig,
+      ({ run: result } = await submitCreationRun(process, wizardConfig, {
         stackId,
-        homelabName,
-        extras?.layoutRecommendation,
-      );
-      // The same request keeps its key (a retry replays the attempt); a
-      // changed selection or recommendation gets a new one.
-      const key = mintExtendWizardIdempotencyKey(
-        stackId,
-        JSON.stringify(request),
-      );
-      result = await createWizardRun(request, key);
-      clearExtendWizardIdempotencyKey(stackId);
+        stackName: homelabName,
+        layoutRecommendation: extras?.layoutRecommendation,
+      }));
     } catch (err) {
       notice = noticeFor(err);
     } finally {
@@ -183,13 +170,11 @@
     // The creation page follows one provisioning job only.
     if (result?.job_ids?.length) return "";
     if (!result?.job_id) return "";
-    const query = [
-      `stack_id=${encodeURIComponent(stackId)}`,
-      `job_id=${encodeURIComponent(result.job_id)}`,
-    ];
-    const name = result.name || homelabName;
-    if (name) query.push(`name=${encodeURIComponent(name)}`);
-    return `/stacks/creating?${query.join("&")}`;
+    return creationScreenHref(
+      process,
+      { ...result, kit_deployment_id: stackId },
+      result.name || homelabName,
+    );
   });
 </script>
 
@@ -259,19 +244,14 @@
         {tr("layout.addUseCases.subtitle")}
       </p>
     </header>
-    <EasyWizard
+    <CreationPageFrame
+      {process}
       initialConfig={config}
       oncreate={addUseCases}
       isDeploying={submitting}
       submitLabel={tr("layout.addUseCases.submit")}
       submittingLabel={tr("layout.addUseCases.submitting")}
-      applyDeploymentLaneDefaults={false}
-      reuseExistingOwner={true}
-      joinExistingDeployment={true}
-      inheritServer={true}
-      requireGoal={true}
       layoutStackId={stackId}
-      layoutFlow="add-use-case"
       layoutReplacement={replacement}
       layoutRefresh={refresh}
     >
@@ -286,6 +266,6 @@
           />
         {/if}
       {/snippet}
-    </EasyWizard>
+    </CreationPageFrame>
   {/if}
 </div>

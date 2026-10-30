@@ -12,9 +12,9 @@ import (
 type RuntimeRolePosture int
 
 const (
-	// RuntimeRoleLocalOwner is a self-hosted installation whose single local
-	// login owns its own schema (internal/localdb). It may own objects, but it
-	// never bypasses RLS: FORCE RLS still applies to it.
+	// RuntimeRoleLocalOwner is retained as a source-compatible name for native
+	// installations. Local serving logins are bounded too; only their name is
+	// chosen by the customer rather than the hosted preparation authority.
 	RuntimeRoleLocalOwner RuntimeRolePosture = iota
 	// RuntimeRoleHosted is every hosted runtime (stable, the Preview channel
 	// and non-production deployments). D-2026-10-22-02: tenant isolation holds
@@ -34,16 +34,31 @@ const HostedApplicationRole = "techstack_application"
 // login. Every posture refuses a superuser, a BYPASSRLS login, a login
 // switched to another role, and any role- or database-level default for an
 // app.* setting (a default tenant or scope would widen RLS for every query).
-// The hosted posture also refuses ownership of the database or any object,
+// Every posture refuses ownership of the database or any object,
 // CREATE/TEMP on the database, CREATE on any schema, role administration,
 // inheritance and any role membership, and requires the prepared application
-// login, so migration or purpose-specific custody can never serve HTTP.
+// login in hosted mode, so migration custody can never serve HTTP.
 // Findings name only the failed property, never a role name or DSN.
 func VerifyRuntimeRolePosture(ctx context.Context, q PrivilegeQuerier, posture RuntimeRolePosture) error {
 	if posture == RuntimeRoleHosted && (strings.TrimSpace(os.Getenv(EnvBackupWorkerDatabaseURL)) != "" || strings.TrimSpace(os.Getenv("TECHSTACK_BACKUP_ENTITLEMENTS_DATABASE_URL")) != "" || strings.TrimSpace(os.Getenv("TECHSTACK_BACKUP_WORKER_MODE")) != "") {
 		return fmt.Errorf("%w: HTTP application received private worker custody", ErrRuntimeRoleUnsafe)
 	}
 	return verifyRuntimeRolePosture(ctx, q, posture, HostedApplicationRole)
+}
+
+// VerifyRuntimeRolePostureForPrincipal inspects a named native application
+// before changing its credential. It never authenticates or SET ROLE as it.
+func VerifyRuntimeRolePostureForPrincipal(ctx context.Context, q PrivilegeQuerier, role string) error {
+	var unsafe bool
+	err := q.QueryRowContext(ctx, `SELECT NOT r.rolcanlogin OR r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolinherit
+	 OR EXISTS(SELECT 1 FROM pg_auth_members WHERE member=r.oid)
+	 OR EXISTS(SELECT 1 FROM pg_shdepend WHERE refclassid='pg_authid'::regclass AND refobjid=r.oid AND deptype='o')
+	 OR COALESCE(array_length(r.rolconfig,1),0)>0
+	 FROM pg_roles r WHERE rolname=$1`, role).Scan(&unsafe)
+	if err != nil || unsafe {
+		return ErrRuntimeRoleUnsafe
+	}
+	return nil
 }
 
 // VerifyBackupWorkerRuntimeRole applies the hosted posture to the one private
@@ -101,16 +116,14 @@ func verifyRuntimeRolePosture(ctx context.Context, q PrivilegeQuerier, posture R
 	add(superuser, "superuser")
 	add(bypassRLS, "bypassrls")
 	add(settingDefaults, "app.* setting default")
-	if posture == RuntimeRoleHosted {
-		add(wrongLogin, "unexpected application login")
-		add(administrative, "role/database administration")
-		add(inherits, "role inheritance")
-		add(membership, "role membership")
-		add(ownsDatabase, "database ownership")
-		add(ownsObjects, "object ownership")
-		add(databaseCreate, "database CREATE/TEMP")
-		add(schemaCreate, "schema CREATE")
-	}
+	add(posture == RuntimeRoleHosted && wrongLogin, "unexpected application login")
+	add(administrative, "role/database administration")
+	add(inherits, "role inheritance")
+	add(membership, "role membership")
+	add(ownsDatabase, "database ownership")
+	add(ownsObjects, "object ownership")
+	add(databaseCreate, "database CREATE/TEMP")
+	add(schemaCreate, "schema CREATE")
 	if len(findings) > 0 {
 		return fmt.Errorf("%w: %s", ErrRuntimeRoleUnsafe, strings.Join(findings, ", "))
 	}

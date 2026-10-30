@@ -11,12 +11,12 @@
   import type {
     BundleQuestionDefinition,
     GoalConfigKey,
-    StackConfig,
   } from "#lib/wizard/index.js";
   import type { UseCaseCatalogView } from "#lib/api/useCaseCatalog.js";
   import { tr } from "#lib/i18n.svelte.js";
   import { recommendWizard } from "#lib/api/unifier.js";
-  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { useCreationContext } from "#lib/creation/context.js";
+  import type { GoalsSlice } from "#lib/creation/core/index.js";
 
   let {
     config,
@@ -24,7 +24,7 @@
     catalog,
     onGoalChange,
   }: {
-    config: StackConfig;
+    config: GoalsSlice;
     questions: BundleQuestionDefinition<GoalConfigKey>[];
     catalog: Map<string, UseCaseCatalogView>;
     onGoalChange: (goal: GoalConfigKey, value: boolean) => void;
@@ -37,6 +37,7 @@
     rocket: Rocket,
   } satisfies Record<CreationTemplateIcon, unknown>;
 
+  const creation = useCreationContext();
   const cards = $derived(creationGoals(questions, catalog));
   const templates = $derived(
     CREATION_TEMPLATES.map((template) => {
@@ -64,8 +65,7 @@
       const result = await recommendWizard({
         goals: [],
         services: [],
-        deployment_lane:
-          authStore.deploymentMode === "saas" ? "saas" : "self-hosted",
+        deployment_lane: creation.auth.lane === "saas" ? "saas" : "self-hosted",
         surface: "easy",
         selection_intent: "all",
         available_goals: offered.map((card) => card.id),

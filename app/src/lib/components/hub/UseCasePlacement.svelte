@@ -112,6 +112,9 @@
       ? candidate.view.outcome === "feasible" &&
         Boolean(acceptableLayoutRecommendation(candidate.view))
       : !hasGoals && !candidate.unavailable;
+  // The server the owner started from was not preselected: say why, instead of
+  // silently offering another target.
+  let preferredSkipped = $state<{ key: string; name?: string } | null>(null);
   const canContinue = $derived(
     selected === "new" ||
       (selected.startsWith("server:") &&
@@ -334,6 +337,16 @@
         preferredTarget ||
         eligible[0]?.deployment.id ||
         (existingServer ? `server:${existingServer.id}` : "new");
+      preferredSkipped = !preferredServerId || preferredTarget
+        ? null
+        : !preferred
+          ? { key: "placement.preferred.missing" }
+          : {
+              key: preferred.kit_deployment_id
+                ? "placement.preferred.incompatible"
+                : "placement.preferred.notReady",
+              name: preferred.name,
+            };
       targetsChecked = true;
     } finally {
       checking = false;
@@ -392,6 +405,15 @@
     {#if !targetsChecked}
       <LoadingNote label={tr("placement.loading")} />
     {:else}
+      {#if preferredSkipped}
+        <p
+          class="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground"
+          role="status"
+          data-testid="use-case-preferred-skipped"
+        >
+          {tr(preferredSkipped.key, { name: preferredSkipped.name ?? "" })}
+        </p>
+      {/if}
       {#if failed}
         <ErrorCallout
           message={tr("placement.failed")}

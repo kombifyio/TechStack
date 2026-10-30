@@ -26,6 +26,8 @@
     recommendedStackKit?: string;
     reviewMode?: boolean;
     selectionReady?: boolean;
+    /** Reports the readiness of the selection to a frame that does not bind it. */
+    onselectionchange?: (ready: boolean) => void;
     /** Main wizard step number, the prefix of the sub-step rail (2.1, 2.2). */
     stepNumber?: number;
   }
@@ -42,8 +44,10 @@
     recommendedStackKit,
     reviewMode = false,
     selectionReady = $bindable(true),
+    onselectionchange,
     stepNumber = 2,
   }: Props = $props();
+  $effect(() => onselectionchange?.(selectionReady));
   let advancedOpen = $state(false);
   let detailsVisible = $state(false);
   // The provisioning module is a size container, and size containment scopes

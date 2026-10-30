@@ -246,8 +246,12 @@ func verifyApplicationPrivileges(ctx context.Context, q PrivilegeQuerier, princi
 			return fmt.Errorf("managed test app lacks assigned database/schema access")
 		}
 	}
+	// MAINTAIN was introduced in PostgreSQL17. The native product ships16;
+	// asking16 about an unknown privilege makes a safe principal unverifiable.
 	tableRows, err := q.QueryContext(ctx, `SELECT c.oid::bigint,format('%I.%I',n.nspname,c.relname),v.privilege,has_table_privilege($1,c.oid,v.privilege),has_table_privilege($1,c.oid,v.privilege||' WITH GRANT OPTION')
-	 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN (VALUES('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('TRUNCATE'),('REFERENCES'),('TRIGGER'),('MAINTAIN')) v(privilege)
+	 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN
+	 (SELECT privilege FROM (VALUES('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('TRUNCATE'),('REFERENCES'),('TRIGGER')) base(privilege)
+	 UNION ALL SELECT 'MAINTAIN' WHERE current_setting('server_version_num')::integer>=170000) v
 	 WHERE n.nspname<>'information_schema' AND n.nspname NOT LIKE 'pg_%' AND c.relkind IN ('r','p','v','m','f')`, principal.Role)
 	if err != nil {
 		return err
