@@ -40,6 +40,30 @@ func (r *SystemRuntime) Close() {
 	}
 }
 
+// StartupRefusal names the startup stage that refused, plus the package's own
+// fixed reason where it has one; never a credential, DSN or driver message.
+type StartupRefusal struct{ Stage, Reason string }
+
+func (e *StartupRefusal) Error() string {
+	if e.Reason == "" {
+		return "household startup refused at " + e.Stage
+	}
+	return "household startup refused at " + e.Stage + ": " + e.Reason
+}
+
+// refusedAt keeps a SystemRoleRefusal (names only) and otherwise records the
+// stage, with the reason text only where this package wrote it (fixed).
+func refusedAt(stage string, err error, fixed bool) error {
+	var role *SystemRoleRefusal
+	if errors.As(err, &role) {
+		return err
+	}
+	if fixed {
+		return &StartupRefusal{Stage: stage, Reason: err.Error()}
+	}
+	return &StartupRefusal{Stage: stage}
+}
+
 func OpenSystemWorkerFromEnv(ctx context.Context, inExecution bool) (*SystemRuntime, error) {
 	mode := strings.TrimSpace(os.Getenv("TECHSTACK_HOUSEHOLD_WORKER_MODE"))
 	if (inExecution && mode != "execution") || (!inExecution && mode != "standalone") {
@@ -60,39 +84,39 @@ func OpenSystemWorkerFromEnv(ctx context.Context, inExecution bool) (*SystemRunt
 	}
 	cloud, err := openHouseholdDatabase(ctx, cloudDSNEnv, "TECHSTACK_HOUSEHOLD_CLOUD_EXPECTED_DATABASE_IDENTITY", "kombify", CloudHouseholdSystemRole)
 	if err != nil {
-		return nil, err
+		return nil, refusedAt("cloud-database", err, true)
 	}
 	tech, err := openHouseholdDatabase(ctx, workerDSNEnv, db.EnvExpectedDatabaseIdentity, "kombify_runtime", controlplane.HouseholdSystemRole)
 	if err != nil {
 		cloud.Close()
-		return nil, err
+		return nil, refusedAt("techstack-database", err, true)
 	}
 	refuse := func(err error) (*SystemRuntime, error) { cloud.Close(); tech.Close(); return nil, err }
 	var migrated bool
 	if cloud.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM public.kombify_db_migrations WHERE version='000279_household_app_projection.up.sql' AND NOT dirty AND applied_at IS NOT NULL AND checksum=$1)`, householdCloudMigrationSHA256).Scan(&migrated) != nil || !migrated {
-		return refuse(errors.New("household Cloud migration binding unavailable"))
+		return refuse(&StartupRefusal{Stage: "cloud-migration", Reason: "household Cloud migration binding unavailable"})
 	}
 	if err := verifyHouseholdPrivileges(ctx, cloud, true); err != nil {
-		return refuse(err)
+		return refuse(refusedAt("cloud-privileges", err, true))
 	}
 	if err := verifyHouseholdPrivileges(ctx, tech, false); err != nil {
-		return refuse(err)
+		return refuse(refusedAt("techstack-privileges", err, true))
 	}
 	// Reuse the canonical embedded migration ledger verifier; never apply SQL.
 	if err := (&db.DB{DB: tech}).VerifyMigrations(ctx); err != nil {
-		return refuse(errors.New("household Techstack migration verification failed"))
+		return refuse(&StartupRefusal{Stage: "techstack-migrations", Reason: "household Techstack migration verification failed"})
 	}
 	relay, err := agentcontrol.NewHouseholdRelayClient(os.Getenv("TECHSTACK_HOUSEHOLD_RELAY_ORIGIN"), os.Getenv("TECHSTACK_HOUSEHOLD_RELAY_SIGNING_KEY"))
 	if err != nil {
-		return refuse(err)
+		return refuse(refusedAt("relay-client", err, false))
 	}
 	delivery, err := NewActivationDelivery(os.Getenv("TECHSTACK_HOUSEHOLD_NOTIFICATIONS_ORIGIN"), os.Getenv("TECHSTACK_HOUSEHOLD_NOTIFICATIONS_SIGNING_KEY"))
 	if err != nil {
-		return refuse(err)
+		return refuse(refusedAt("notifications-client", err, false))
 	}
 	worker, err := NewSystemWorker(ctx, cloud, tech, relay, delivery)
 	if err != nil {
-		return refuse(err)
+		return refuse(refusedAt("worker", err, false))
 	}
 	return &SystemRuntime{Worker: worker, cloud: cloud, techstack: tech}, nil
 }
