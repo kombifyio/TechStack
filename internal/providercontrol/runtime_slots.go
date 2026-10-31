@@ -67,6 +67,7 @@ func (a *NativeAdmission) ResolveManagedRuntimeSlotGeneration(
 	ctx context.Context,
 	tenantID, stackID, slotKey string,
 ) (ManagedRuntimeSlotGenerationResolution, error) {
+	ctx = SystemAuthorityContext(ctx)
 	tenantID = strings.TrimSpace(tenantID)
 	stackID = strings.TrimSpace(stackID)
 	slotKey = strings.ToLower(strings.TrimSpace(slotKey))

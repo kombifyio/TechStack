@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/artifactdelivery"
 )
 
 // r2-mirror copies the delivery files of a verified publication to the private
@@ -31,6 +33,9 @@ import (
 // objects that are already there.
 
 const r2MirrorIndexMax = 16 << 10
+
+// r2MirrorInstallerMax matches the Gateway Worker's installer bound.
+const r2MirrorInstallerMax = 256 << 10
 
 var (
 	r2AccountPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -50,15 +55,23 @@ type r2MirrorFile struct {
 	size                           int64
 }
 
-func mirrorReleaseToR2(dir string) (string, error) {
+func newR2Mirror() (r2Mirror, error) {
 	account := os.Getenv("GUARD_RELEASE_R2_ACCOUNT_ID")
 	bucket := os.Getenv("GUARD_RELEASE_R2_BUCKET")
 	mirror := r2Mirror{bucket: bucket, accessKey: os.Getenv("GUARD_RELEASE_R2_ACCESS_KEY_ID"),
 		secretKey: os.Getenv("GUARD_RELEASE_R2_SECRET_ACCESS_KEY"), client: &http.Client{Timeout: 15 * time.Minute}, now: time.Now}
 	if !r2AccountPattern.MatchString(account) || !r2BucketPattern.MatchString(bucket) || mirror.accessKey == "" || mirror.secretKey == "" {
-		return "", errors.New("GUARD_RELEASE_R2_ACCOUNT_ID, _BUCKET, _ACCESS_KEY_ID and _SECRET_ACCESS_KEY are required")
+		return r2Mirror{}, errors.New("GUARD_RELEASE_R2_ACCOUNT_ID, _BUCKET, _ACCESS_KEY_ID and _SECRET_ACCESS_KEY are required")
 	}
 	mirror.endpoint = "https://" + account + ".eu.r2.cloudflarestorage.com"
+	return mirror, nil
+}
+
+func mirrorReleaseToR2(dir string) (string, error) {
+	mirror, err := newR2Mirror()
+	if err != nil {
+		return "", err
+	}
 	files, err := releaseMirrorFiles(dir)
 	if err != nil {
 		return "", err
@@ -72,6 +85,50 @@ func mirrorReleaseToR2(dir string) (string, error) {
 		report = append(report, state+" "+file.key)
 	}
 	return strings.Join(report, "\n"), nil
+}
+
+// mirrorInstallerToR2 copies a release source's Linux installer to its
+// content-addressed key. The control plane built from that source admits only
+// the digest it pins, and the Gateway Worker hashes the stored bytes before
+// serving them, so installer bytes never come from Render and an upload under
+// any other digest is inert. requirePinned refuses an installer whose digest
+// differs from the pin compiled into this tool, which is the release source's
+// own pin when the tool is built from that source.
+func mirrorInstallerToR2(path string, requirePinned bool) (string, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- the workflow's own export of the release source.
+	if err != nil {
+		return "", err
+	}
+	if len(raw) == 0 || len(raw) > r2MirrorInstallerMax {
+		return "", errors.New("install.sh is empty or exceeds the delivery bound")
+	}
+	normalized, digest := artifactdelivery.NormalizeLinuxInstaller(raw)
+	if requirePinned && digest != artifactdelivery.LinuxInstallerSHA256 {
+		return "", errors.New("install.sh differs from artifactdelivery.LinuxInstallerSHA256; bump the pin with the installer")
+	}
+	mirror, err := newR2Mirror()
+	if err != nil {
+		return "", err
+	}
+	staged, err := os.CreateTemp("", "install-*.sh")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.Remove(staged.Name()) }()
+	_, err = staged.Write(normalized)
+	if closeErr := staged.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", err
+	}
+	file := r2MirrorFile{path: staged.Name(), key: artifactdelivery.LinuxInstallerObjectKey(digest), sha256: digest,
+		size: int64(len(normalized)), contentType: "text/x-shellscript"}
+	state, err := mirror.put(file)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", file.key, err)
+	}
+	return state + " " + file.key, nil
 }
 
 // releaseMirrorFiles binds every file to the index the publication generated:

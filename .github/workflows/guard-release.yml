@@ -662,6 +662,32 @@ jobs:
           set -euo pipefail
           guard-release-tool r2-mirror dist | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # The public installer (GET /install.sh) is streamed by the Gateway
+      # Worker from private R2 after the control plane admits the digest it
+      # pins. Every publication, including historical reuse, mirrors the
+      # installer of its exact release source before that source can serve.
+      - name: Mirror the release source's installer to private R2
+        if: env.RELEASE_MODE == 'publish' && steps.version.outputs.public != 'true'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.version.outputs.source-sha }}
+          GUARD_RELEASE_R2_ACCOUNT_ID: ${{ secrets.GUARD_RELEASE_R2_ACCOUNT_ID }}
+          GUARD_RELEASE_R2_BUCKET: ${{ secrets.GUARD_RELEASE_R2_BUCKET }}
+          GUARD_RELEASE_R2_ACCESS_KEY_ID: ${{ secrets.GUARD_RELEASE_R2_ACCESS_KEY_ID }}
+          GUARD_RELEASE_R2_SECRET_ACCESS_KEY: ${{ secrets.GUARD_RELEASE_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if ! git cat-file -e "${SOURCE_SHA}:install.sh"; then
+            echo "::notice::Release source ${SOURCE_SHA} has no install.sh; nothing to mirror."
+            exit 0
+          fi
+          git show "${SOURCE_SHA}:install.sh" > "$RUNNER_TEMP/install.sh"
+          # A tool built from the release source itself also proves its pin.
+          pinned=()
+          if [ "$SOURCE_SHA" = "$GITHUB_SHA" ]; then pinned=(--require-pinned); fi
+          guard-release-tool r2-mirror-installer "$RUNNER_TEMP/install.sh" "${pinned[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Creating the guard-v<version> release creates its tag, and the
       # repository now refuses a tag from any token without the workflows
       # permission (HTTP 403 "Resource not accessible by integration";

@@ -142,6 +142,7 @@ func (a *NativeAdmission) PreflightProvision(
 	ctx context.Context,
 	request NativeProvisionAdmissionRequest,
 ) error {
+	ctx = SystemAuthorityContext(ctx)
 	if !a.configured() {
 		return fmt.Errorf("%w: native admission is not configured", ErrInvalidRequest)
 	}
@@ -215,6 +216,7 @@ func (a *NativeAdmission) AdmitProvision(
 	ctx context.Context,
 	request NativeProvisionAdmissionRequest,
 ) (NativeProvisionAdmissionResult, error) {
+	ctx = SystemAuthorityContext(ctx)
 	if !a.configured() {
 		return NativeProvisionAdmissionResult{}, fmt.Errorf("%w: native admission is not configured", ErrInvalidRequest)
 	}

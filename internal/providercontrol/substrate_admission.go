@@ -31,6 +31,7 @@ type SubstrateBinding struct {
 // VerifyCustomerGuest checks the immutable creation receipt, not caller-supplied
 // correlation fields or a mutable server projection.
 func (a *NativeAdmission) VerifyCustomerGuest(ctx context.Context, tenant, owner, stack, lease, server, operation string) error {
+	ctx = SystemAuthorityContext(ctx)
 	if a == nil || a.db == nil {
 		return ErrInvalidRequest
 	}

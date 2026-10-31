@@ -79,6 +79,7 @@ func (p *NativePowerController) RequestPower(
 	ctx context.Context,
 	req monthlyruntime.PowerRequest,
 ) (monthlyruntime.PowerOperation, error) {
+	ctx = providercontrol.SystemAuthorityContext(ctx)
 	if p == nil || p.database == nil || p.application == nil {
 		return monthlyruntime.PowerOperation{}, monthlyruntime.ErrPowerNotAdmitted
 	}
@@ -142,6 +143,7 @@ func (p *NativePowerController) RequestPower(
 // LatestPower returns the newest power reconcile of the lease's current
 // generation, or nil when the generation has never been power-cycled.
 func (p *NativePowerController) LatestPower(ctx context.Context, tenantID, leaseID string) (*monthlyruntime.PowerOperation, error) {
+	ctx = providercontrol.SystemAuthorityContext(ctx)
 	if p == nil || p.database == nil || p.application == nil {
 		return nil, nil
 	}
