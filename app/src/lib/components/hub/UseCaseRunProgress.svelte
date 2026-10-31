@@ -3,8 +3,13 @@
   import { getJob, type JobDetail } from "#lib/api/jobs.js";
   import { tr } from "#lib/i18n.svelte.js";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import { emitCreationEvent } from "#lib/creation/host.js";
 
-  let { stackId, jobIds }: { stackId: string; jobIds: string[] } = $props();
+  let {
+    stackId,
+    jobIds,
+    runId = "",
+  }: { stackId: string; jobIds: string[]; runId?: string } = $props();
   const ids = $derived([...new Set(jobIds.filter(Boolean))]);
   let jobs = $state<Record<string, JobDetail>>({});
   let unavailable = $state(false);
@@ -20,6 +25,23 @@
     ids.length > 0 && ids.every((id) => succeeded(jobs[id])),
   );
   const needsAttention = $derived(ids.some((id) => failed(jobs[id])));
+
+  // The host hears the same state this view shows, once per change.
+  const phase = $derived(
+    ids.map((id) => jobs[id]?.step || jobs[id]?.state).find(Boolean) ?? "",
+  );
+  $effect(() => {
+    if (finished) {
+      emitCreationEvent({
+        event: "completed",
+        runId,
+        stackId,
+        outcome: complete ? "succeeded" : "failed",
+      });
+    } else if (phase) {
+      emitCreationEvent({ event: "progress", runId, phase });
+    }
+  });
 
   onMount(() => {
     let disposed = false;

@@ -898,6 +898,23 @@ async function verifyCreationProcesses(
   for (const id of [3, 4]) await stepState(id, "upcoming");
   await stepState(5, "inactive");
 
+  // The module a host frames answers on its own route: Cloud's popup opens it.
+  await page.goto(
+    "/embed/creation?embedded=true&host_navigation=true&process=add-use-case&frame=sheet&use-case=vault",
+    { waitUntil: "domcontentloaded" },
+  );
+  await expect(page.getByTestId("creation-embed")).toHaveAttribute(
+    "data-process",
+    "add-use-case",
+    { timeout: 60_000 },
+  );
+  await expect(page.getByTestId("use-case-placement")).toBeVisible({
+    timeout: 180_000,
+  });
+  await expect(page.getByTestId("use-case-target-continue")).toBeVisible({
+    timeout: 180_000,
+  });
+
   await page.goto("/settings/homelab", { waitUntil: "domcontentloaded" });
   const settingsEmpty = page.getByTestId("homelab-settings-empty");
   await expect(

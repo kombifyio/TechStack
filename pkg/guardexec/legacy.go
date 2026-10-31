@@ -88,59 +88,11 @@ func (l *LegacyRoot) EnsureTechstackRuntime(ctx context.Context, cfg agentpkg.Te
 	if err != nil {
 		return result, err
 	}
-	localDigest, _ := agentpkg.DigestInstalledExecutable(cfg.AgentPath)
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Minute}
-	}
-	evidence, err := fetchReleaseEvidence(ctx, client, cfg)
+	staged, err := stageSignedRelease(ctx, updater, opts.HandoffDir, cfg, &result)
 	if err != nil {
 		return result, err
 	}
-	if evidence != nil && evidence.SHA256 == localDigest {
-		result.SHA256 = localDigest
-		return result, updater.SyncOperations()
-	}
-	cfg.StageDir = opts.HandoffDir
-	artifactPath, digest, artifactVersion, notModified, err := agentpkg.FetchTechstackRuntimeArtifact(ctx, cfg, localDigest)
-	if err != nil {
-		return result, err
-	}
-	if notModified {
-		result.SHA256 = localDigest
-		return result, updater.SyncOperations()
-	}
-	defer func() { _ = os.Remove(artifactPath) }()
-	params := StageParams{ArtifactFile: filepath.Base(artifactPath)}
-	if evidence != nil {
-		if evidence.SHA256 != digest {
-			return result, errors.New("the control plane's signed release does not name the artifact it served")
-		}
-		manifest, decodeErr := base64.StdEncoding.DecodeString(evidence.Manifest)
-		if decodeErr != nil {
-			return result, fmt.Errorf("the release manifest is not base64: %w", decodeErr)
-		}
-		files := map[string][]byte{"release-manifest.json": manifest, "release-manifest.sigstore.json": evidence.ManifestBundle, "release-artifact.sigstore.json": evidence.ArtifactBundle}
-		for name, content := range files {
-			if err := writeHandoffFile(opts.HandoffDir, name, content); err != nil {
-				return result, err
-			}
-		}
-		params.ManifestFile, params.ManifestBundleFile, params.ArtifactBundleFile = "release-manifest.json", "release-manifest.sigstore.json", "release-artifact.sigstore.json"
-	} else {
-		params.Version = artifactVersion
-	}
-	staged, err := updater.Stage(ctx, params)
-	if err != nil {
-		var denial *Denial
-		if errors.As(err, &denial) {
-			result.SHA256 = localDigest
-			return result, &UpdateDeniedError{Code: denial.Code, Message: denial.Message}
-		}
-		return result, err
-	}
-	result.SHA256 = staged.SHA256
-	if staged.AlreadyCurrent {
+	if staged == nil || staged.AlreadyCurrent {
 		return result, updater.SyncOperations()
 	}
 	// Unlike the split executor there is no supervised trial: the caller
@@ -153,6 +105,75 @@ func (l *LegacyRoot) EnsureTechstackRuntime(ctx context.Context, cfg agentpkg.Te
 	result.AgentUpdated, result.OperationsUpdated = true, true
 	result.Version = staged.Version
 	return result, nil
+}
+
+// stageSignedRelease fetches what the control plane publishes into handoffDir and
+// runs it through the updater's release policy. A nil StageResult means the
+// installed executable already is that release. A candidate the policy refuses
+// is reported as *UpdateDeniedError and changes nothing. result carries the
+// digest the caller reports.
+func stageSignedRelease(ctx context.Context, updater *Updater, handoffDir string, cfg agentpkg.TechstackRuntimeConvergenceConfig, result *agentpkg.TechstackRuntimeConvergenceResult) (*StageResult, error) {
+	localDigest, _ := agentpkg.DigestInstalledExecutable(cfg.AgentPath)
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Minute}
+	}
+	evidence, err := fetchReleaseEvidence(ctx, client, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if evidence != nil && evidence.SHA256 == localDigest {
+		result.SHA256 = localDigest
+		return nil, nil
+	}
+	refusal := func(err error) error {
+		var denial *Denial
+		if errors.As(err, &denial) {
+			result.SHA256 = localDigest
+			return &UpdateDeniedError{Code: denial.Code, Message: denial.Message}
+		}
+		return err
+	}
+	params := StageParams{}
+	if evidence != nil {
+		manifest, decodeErr := base64.StdEncoding.DecodeString(evidence.Manifest)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("the release manifest is not base64: %w", decodeErr)
+		}
+		files := map[string][]byte{"release-manifest.json": manifest, "release-manifest.sigstore.json": evidence.ManifestBundle, "release-artifact.sigstore.json": evidence.ArtifactBundle}
+		for name, content := range files {
+			if err := writeHandoffFile(handoffDir, name, content); err != nil {
+				return nil, err
+			}
+		}
+		params.ManifestFile, params.ManifestBundleFile, params.ArtifactBundleFile = "release-manifest.json", "release-manifest.sigstore.json", "release-artifact.sigstore.json"
+		// A release this host refuses anyway is not downloaded every cycle.
+		if err := updater.refuseBeforeDownload(params, evidence.SHA256); err != nil {
+			return nil, refusal(err)
+		}
+	}
+	cfg.StageDir = handoffDir
+	artifactPath, digest, artifactVersion, notModified, err := agentpkg.FetchTechstackRuntimeArtifact(ctx, cfg, localDigest)
+	if err != nil {
+		return nil, err
+	}
+	if notModified {
+		result.SHA256 = localDigest
+		return nil, nil
+	}
+	defer func() { _ = os.Remove(artifactPath) }()
+	params.ArtifactFile = filepath.Base(artifactPath)
+	if evidence == nil {
+		params.Version = artifactVersion
+	} else if evidence.SHA256 != digest {
+		return nil, errors.New("the control plane's signed release does not name the artifact it served")
+	}
+	staged, err := updater.Stage(ctx, params)
+	if err != nil {
+		return nil, refusal(err)
+	}
+	result.SHA256 = staged.SHA256
+	return &staged, nil
 }
 
 // EnsureRuntime and EnsureRuntimeEvidence override the embedded unprivileged

@@ -97,6 +97,8 @@ export class CreationFrame {
   readonly context: CreationContext;
   readonly session: CreationSession;
   readonly options: CreationFrameOptions;
+  /** Where this process starts; having moved on counts as work to lose. */
+  readonly #startStep: CreationStepKey;
 
   readonly accessQuestions = getEasyAccessQuestions();
   readonly audienceQuestions = getEasyAudienceQuestions();
@@ -112,6 +114,11 @@ export class CreationFrame {
   attempted = $state(false);
   /** Set by anything the person changes; ends once the submission is accepted. */
   userEdited = $state(false);
+  /**
+   * A card applying handed-over answers reports them like a choice; only what
+   * follows the person's own first touch counts as something they could lose.
+   */
+  interacted = false;
   /** The Server step reports its own readiness; the value stays when it is left. */
   serverSelectionReady = $state(true);
 
@@ -157,6 +164,7 @@ export class CreationFrame {
       furthest: creationStepKey(restored?.furthest ?? restored?.step),
       isComplete: (key) => isCreationStepComplete(key, this.facts),
     });
+    this.#startStep = this.session.activeSteps()[0] ?? "goals";
     const stopSession = this.session.subscribe((state) => {
       this.nav = state;
     });
@@ -357,7 +365,7 @@ export class CreationFrame {
    */
   readonly hasUnsavedAnswers = $derived.by(
     () =>
-      (this.userEdited || creationStepNumber(this.nav.current) > 1) &&
+      (this.userEdited || this.nav.current !== this.#startStep) &&
       !this.options.isDeploying,
   );
 
@@ -409,7 +417,7 @@ export class CreationFrame {
     settingId: string,
     value: string | boolean,
   ) => {
-    this.userEdited = true;
+    if (this.interacted) this.userEdited = true;
     this.config.useCaseSettings ??= {};
     this.config.useCaseSettings[goal] = {
       ...(this.config.useCaseSettings[goal] ?? {}),
@@ -418,7 +426,7 @@ export class CreationFrame {
   };
 
   setGoal = (goal: GoalConfigKey, value: boolean) => {
-    this.userEdited = true;
+    if (this.interacted) this.userEdited = true;
     const goals = this.config.goals;
     if (!goals) return;
     const available = this.#availableGoals;
@@ -441,19 +449,19 @@ export class CreationFrame {
   };
 
   setAccessMode = (value: AccessModeValue) => {
-    this.userEdited = true;
+    if (this.interacted) this.userEdited = true;
     this.config.network.accessMode = value;
     this.config.network.accessModeSelected = true;
   };
 
   setAudience = (audience: AudienceConfigKey, value: boolean) => {
-    this.userEdited = true;
+    if (this.interacted) this.userEdited = true;
     this.config.audience[audience] = value;
     if (audience === "public") this.config.network.publicAccess = value;
   };
 
   setHouseholdProfile = (profile: HouseholdProfile) => {
-    this.userEdited = true;
+    if (this.interacted) this.userEdited = true;
     this.config.household = {
       profile,
       people: this.config.household?.people ?? [],
@@ -463,7 +471,7 @@ export class CreationFrame {
   };
 
   setHouseholdPeople = (people: HouseholdPersonDraft[]) => {
-    this.userEdited = true;
+    if (this.interacted) this.userEdited = true;
     this.config.household = {
       profile:
         this.config.household?.profile ??

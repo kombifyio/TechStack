@@ -52,11 +52,18 @@
   import {
     creationStepKey,
     creationStepNumber,
+    creationStepOnly,
     type CreationProcess,
     type CreationStepKey,
   } from "#lib/creation/core/index.js";
   import { CreationFrame } from "#lib/creation/frame.svelte.js";
   import { CREATION_MODULES } from "#lib/creation/modules.js";
+  import {
+    emitCreationEvent,
+    guardCreationClose,
+    useCreationEntry,
+  } from "#lib/creation/host.js";
+  import { onCreationCommand } from "#lib/stores/postMessageBridge.js";
 
   interface Props {
     /** Which creation this is: its steps, what it inherits, the run it ends in. */
@@ -102,7 +109,7 @@
   }
 
   let {
-    process,
+    process: requestedProcess,
     oncreate,
     initialConfig,
     isDeploying = false,
@@ -117,6 +124,20 @@
     nodeOptions,
     nodeAlternative,
   }: Props = $props();
+
+  // Inside the embedded module the host owns the page around this frame: its
+  // dialog has no place in the browser's history, and one step can stand alone.
+  const entry = useCreationEntry();
+  const singleStep = $derived(
+    entry?.frame === "step" && entry.step && !requestedProcess.inactive[entry.step]
+      ? entry.step
+      : undefined,
+  );
+  const process = $derived(
+    singleStep
+      ? creationStepOnly(requestedProcess, singleStep, "wizard.step.inherited")
+      : requestedProcess,
+  );
 
   const creation = appCreationContext(() => layoutStackId);
   provideCreationContext(creation);
@@ -282,9 +303,47 @@
     const url = new URL(currentUrl.href);
     url.searchParams.set("step", key);
     if (url.href === currentUrl.href) return;
-    const write = replace ? replaceState : pushState;
+    const write = replace || entry ? replaceState : pushState;
     write(`${url.pathname}${url.search}${url.hash}`, page.state);
   }
+
+  const currentSummary = $derived(
+    CREATION_MODULES[frame.current].summary(frame.config),
+  );
+  $effect(() => {
+    if (entry)
+      emitCreationEvent({
+        event: "step-changed",
+        step: frame.current,
+        summary:
+          frame.current === "login" || frame.current === "server"
+            ? ""
+            : currentSummary,
+      });
+  });
+  $effect(() => {
+    if (!entry) return;
+    const stopCommands = onCreationCommand((command) => {
+      if (command.command === "go-to-step")
+        void goTo(creationStepNumber(command.step));
+    });
+    const stopGuard = guardCreationClose(async () => {
+      if (!frame.hasUnsavedAnswers) return true;
+      const leave = await confirmInApp({
+        title: tr("wizard.leave.title"),
+        message: tr("wizard.leave.confirm"),
+        confirmText: tr("wizard.leave.confirmAction"),
+        cancelText: tr("wizard.leave.stay"),
+        tone: "warning",
+      });
+      if (leave) frame.forgetDraft();
+      return leave;
+    });
+    return () => {
+      stopCommands();
+      stopGuard();
+    };
+  });
 
   // Back and forward in the browser, a reload or a link that names a step:
   // a step already reached opens; anything else keeps the current step.
@@ -405,6 +464,9 @@
 <div
   class="w-full min-w-0"
   data-testid="easy-wizard"
+  onpointerdowncapture={() => (frame.interacted = true)}
+  onkeydowncapture={() => (frame.interacted = true)}
+  onclickcapture={() => (frame.interacted = true)}
   oninput={() => (frame.userEdited = true)}
   onchange={() => (frame.userEdited = true)}
   data-standard-bundle-id={standardBundle.id}
@@ -466,6 +528,7 @@
     </div>
   {/if}
 
+  {#if !singleStep}
   <Stepper
     steps={surfaceSteps}
     {disabledStepReasons}
@@ -484,6 +547,7 @@
     {stepSummaries}
     onselect={goTo}
   />
+  {/if}
 
   <div
     bind:this={stepContent}

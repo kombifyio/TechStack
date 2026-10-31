@@ -41,6 +41,8 @@
   import type { StackConfig } from "#lib/wizard/types.js";
   import type { OperatorSelfDisclosure } from "#lib/api/operatorProfile.js";
   import { authStore } from "#lib/stores/auth.svelte.js";
+  import { creationFullPath } from "#lib/creation/core/index.js";
+  import { emitCreationEvent, useCreationEntry } from "#lib/creation/host.js";
   import { tr } from "#lib/i18n.svelte.js";
   import Button from "#lib/components/ui/Button.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
@@ -92,6 +94,10 @@
   let mounted = $state(false);
   let controller: AbortController | undefined;
 
+  // Inside the host's dialog the choice stays out of the browser's history,
+  // and a new server opens the full flow: it is too long for a dialog.
+  const entry = useCreationEntry();
+  const embedded = entry !== null;
   const currentUrl = $derived(page.shallow?.url ?? page.url);
   const destination = $derived(currentUrl.searchParams.get("target") || null);
   const hasGoals = $derived(
@@ -149,12 +155,24 @@
     untrack(() => void checkTargets());
   });
 
+  $effect(() => {
+    if (embedded && !destination)
+      emitCreationEvent({ event: "step-changed", step: "target", summary: "" });
+  });
+
   function choose(target: string, replace = false) {
     if (currentUrl.searchParams.get("target") === target) return;
+    if (target === "new" && entry) {
+      emitCreationEvent({
+        event: "open-full",
+        path: creationFullPath({ ...entry, process: "stack" }),
+      });
+      return;
+    }
     const url = new URL(currentUrl.href);
     url.searchParams.set("target", target);
     url.searchParams.delete("step");
-    const write = replace ? replaceState : pushState;
+    const write = replace || embedded ? replaceState : pushState;
     write(`${url.pathname}${url.search}${url.hash}`, page.state);
   }
 
@@ -162,7 +180,8 @@
     const url = new URL(currentUrl.href);
     url.searchParams.delete("target");
     url.searchParams.delete("step");
-    pushState(`${url.pathname}${url.search}${url.hash}`, page.state);
+    const write = embedded ? replaceState : pushState;
+    write(`${url.pathname}${url.search}${url.hash}`, page.state);
   }
 
   function resolveSetupAnswers(
@@ -366,6 +385,7 @@
   </div>
   <ConfigurationFlow
     initialConfig={resolvedConfig}
+    {embedded}
     {selfDisclosure}
     {onSelfDisclosureSettled}
   />
@@ -378,6 +398,7 @@
   <ConfigurationFlow
     initialConfig={resolvedConfig}
     existingServerId={destination.slice(7)}
+    {embedded}
     {selfDisclosure}
     {onSelfDisclosureSettled}
   />
@@ -387,7 +408,11 @@
       >{tr("placement.change")}</Button
     >
   </div>
-  <AddUseCasesFlow stackId={destination} initialConfig={resolvedConfig} />
+  <AddUseCasesFlow
+    stackId={destination}
+    initialConfig={resolvedConfig}
+    {embedded}
+  />
 {:else}
   <section
     class="mx-auto max-w-6xl space-y-5 p-6 md:p-8"

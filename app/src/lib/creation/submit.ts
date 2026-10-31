@@ -30,6 +30,7 @@ import { parseWizardConflictRecovery } from "#lib/wizard/wizard-conflict-recover
 import { parseApiError } from "#lib/api/errors.js";
 import type { StackConfig } from "#lib/wizard/types.js";
 import type { CreationProcess } from "./core/index";
+import { emitCreationEvent } from "./host";
 
 export interface CreationRunTarget {
   /** The deployment the process adds to. */
@@ -126,13 +127,19 @@ export async function submitCreationRun(
   const key = attemptKey(process, request, target);
   const run = await createWizardRun(request, key);
   forgetCreationAttempt(process, target, key);
+  emitCreationEvent({ event: "submitted", runId: run.run_id });
   return { run, request };
 }
 
 /** The Creation Screen for an accepted run; its ledger is the authority from here. */
 export function creationScreenHref(
   process: CreationProcess,
-  run: { kit_deployment_id?: string; job_id?: string; pairing_job_id?: string },
+  run: {
+    run_id?: string;
+    kit_deployment_id?: string;
+    job_id?: string;
+    pairing_job_id?: string;
+  },
   name: string,
 ): string {
   const params = new URLSearchParams();
@@ -143,6 +150,7 @@ export function creationScreenHref(
   if (job) params.set("job_id", job);
   params.set("name", name);
   if (run.pairing_job_id) params.set("pairing_job_id", run.pairing_job_id);
+  if (run.run_id) params.set("run_id", run.run_id);
   return `/stacks/creating?${params.toString()}`;
 }
 

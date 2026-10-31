@@ -122,6 +122,8 @@ type Client struct {
 	sourceEpoch    string
 	sequence       atomic.Int64
 	firstHeartbeat sync.Once
+	// workerGate is held while a provider command runs (HoldWorker).
+	workerGate chan struct{}
 	// durable is set by EnableDurableOperations and selects the journaled typed
 	// command path.
 	durable *durableOps
@@ -234,7 +236,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	return &Client{
 		cfg: cfg, httpClient: client, log: logger.With("component", "http-guard"),
-		sourceEpoch: cfg.SourceEpoch,
+		sourceEpoch: cfg.SourceEpoch, workerGate: make(chan struct{}, 1),
 	}, nil
 }
 

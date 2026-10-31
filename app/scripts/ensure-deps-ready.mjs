@@ -69,8 +69,8 @@ export function dependenciesReady(
       resolve(modulesRoot, ".pnpm", "lock.yaml"),
     ) &&
     existsSync(resolve(modulesRoot, ".modules.yaml")) &&
-    executableReady(resolve(modulesRoot, ".bin"), "vite") &&
-    executableReady(resolve(modulesRoot, ".bin"), "vitest") &&
+    // Vite+ (D-2026-10-30-06): `vp` is the one binary of Vite, Vitest and Oxc.
+    executableReady(resolve(modulesRoot, ".bin"), "vp") &&
     executableReady(resolve(modulesRoot, ".bin"), "svelte-check") &&
     verifyManifest(appRoot)
   );

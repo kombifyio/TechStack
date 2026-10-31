@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 import { createStoreSimulator } from "../testing/wallet-store-simulator";
 
 vi.mock("#lib/api/client.js", () => ({

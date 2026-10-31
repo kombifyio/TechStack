@@ -4642,7 +4642,9 @@ async function waitForManagedDay2Enrollment(
       api,
       `/api/v1/runtime/logs?lease_id=${encodeURIComponent(leaseId)}&limit=50`,
       api.apiBase,
-    ).catch((error) => [{ message: `runtime log read failed: ${error}` }]);
+    ).catch((error): Array<Record<string, any>> => [
+      { message: `runtime log read failed: ${error}` },
+    ]);
     logRuntimeE2E("managed bootstrap runtime log", {
       lease_id: leaseId,
       entries: (Array.isArray(entries) ? entries : []).slice(-20).map((entry) => ({
