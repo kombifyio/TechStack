@@ -5,7 +5,8 @@ import { sentrySvelteKit } from "@sentry/sveltekit";
 import tailwindcss from "@tailwindcss/vite";
 import { mdsvex } from "mdsvex";
 import { readFileSync } from "node:fs";
-import { defineConfig } from "vite";
+import path from "node:path";
+import { defineConfig } from "vite-plus";
 
 const appVersion = readFileSync(
   new URL("../VERSION", import.meta.url),
@@ -91,8 +92,35 @@ function publicRuntimeConfigDefine(): Record<string, string> {
   );
 }
 
-export default async ({ command }: { command: string }) =>
+// Vite+ (D-2026-10-30-06): `vp check` reads the `lint` and `fmt` blocks, `vp test` the test
+// branch at the end (Vitest runs in mode "test"), `vp dev` and `vp build` the app branch. Only
+// .ts/.js sources are in scope; .svelte files stay on the ESLint and Prettier bridge and
+// svelte-check until Oxc reaches Svelte parity, and Prettier keeps owning formatting.
+const checkIgnorePatterns = [
+  "build/**",
+  "build-static/**",
+  ".e2e/**",
+  ".svelte-kit/**",
+  "dist/**",
+  "node_modules/**",
+  "test-results*/**",
+  "playwright-report*/**",
+  // Outside the TypeScript project (tsconfig.json), so the type-aware lint leaves them alone.
+  "playwright*.config.ts",
+  "**/*.{md,json,jsonc,yml,yaml,toml,css,html,svelte}",
+];
+
+const toolchain = {
+  fmt: { ignorePatterns: checkIgnorePatterns },
+  lint: {
+    ignorePatterns: checkIgnorePatterns,
+    options: { typeAware: true, typeCheck: true },
+  },
+};
+
+const appConfig = async ({ command }: { command: string }) =>
   defineConfig({
+    ...toolchain,
     plugins: [
       tailwindcss(),
       ...(await sentrySvelteKit({
@@ -162,3 +190,40 @@ export default async ({ command }: { command: string }) =>
       proxy: devBackendProxy,
     },
   });
+
+// Unit tests (formerly vitest.config.ts): the plain SvelteKit plugin and the mocks for the
+// two SvelteKit 3 modules the units import.
+const testConfig = {
+  ...toolchain,
+  plugins: [sveltekit()],
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts", "src/**/*.spec.ts"],
+    exclude: ["tests/**", "node_modules/**", "dist/**", "build/**"],
+    globals: true,
+    maxWorkers: 1,
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+    __APP_COMMIT__: JSON.stringify(""),
+    __APP_BUILD_TIME__: JSON.stringify(""),
+  },
+  resolve: {
+    alias: {
+      // SvelteKit 3: `$lib` is gone (package.json "imports" owns `#lib`) and
+      // `$app/environment` was renamed to `$app/env`.
+      "$app/env": path.resolve(
+        import.meta.dirname,
+        "test/mocks/app-environment.ts",
+      ),
+      "$app/navigation": path.resolve(
+        import.meta.dirname,
+        "test/mocks/app-navigation.ts",
+      ),
+    },
+  },
+};
+
+export default defineConfig(({ command, mode }) =>
+  mode === "test" ? testConfig : appConfig({ command }),
+);

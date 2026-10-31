@@ -39,6 +39,7 @@ func runGuardExecutor(ctx context.Context, args []string) error {
 	flags.StringVar(&opts.HandoffDir, "handoff-dir", envDefault("TECHSTACK_GUARD_HANDOFF_DIR", ""), "directory shared with the unprivileged daemon")
 	flags.StringVar(&opts.AgentPath, "agent-path", envDefault("TECHSTACK_AGENT_EXECUTABLE_PATH", ""), "installed Guard executable")
 	flags.StringVar(&opts.OperationsPath, "operations-path", envDefault("TECHSTACK_OPERATIONS_EXECUTABLE_PATH", ""), "installed StackKits operations executable")
+	flags.BoolVar(&opts.GuardOnly, "guard-only", false, "trial: this host updates only the Guard executable (a Proxmox substrate Guard)")
 	flags.StringVar(&opts.GuardUser, "guard-user", envDefault("TECHSTACK_GUARD_USER", ""), "the daemon's system user")
 	trialID := flags.String("id", "", "update trial ID")
 	manifestPath := flags.String("manifest", "", "admission-check: signed release manifest (release-manifest.json)")

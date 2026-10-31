@@ -13,14 +13,35 @@
   import CreationLeanBack from "./CreationLeanBack.svelte";
   import CreationHeader from "./CreationHeader.svelte";
   import CreationGoodToKnow from "./CreationGoodToKnow.svelte";
+  import { page } from "$app/state";
+  import { emitCreationEvent } from "#lib/creation/host.js";
 
   let running = $derived(!creation.isComplete && !creation.hasFailed);
 
   // The host's Companion learns which deployment and run this page shows.
   useViewContextOverlay(() => creation.viewContext);
 
+  // A host that opened this run (the embedded module) hears how it ends. The
+  // controller outlives the page, so this waits until it holds this page's run.
+  let reset = $state(false);
+  $effect(() => {
+    if (!reset) return;
+    const runId = page.url.searchParams.get("run_id") ?? "";
+    if (creation.isComplete || creation.hasFailed) {
+      emitCreationEvent({
+        event: "completed",
+        runId,
+        stackId: creation.stackId,
+        outcome: creation.isComplete ? "succeeded" : "failed",
+      });
+    } else if (creation.jobState) {
+      emitCreationEvent({ event: "progress", runId, phase: creation.jobState });
+    }
+  });
+
   onMount(() => {
     void creation.mount();
+    reset = true;
   });
 
   onDestroy(() => {

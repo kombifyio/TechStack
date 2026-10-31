@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -121,6 +122,9 @@ type UpdaterConfig struct {
 	HandoffDir     string
 	AgentPath      string
 	OperationsPath string
+	// GuardOnly converges the Guard executable alone: a Proxmox substrate Guard
+	// has no StackKits operations executable and must not gain one.
+	GuardOnly bool
 	// AgentUnit is the service restarted to run the new Guard.
 	AgentUnit string
 	// CurrentVersion is the version of the Guard that is running now.
@@ -150,7 +154,10 @@ type Updater struct {
 
 // NewUpdater validates cfg and returns an Updater.
 func NewUpdater(cfg UpdaterConfig) (*Updater, error) {
-	if cfg.StateDir == "" || cfg.HandoffDir == "" || cfg.AgentPath == "" || cfg.OperationsPath == "" {
+	if cfg.GuardOnly {
+		cfg.OperationsPath = ""
+	}
+	if cfg.StateDir == "" || cfg.HandoffDir == "" || cfg.AgentPath == "" || (cfg.OperationsPath == "" && !cfg.GuardOnly) {
 		return nil, errors.New("updater needs a state directory, a handoff directory and both executable paths")
 	}
 	if cfg.AgentUnit == "" {
@@ -184,6 +191,14 @@ func NewUpdater(cfg UpdaterConfig) (*Updater, error) {
 }
 
 func (u *Updater) path(name string) string { return filepath.Join(u.cfg.StateDir, name) }
+
+// executables lists what an update replaces, the Guard executable first.
+func (u *Updater) executables() []string {
+	if u.cfg.GuardOnly {
+		return []string{u.cfg.AgentPath}
+	}
+	return []string{u.cfg.AgentPath, u.cfg.OperationsPath}
+}
 
 // DenyMutations reports whether a failed update left no admissible fallback.
 func (u *Updater) DenyMutations() bool {
@@ -257,7 +272,7 @@ func (u *Updater) Stage(_ context.Context, params StageParams) (StageResult, err
 	if current, err := fileDigest(u.cfg.AgentPath); err == nil && current == digest {
 		return StageResult{Version: version, SHA256: digest, AlreadyCurrent: true}, nil
 	}
-	for _, target := range []string{u.cfg.AgentPath, u.cfg.OperationsPath} {
+	for _, target := range u.executables() {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return StageResult{}, err
 		}
@@ -451,6 +466,30 @@ func (u *Updater) CheckManifest(manifestPath, bundlePath string) (ManifestAdmiss
 	return result, nil
 }
 
+// refuseBeforeDownload applies, from the signed manifest in the handoff directory
+// and the digest it names, every refusal Stage would reach only after the
+// artifact arrived. Like Stage it remembers the manifest first, so a release this
+// host refuses still advances its floor and its revocations.
+func (u *Updater) refuseBeforeDownload(params StageParams, digest string) error {
+	manifest, err := u.AuthenticateManifest(params.ManifestFile, params.ManifestBundleFile)
+	if err != nil {
+		return u.recordDenial(err)
+	}
+	u.floorMu.Lock()
+	floor, err := u.loadFloor()
+	u.floorMu.Unlock()
+	if err != nil {
+		return err
+	}
+	if denial := u.platformDenial(manifest, floor); denial != nil {
+		return u.recordDenial(&Denial{Code: denial.Code, Message: denial.Message})
+	}
+	if failedAt, failed := u.failedCandidate(digest); failed && u.cfg.Now().Sub(failedAt) < failedCandidateCooldown {
+		return u.recordDenial(deny(CodeNotAllowed, "this release failed its trial at %s and is not staged again yet", failedAt.UTC().Format(time.RFC3339)))
+	}
+	return nil
+}
+
 // loadFloor reads the persisted manifest floor. A host that has none yet starts
 // from the manifest it cached before floors existed, so the revocations it
 // already knew are kept. An unreadable floor is an error, never an empty floor:
@@ -539,7 +578,7 @@ func (u *Updater) Commit(ctx context.Context, params CommitParams) (CommitResult
 	if denial := floor.Admit(staged.Version, staged.SHA256); denial != nil {
 		return CommitResult{}, &Denial{Code: denial.Code, Message: denial.Message}
 	}
-	for _, target := range []string{u.cfg.AgentPath, u.cfg.OperationsPath} {
+	for _, target := range u.executables() {
 		if digest, err := fileDigest(target + ".next"); err != nil || digest != staged.SHA256 {
 			return CommitResult{}, deny(CodeNotAllowed, "the staged file for %s changed after verification", target)
 		}
@@ -566,6 +605,10 @@ func (u *Updater) Commit(ctx context.Context, params CommitParams) (CommitResult
 	}
 	_ = u.record(UpdateStatus{State: StateTrial, Version: staged.Version, PreviousVersion: u.cfg.CurrentVersion, TrialID: trial.ID})
 	supervisor := []string{u.cfg.AgentPath + ".prev", "guard-executor", "trial", "--id", trial.ID}
+	if u.cfg.GuardOnly {
+		// No executor environment file names this layout on a substrate host.
+		supervisor = append(supervisor, "--guard-only", "--state-dir", u.cfg.StateDir, "--handoff-dir", u.cfg.HandoffDir, "--agent-path", u.cfg.AgentPath)
+	}
 	if err := u.cfg.Systemd.RunTransient(ctx, "techstack-guard-trial-"+trial.ID, supervisor); err != nil {
 		// Nothing supervises the switch, so it is not kept: the previous Guard was
 		// never stopped and keeps running.
@@ -581,7 +624,8 @@ func (u *Updater) Commit(ctx context.Context, params CommitParams) (CommitResult
 // switchTo makes suffix the installed executable, keeping the running one as
 // .prev. Hard links and renames keep every path populated at all times.
 func (u *Updater) switchTo(suffix string) error {
-	for _, target := range []string{u.cfg.OperationsPath, u.cfg.AgentPath} {
+	// The Guard executable moves last, after everything else did.
+	for _, target := range slices.Backward(u.executables()) {
 		prev := target + ".prev"
 		_ = os.Remove(prev)
 		if err := os.Link(target, prev); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -597,7 +641,7 @@ func (u *Updater) switchTo(suffix string) error {
 // switchBack restores the .prev executables.
 func (u *Updater) switchBack() error {
 	var first error
-	for _, target := range []string{u.cfg.AgentPath, u.cfg.OperationsPath} {
+	for _, target := range u.executables() {
 		prev := target + ".prev"
 		if _, err := os.Stat(prev); err != nil {
 			if first == nil {
@@ -719,8 +763,10 @@ func (u *Updater) fallbackProblem(trial trialRecord) string {
 	if err != nil || digest != trial.PrevSHA256 {
 		return "previous_executable_missing_or_changed"
 	}
-	if opsDigest, err := fileDigest(u.cfg.OperationsPath + ".prev"); err != nil || opsDigest != trial.PrevSHA256 {
-		return "previous_operations_executable_missing_or_changed"
+	if !u.cfg.GuardOnly {
+		if opsDigest, err := fileDigest(u.cfg.OperationsPath + ".prev"); err != nil || opsDigest != trial.PrevSHA256 {
+			return "previous_operations_executable_missing_or_changed"
+		}
 	}
 	floor, err := u.loadFloor()
 	if err != nil {
@@ -769,6 +815,9 @@ func (u *Updater) Describe() Status {
 // SyncOperations makes the operations executable byte-identical to the Guard
 // executable. They are one binary; a difference means a half-finished update.
 func (u *Updater) SyncOperations() error {
+	if u.cfg.GuardOnly {
+		return nil
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	agent, err := fileDigest(u.cfg.AgentPath)

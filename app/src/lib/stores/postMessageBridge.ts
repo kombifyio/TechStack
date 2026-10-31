@@ -23,6 +23,8 @@
  *   { type: 'ai-handover-ack', correlation_id: '...', status: 'accepted' | 'session-ready' | 'failed', ... }
  *   { type: 'view-context-request' }   the host asks for the current view
  *                                      context (after `ready`, after a frame load)
+ *   { type: 'creation-command', schema: 'techstack.creation-event/v1', command, ... }
+ *     the embedded creation module's commands (see `#lib/creation/core`)
  *
  * Outbound messages (app → portal):
  *   { type: 'ready', tool: 'kombifystack', chrome: { overlayControls, companion } }
@@ -34,6 +36,7 @@
  *   { type: 'view-context', tool: 'kombifystack', schema: 'kombify.view-context.v1', seq, route, title, ... }
  *     the page and object the user is looking at, ids and codes only
  *     (see `#lib/view-context.ts`)
+ *   { type: 'creation-event', schema: 'techstack.creation-event/v1', event, ... }
  */
 
 import { browser } from "$app/env";
@@ -50,6 +53,11 @@ import {
   sanitizeViewContext,
   type ViewContextInput,
 } from "#lib/view-context.js";
+
+import {
+  parseCreationCommand,
+  type CreationCommand,
+} from "#lib/creation/core/embed-contract.js";
 
 import { tr } from "#lib/i18n.svelte.js";
 const TOOL_ID = "kombifystack";
@@ -111,6 +119,7 @@ export type AiErrorHandoverUpdate =
 let initialized = false;
 const hostRefreshListeners = new Set<() => void>();
 const viewContextRequestListeners = new Set<() => void>();
+const creationCommandListeners = new Set<(command: CreationCommand) => void>();
 // Monotone per document, so the host can order messages and drop a late one.
 let viewContextSeq = 0;
 let lastViewContextSignature = "";
@@ -220,6 +229,16 @@ export function onViewContextRequest(listener: () => void): () => void {
   viewContextRequestListeners.add(listener);
   return () => {
     viewContextRequestListeners.delete(listener);
+  };
+}
+
+/** Run `listener` for each creation command the host sends. Returns the unsubscribe. */
+export function onCreationCommand(
+  listener: (command: CreationCommand) => void,
+): () => void {
+  creationCommandListeners.add(listener);
+  return () => {
+    creationCommandListeners.delete(listener);
   };
 }
 
@@ -494,6 +513,19 @@ function handleMessage(event: MessageEvent): void {
         }
       }
       break;
+
+    case "creation-command": {
+      const command = parseCreationCommand(data);
+      if (!command) break;
+      for (const listener of [...creationCommandListeners]) {
+        try {
+          listener(command);
+        } catch {
+          // A page callback must not break the authenticated bridge.
+        }
+      }
+      break;
+    }
 
     case "theme":
       if (data.value === "dark" || data.value === "light") {

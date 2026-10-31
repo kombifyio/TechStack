@@ -10,9 +10,8 @@ import (
 
 const AllowedFrameOriginsEnv = "ALLOWED_FRAME_ORIGINS"
 
-// Stable never knows Preview: kombify Cloud's Preview frames Techstack's
-// Preview, whose own configuration admits it (ALLOWED_FRAME_ORIGINS in
-// render.preview.yaml), so no Preview host is part of this production list.
+// Stable never knows Preview: the Preview channel is retired (three stages,
+// D-2026-10-30-02), so no Preview host is part of this production list.
 var productionPortalFrameOrigins = []string{
 	"https://kombify.io",
 	"https://app.kombify.io",

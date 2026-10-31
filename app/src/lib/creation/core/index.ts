@@ -3,3 +3,4 @@ export * from "./processes";
 export * from "./session";
 export * from "./validation";
 export * from "./slices";
+export * from "./embed-contract";

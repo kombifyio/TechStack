@@ -237,7 +237,13 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 			return errors.New("substrate enrollment requires a Proxmox host")
 		}
 		// The substrate executor uses only the locally configured API token.
-		// No StackKits executor or package convergence runs on the hypervisor.
+		// No StackKits executor or package convergence runs on the hypervisor:
+		// only the Guard's own executable converges, from the first accepted
+		// heartbeat on, which is also what confirms an update trial.
+		var substrateClient *httpguard.Client
+		selfUpdate := guardexec.NewSubstrateSelfUpdate(guardexec.Options{
+			Version: version, StateDir: envDefault("TECHSTACK_GUARD_EXECUTOR_STATE_DIR", ""), Log: log,
+		})
 		guardConfig := httpguard.Config{
 			HeartbeatURL: enrollment.HeartbeatURL, InventoryURL: enrollment.InventoryURL,
 			AgentToken: enrollment.AgentToken, RuntimeAgentID: enrollment.RuntimeAgentID,
@@ -246,6 +252,24 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 			AgentVersion: version, Interval: cfg.heartbeatInterval, Logger: log,
 			Collector:  httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{HostHardware: (&localHardwareCache{observe: devicereadiness.ObserveLocalHardware}).current}),
 			HTTPClient: guardHTTP, OnProgress: cfg.progress,
+			Posture: func() *guardbinding.Posture {
+				status := guardexec.ReadUpdateStatus(selfUpdate.HandoffDir())
+				return &guardbinding.Posture{Mode: guardbinding.PostureLegacyRoot, UpdateState: status.State, UpdateVersion: status.Version, UpdateReason: status.Reason}
+			},
+			OnFirstHeartbeat: func() {
+				if err := guardexec.ConfirmTrial(selfUpdate.HandoffDir(), version, time.Now()); err != nil {
+					log.Warn("guard_update_trial_confirmation_failed", "error", err.Error())
+				}
+				go convergeSubstrateGuard(execCtx, stop, selfUpdate, substrateClient.HoldWorker, agentpkg.TechstackRuntimeConvergenceConfig{
+					URL:            derivedAgentBinaryURL(enrollment.HeartbeatURL),
+					AgentToken:     enrollment.AgentToken,
+					RuntimeAgentID: enrollment.RuntimeAgentID,
+					TenantID:       enrollment.TenantID,
+					AgentPath:      envDefault("TECHSTACK_AGENT_EXECUTABLE_PATH", "/usr/local/bin/techstack"),
+					Version:        version,
+					HTTPClient:     downloadHTTP,
+				}, stackKitRuntimeConvergenceInterval, log)
+			},
 		}
 		localConfigPath := envDefault("TECHSTACK_SUBSTRATE_CONFIG", "/var/lib/kombify/substrate.json")
 		localConfig, localErr := substrate.LoadConfig(localConfigPath)
@@ -263,11 +287,12 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 		} else {
 			log.Info("substrate_execution_pending_local_configuration")
 		}
-		client, err := httpguard.New(guardConfig)
+		var err error
+		substrateClient, err = httpguard.New(guardConfig)
 		if err != nil {
 			return err
 		}
-		return client.Run(execCtx)
+		return substrateClient.Run(execCtx)
 	}
 	if hypervisorErr == nil {
 		return errors.New("Proxmox requires an explicit substrate enrollment")
@@ -491,6 +516,41 @@ func derivedAgentBinaryURL(heartbeatURL string) string {
 		return ""
 	}
 	return strings.TrimRight(heartbeatURL[:index], "/") + "/api/v1/agent/binary/" + runtime.GOOS + "/" + runtime.GOARCH
+}
+
+// convergeSubstrateGuard keeps a substrate Guard on the signed release its control
+// plane publishes. A started update ends this process: the trial supervisor
+// restarts the service, and systemd stops only the Guard's own control group, so
+// the guests in qemu.slice never notice. A provider command in flight finishes
+// and reports its result first.
+func convergeSubstrateGuard(ctx context.Context, stop context.CancelFunc, selfUpdate *guardexec.SubstrateSelfUpdate, holdWorker func(context.Context) (func(), error), cfg agentpkg.TechstackRuntimeConvergenceConfig, interval time.Duration, log *slog.Logger) {
+	failures := 0
+	for {
+		result, err := selfUpdate.EnsureGuardExecutable(ctx, cfg, holdWorker)
+		delay := interval
+		var denied *guardexec.UpdateDeniedError
+		switch {
+		case err == nil && result.AgentUpdated:
+			log.Info("techstack_runtime_updated", "version", result.Version, "sha256", result.SHA256, "restart", true)
+			stop()
+			return
+		case err == nil:
+			failures = 0
+		case errors.As(err, &denied):
+			// A refused candidate leaves the installed Guard exactly as it was.
+			failures = 0
+			log.Warn("guard_update_denied", "code", denied.Code, "reason", denied.Message)
+		default:
+			failures++
+			delay = runtimePackageConvergenceRetryDelay(failures)
+			log.Warn("techstack_runtime_convergence_failed", "error", err.Error(), "attempt", failures, "delay", delay.String())
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
 }
 
 func convergeRuntimePackages(

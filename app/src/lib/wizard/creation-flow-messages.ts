@@ -4,6 +4,7 @@
 // i18n.ts.
 export const creationFlowMessages = {
   en: {
+    "creation.embed.continueFull": "Continue in Techstack",
     "placement.preferred.missing":
       "The server you started from is no longer available. Choose another target.",
     "placement.preferred.incompatible":
@@ -131,6 +132,7 @@ export const creationFlowMessages = {
       "If it keeps happening, contact support and share the technical details",
   },
   de: {
+    "creation.embed.continueFull": "In Techstack weitermachen",
     "placement.preferred.missing":
       "Der Server, von dem du gestartet bist, ist nicht mehr verfügbar. Wähle ein anderes Ziel.",
     "placement.preferred.incompatible":
@@ -260,6 +262,7 @@ export const creationFlowMessages = {
       "Falls es wieder passiert, wende dich an den Support und nenne die technischen Details",
   },
   es: {
+    "creation.embed.continueFull": "Continuar en Techstack",
     "placement.preferred.missing":
       "El servidor desde el que empezaste ya no está disponible. Elige otro destino.",
     "placement.preferred.incompatible":
@@ -388,6 +391,7 @@ export const creationFlowMessages = {
       "Si sigue ocurriendo, ponte en contacto con el soporte y comparte los detalles técnicos",
   },
   "zh-Hans": {
+    "creation.embed.continueFull": "在 Techstack 中继续",
     "placement.preferred.missing":
       "你开始时使用的服务器已不可用。请选择其他目标。",
     "placement.preferred.incompatible":
@@ -503,6 +507,7 @@ export const creationFlowMessages = {
     "creation.failure.contactSupport": "如果问题持续，请联系支持并提供技术详情",
   },
   hi: {
+    "creation.embed.continueFull": "Techstack में जारी रखें",
     "placement.preferred.missing":
       "जिस सर्वर से आपने शुरू किया था वह अब उपलब्ध नहीं है। कोई दूसरा लक्ष्य चुनें।",
     "placement.preferred.incompatible":
@@ -630,6 +635,7 @@ export const creationFlowMessages = {
       "अगर यह बार-बार हो, तो सहायता से संपर्क करें और तकनीकी विवरण साझा करें",
   },
   ar: {
+    "creation.embed.continueFull": "المتابعة في Techstack",
     "placement.preferred.missing":
       "لم يعد الخادم الذي بدأت منه متاحًا. اختر وجهة أخرى.",
     "placement.preferred.incompatible":

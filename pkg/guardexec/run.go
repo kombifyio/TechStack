@@ -25,7 +25,10 @@ type Options struct {
 	HandoffDir     string
 	AgentPath      string
 	OperationsPath string
-	GuardUser      string
+	// GuardOnly leaves the operations executable out of every update (see
+	// UpdaterConfig.GuardOnly).
+	GuardOnly bool
+	GuardUser string
 	// Version is the version of the running executable.
 	Version string
 	Log     *slog.Logger
@@ -83,7 +86,7 @@ func NewUpdaterFromOptions(opts Options) (*Updater, error) {
 		budget = parsed
 	}
 	return NewUpdater(UpdaterConfig{
-		StateDir: opts.StateDir, HandoffDir: opts.HandoffDir, AgentPath: opts.AgentPath, OperationsPath: opts.OperationsPath,
+		StateDir: opts.StateDir, HandoffDir: opts.HandoffDir, AgentPath: opts.AgentPath, OperationsPath: opts.OperationsPath, GuardOnly: opts.GuardOnly,
 		CurrentVersion: opts.Version, Verifier: verifier, Systemd: ExecSystemd{}, TrialBudget: budget, Log: opts.Log,
 		AllowUnsigned: envTrue(opts.Getenv("TECHSTACK_GUARD_ALLOW_UNSIGNED_UPDATES")),
 	})

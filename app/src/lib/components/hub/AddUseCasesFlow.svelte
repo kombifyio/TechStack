@@ -31,6 +31,7 @@
     type StackConfig,
   } from "#lib/wizard/index.js";
   import { START_PAGE_HREF } from "#lib/navigation.js";
+  import { emitCreationEvent } from "#lib/creation/host.js";
   import { tr } from "#lib/i18n.svelte.js";
 
   interface Props {
@@ -165,6 +166,17 @@
     }
   }
 
+  // Saved without a rollout: nothing further will report to the host.
+  $effect(() => {
+    if (result?.state === "accepted")
+      emitCreationEvent({
+        event: "completed",
+        runId: result.run_id,
+        stackId,
+        outcome: "accepted",
+      });
+  });
+
   const progressHref = $derived.by(() => {
     // The inline group view follows every incremental node operation.
     // The creation page follows one provisioning job only.
@@ -208,6 +220,7 @@
         <UseCaseRunProgress
           {stackId}
           jobIds={result.job_ids ?? (result.job_id ? [result.job_id] : [])}
+          runId={result.run_id}
         />
       {/if}
       <div class="mt-4 flex flex-wrap gap-2">
@@ -222,17 +235,19 @@
             {tr("layout.addUseCases.provisioning.progress")}
           </a>
         {/if}
-        <a
-          href={START_PAGE_HREF}
-          data-kx="control"
-          data-variant={result.state === "provisioning" && progressHref
-            ? undefined
-            : "primary"}
-          class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-medium"
-          data-testid="add-use-cases-back"
-        >
-          {tr("layout.addUseCases.backToHomelab")}
-        </a>
+        {#if !embedded}
+          <a
+            href={START_PAGE_HREF}
+            data-kx="control"
+            data-variant={result.state === "provisioning" && progressHref
+              ? undefined
+              : "primary"}
+            class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-medium"
+            data-testid="add-use-cases-back"
+          >
+            {tr("layout.addUseCases.backToHomelab")}
+          </a>
+        {/if}
       </div>
     </section>
   {:else}

@@ -9,16 +9,16 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 5261",
-    "build": "vite build",
-    "preview": "vite preview --port 5261",
+    "dev": "vp dev --port 5261",
+    "build": "vp build",
+    "preview": "vp preview --port 5261",
     "prepare": "svelte-kit sync || echo ''",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node scripts/check-i18n.mjs",
+    "check": "svelte-kit sync && vp check --no-fmt && svelte-check --tsconfig ./tsconfig.json && node scripts/check-i18n.mjs",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "check:i18n": "node scripts/check-i18n.mjs",
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
-    "test:unit": "vitest run"
+    "test:unit": "vp test run"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -42,8 +42,8 @@
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.1",
-    "vite": "^8.3.4",
-    "vitest": "^5.0.5"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   },
   "dependencies": {
     "@auth0/auth0-spa-js": "^2.28.2",
