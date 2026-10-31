@@ -188,16 +188,19 @@ type Config struct {
 	OriginCertificates *originca.Service
 	// AdvancedIssuer is the installation's Advanced capability issuer. Managed
 	// rollouts import its trust bundle on every host; nil fails them closed.
-	AdvancedIssuer           jobs.AdvancedIssuer
-	StackStore               controlplane.StackStore
-	JobStore                 controlplane.JobStore
-	WorkerStore              controlplane.WorkerStore
-	WalletStore              controlplane.WalletStore
-	DriftStore               controlplane.DriftResultStore
-	ActivityStore            controlplane.ActivityStore
-	RegistryStore            controlplane.RegistryStore
-	LeaseLister              ManagedRuntimeLeaseLister
-	RoutingStore             stackrouting.Store
+	AdvancedIssuer jobs.AdvancedIssuer
+	StackStore     controlplane.StackStore
+	JobStore       controlplane.JobStore
+	WorkerStore    controlplane.WorkerStore
+	WalletStore    controlplane.WalletStore
+	DriftStore     controlplane.DriftResultStore
+	ActivityStore  controlplane.ActivityStore
+	RegistryStore  controlplane.RegistryStore
+	LeaseLister    ManagedRuntimeLeaseLister
+	RoutingStore   stackrouting.Store
+	// SpecFiles keeps the stacks' managed spec files in the control-plane
+	// database; nil keeps them on the local disk only.
+	SpecFiles                jobs.SpecFileStore
 	StackKitCommander        jobs.StackKitCommandSender
 	ManagedStackKitInventory jobs.ManagedStackKitInventoryBuilder
 	// FederationFabric issues the inter-site link binding of a managed Modern
@@ -377,6 +380,7 @@ func (o *Orchestrator) provisionConfig(actions jobs.RuntimeActions) *jobs.Provis
 		FederationFabric:             o.cfg.FederationFabric,
 		PortInventory:                o.cfg.PortInventory,
 		RoutingStore:                 o.routingStore,
+		SpecFiles:                    o.cfg.SpecFiles,
 		AutoDeployAdmission:          o.admitProvisionAutoDeploy,
 		BackupScheduleProjector:      o.cfg.BackupScheduleProjector,
 		AdvancedIssuer:               o.cfg.AdvancedIssuer,

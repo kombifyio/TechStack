@@ -52,8 +52,7 @@
       onSelfDisclosureSettled={clearHandoffParams}
     />
   {:else}
-    <!-- An owner with servers chooses between them and a new server first;
-         without any, the wizard for a new server opens directly. -->
-    <UseCasePlacement newWhenNoTargets />
+    <!-- The owner's existing servers are offered on the Server step. -->
+    <UseCasePlacement />
   {/if}
 {/key}

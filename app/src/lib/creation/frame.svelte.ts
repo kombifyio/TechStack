@@ -65,6 +65,7 @@ import {
   type CreationSessionState,
   type CreationStepKey,
 } from "./core/index";
+import type { HomelabServerSelection } from "./homelab-servers";
 
 export interface CreationFrameOptions {
   process: CreationProcess;
@@ -86,6 +87,8 @@ export interface CreationFrameOptions {
   onmanagedproviderselect?: (provider: ManagedProviderID) => void;
   nodeOptions?: Snippet<[StackConfig]>;
   nodeAlternative?: Snippet;
+  /** The person's existing servers, offered on the Server step. */
+  homelab?: HomelabServerSelection;
 }
 
 function cloneConfig(value?: StackConfig): StackConfig | null {
@@ -274,6 +277,9 @@ export class CreationFrame {
       get serverSelectionReady() {
         return frame.serverSelectionReady;
       },
+      get existingServer() {
+        return Boolean(frame.options.homelab?.selected);
+      },
       get serverMode() {
         return frame.config.serverProvisioning.mode;
       },
@@ -344,7 +350,9 @@ export class CreationFrame {
       this.nav.current === this.lastStep &&
       !this.earlierStepIncomplete &&
       this.canGoNext &&
-      (server.mode !== "hypervisor" || isValidSubstrateGuest(server.substrate))
+      (this.facts.existingServer ||
+        server.mode !== "hypervisor" ||
+        isValidSubstrateGuest(server.substrate))
     );
   });
   /** The first thing in the way, shown beside the blocked forward button. */

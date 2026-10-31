@@ -32,6 +32,8 @@ export interface CreationFacts {
   readonly hasSelectedGoal: boolean;
   readonly catalogState: "loading" | "ready" | "error";
   readonly serverSelectionReady: boolean;
+  /** One of the person's existing servers is chosen; nothing new is set up. */
+  readonly existingServer?: boolean;
   readonly serverMode: string;
   readonly hypervisorGuestValid: boolean;
   readonly remoteHost: string;
@@ -67,6 +69,7 @@ export function creationStepIssues(
         blocker("catalog", "wizard.catalog.blockedError");
       break;
     case "server":
+      if (facts.existingServer) break;
       if (!facts.serverSelectionReady)
         blocker("server-selection", "wizard.validation.serverSelection");
       if (facts.serverMode === "hypervisor" && !facts.hypervisorGuestValid)
@@ -82,7 +85,11 @@ export function creationStepIssues(
     case "access":
       if (!facts.accessMode)
         hint("access-mode", "ui.easyWizard.pleaseSelectAnAccessMode");
-      if (facts.serverMode === "kombify-cloud" && facts.accessMode === "home")
+      if (
+        !facts.existingServer &&
+        facts.serverMode === "kombify-cloud" &&
+        facts.accessMode === "home"
+      )
         blocker("access-mode", "wizard.access.home.managedReason");
       break;
     case "users":

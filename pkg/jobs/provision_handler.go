@@ -543,7 +543,7 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 	job.setStep(StepCreateSpec)
 	q.UpdateProgress(job.ID, 60, "Persisting intent + requirements...")
 
-	persister, err := newSpecPersister(cfg, job.TargetID)
+	persister, err := newSpecPersister(cfg, job)
 	if err != nil {
 		return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to init persister: %w", err),
 			"Could not initialize spec persistence.")

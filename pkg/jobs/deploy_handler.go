@@ -122,7 +122,7 @@ func deployPrepare(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue
 	q.UpdateProgress(job.ID, 5, "Preparing rollout...")
 	breadcrumbStep(ctx, StepPrepareRollout, "loading persisted intent + requirements", nil)
 
-	persister, err := newSpecPersister(cfg, job.TargetID)
+	persister, err := newSpecPersister(cfg, job)
 	if err != nil {
 		return nil, wrapProvisionCause(StepPrepareRollout, fmt.Errorf("failed to init persister: %w", err),
 			"Could not initialize spec persistence.")

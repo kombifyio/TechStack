@@ -50,6 +50,94 @@ const (
 //	└── stack-spec.yaml           # StackKits CLI handoff
 type SpecPersister struct {
 	BaseDir string // Stack directory path
+
+	// mirror keeps the durable copy of the managed files. The local directory
+	// is a working copy: an instance without a persistent disk restores it
+	// from the mirror, and a managed write is reported as persisted only after
+	// it reached the mirror.
+	mirror SpecFileMirror
+}
+
+// ErrSpecMirrorPending reports that the durable custody does not exist yet
+// (the binary runs before its schema). The local directory stays the only copy.
+var ErrSpecMirrorPending = errors.New("durable spec file custody is not rolled out yet")
+
+// SpecFileMirror is the durable custody of one stack's managed spec files,
+// keyed by the managed filename.
+type SpecFileMirror interface {
+	PutSpecFile(filename string, data []byte) error
+	LoadSpecFiles() (map[string][]byte, error)
+}
+
+// AttachMirror binds the durable custody and reconciles the working copy
+// with it. A managed file the mirror holds and the directory lacks (a fresh
+// instance) is restored. A managed file the directory holds is the newer copy
+// whenever it differs from the mirror or the mirror lacks it: it was written on
+// this instance (some writers, like the renderer's address binding, write the
+// working copy directly) or on a disk that predates the mirror, so it is handed
+// to the mirror.
+func (p *SpecPersister) AttachMirror(mirror SpecFileMirror) error {
+	if p == nil || mirror == nil {
+		return nil
+	}
+	files, err := mirror.LoadSpecFiles()
+	if err != nil {
+		return fmt.Errorf("load durable spec files: %w", err)
+	}
+	if entries, readErr := os.ReadDir(p.BaseDir); readErr == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if !entry.Type().IsRegular() || !IsManagedSpecFilename(name) {
+				continue
+			}
+			data, fileErr := os.ReadFile(filepath.Join(p.BaseDir, name)) // #nosec G304 -- managed filename under BaseDir.
+			if fileErr != nil {
+				return fmt.Errorf("read local spec file %s: %w", name, fileErr)
+			}
+			if held, ok := files[name]; ok && bytes.Equal(held, data) {
+				continue
+			}
+			if putErr := mirror.PutSpecFile(name, data); putErr != nil {
+				return fmt.Errorf("adopt local spec file %s: %w", name, putErr)
+			}
+			files[name] = data
+		}
+	}
+	for filename, data := range files {
+		path, pathErr := p.managedPath(filename)
+		if pathErr != nil {
+			return fmt.Errorf("restore durable spec file: %w", pathErr)
+		}
+		if _, statErr := os.Lstat(path); statErr == nil {
+			continue
+		}
+		// #nosec G703 -- path is restricted by managedPath to fixed spec filenames under BaseDir.
+		if writeErr := os.WriteFile(path, data, 0600); writeErr != nil {
+			return fmt.Errorf("restore durable spec file %s: %w", filename, writeErr)
+		}
+	}
+	p.mirror = mirror
+	return nil
+}
+
+func (p *SpecPersister) mirrorManagedFile(filename string, data []byte) error {
+	if p.mirror == nil {
+		return nil
+	}
+	if err := p.mirror.PutSpecFile(filename, data); err != nil {
+		return fmt.Errorf("persist durable spec file %s: %w", filename, err)
+	}
+	return nil
+}
+
+// IsManagedSpecFilename reports whether filename is one of the managed spec
+// files a stack directory holds durably.
+func IsManagedSpecFilename(filename string) bool {
+	switch filename {
+	case IntentSpecFilename, StackSpecFilename, BoundStackSpecFilename, RequirementsSpecFilename, UnifiedSpecFilename:
+		return true
+	}
+	return stackSpecSnapshotPattern.MatchString(filename)
 }
 
 // NewSpecPersister creates a persister for a specific stack.
@@ -154,6 +242,9 @@ func (p *SpecPersister) saveImmutableManagedBytes(filename string, data []byte) 
 		if readErr != nil || !bytes.Equal(existing, data) {
 			return "", fmt.Errorf("existing native snapshot does not match its immutable document")
 		}
+		if mirrorErr := p.mirrorManagedFile(filename, data); mirrorErr != nil {
+			return "", mirrorErr
+		}
 		return path, nil
 	}
 	if err != nil {
@@ -163,6 +254,9 @@ func (p *SpecPersister) saveImmutableManagedBytes(filename string, data []byte) 
 	closeErr := file.Close()
 	if writeErr != nil || closeErr != nil {
 		return "", fmt.Errorf("persist native snapshot: %w", errors.Join(writeErr, closeErr))
+	}
+	if mirrorErr := p.mirrorManagedFile(filename, data); mirrorErr != nil {
+		return "", mirrorErr
 	}
 	return path, nil
 }
@@ -390,17 +484,15 @@ func (p *SpecPersister) writeManagedFile(filename string, data []byte) (string, 
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
-
+	if err := p.mirrorManagedFile(filename, data); err != nil {
+		return "", err
+	}
 	return path, nil
 }
 
 func (p *SpecPersister) managedPath(filename string) (string, error) {
-	switch filename {
-	case IntentSpecFilename, StackSpecFilename, BoundStackSpecFilename, RequirementsSpecFilename, UnifiedSpecFilename:
-	default:
-		if !stackSpecSnapshotPattern.MatchString(filename) {
-			return "", fmt.Errorf("unsupported managed spec filename %q", filename)
-		}
+	if !IsManagedSpecFilename(filename) {
+		return "", fmt.Errorf("unsupported managed spec filename %q", filename)
 	}
 	if p.BaseDir == "" {
 		return "", fmt.Errorf("base directory is required")

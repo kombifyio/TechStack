@@ -22,8 +22,8 @@ func ReleaseChannel() string {
 	return "stable"
 }
 
-// SecondaryChannel reports a deployment beside stable. Preview uses Stage:
-// Early Access is served by the edge under the same links to the
+// SecondaryChannel reports a deployment beside stable: the Stage execution
+// companion ("preview") or Early Access. Early Access is served by the edge under the same links to the
 // people who opted in (CI-CD-PLATFORM-STANDARD §4.6 "Channel model"). Both
 // serve signed-in people over HTTP only; shared, homelab, machine and
 // migration work stays on stable.
@@ -35,7 +35,7 @@ func SecondaryChannel() bool { return ReleaseChannel() != "stable" }
 func RunsSharedWork() bool { return !SecondaryChannel() }
 
 // AgentOriginOverride is the origin Guards and runtime agents call when it is
-// not this deployment's own: Preview and Early Access run no agent routes, so
+// not this deployment's own: a deployment beside stable runs no agent routes, so
 // agents of every tenant talk to stable. Empty on stable.
 func AgentOriginOverride() string {
 	if !SecondaryChannel() {
@@ -44,28 +44,28 @@ func AgentOriginOverride() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("TECHSTACK_STABLE_ORIGIN")), "/")
 }
 
-// PreviewExecution records installed boundaries on this boot. Environment
+// SecondaryExecution records installed boundaries on this boot. Environment
 // configuration alone never supplies a qualified health receipt.
-type PreviewExecution struct {
+type SecondaryExecution struct {
 	mu                                                      sync.RWMutex
 	httpInstalled, startupSuppressed, backgroundPartitioned bool
 	fixture                                                 string
 }
 
-func NewPreviewExecution() *PreviewExecution {
+func NewSecondaryExecution() *SecondaryExecution {
 	if !SecondaryChannel() {
 		return nil
 	}
-	return &PreviewExecution{fixture: strings.TrimSpace(os.Getenv("TEST_RIL_PRO_USER_ID"))}
+	return &SecondaryExecution{fixture: strings.TrimSpace(os.Getenv("TEST_RIL_PRO_USER_ID"))}
 }
-func (s *PreviewExecution) HTTPInstalled() {
+func (s *SecondaryExecution) HTTPInstalled() {
 	if s != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.httpInstalled = true
 	}
 }
-func (s *PreviewExecution) StartupSuppressed() {
+func (s *SecondaryExecution) StartupSuppressed() {
 	if s != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -74,15 +74,15 @@ func (s *PreviewExecution) StartupSuppressed() {
 }
 
 // BackgroundPartitioned records that homelab work runs only for tenants
-// whose owner chose Preview.
-func (s *PreviewExecution) BackgroundPartitioned() {
+// that this deployment owns (the Stage owner).
+func (s *SecondaryExecution) BackgroundPartitioned() {
 	if s != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.backgroundPartitioned = true
 	}
 }
-func (s *PreviewExecution) Snapshot() map[string]string {
+func (s *SecondaryExecution) Snapshot() map[string]string {
 	if s == nil {
 		return nil
 	}

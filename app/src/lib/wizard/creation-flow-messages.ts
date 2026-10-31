@@ -5,12 +5,34 @@
 export const creationFlowMessages = {
   en: {
     "creation.embed.continueFull": "Continue in Techstack",
-    "placement.preferred.missing":
-      "The server you started from is no longer available. Choose another target.",
-    "placement.preferred.incompatible":
-      "{name} runs a StackKit that cannot take this selection right now. Another target is preselected.",
-    "placement.preferred.notReady":
-      "{name} cannot take a use case right now. Check its connection, or choose another target.",
+    "wizard.server.homelab.title":
+      "In your Homelab",
+    "wizard.server.homelab.lead":
+      "Pick the server that runs it, or add a new one.",
+    "wizard.server.homelab.loading":
+      "Looking for your servers…",
+    "wizard.server.homelab.failed":
+      "Your servers could not be read. You can still add a new server.",
+    "wizard.server.homelab.new":
+      "Add a new server",
+    "wizard.server.homelab.newBody":
+      "Set it up in the next part of this step.",
+    "wizard.server.homelab.runs":
+      "Runs {stackkit}",
+    "wizard.server.homelab.runsStackkit":
+      "Runs a StackKit",
+    "wizard.server.homelab.firstStackkit":
+      "Ready for its first StackKit",
+    "wizard.server.homelab.disconnected":
+      "Reconnect this server first",
+    "wizard.server.homelab.leased":
+      "Keeps its current provider binding",
+    "wizard.server.homelab.restricted":
+      "Changes on this server are unavailable",
+    "wizard.server.homelab.preferredMissing":
+      "The server you started from is no longer in your Homelab.",
+    "wizard.server.homelab.preferredUnavailable":
+      "{name} cannot take new use cases right now.",
     "wizard.summary.goals.one":
       "{count} use case",
     "wizard.summary.goals.other":
@@ -31,34 +53,6 @@ export const creationFlowMessages = {
       "{count} person",
     "wizard.summary.users.people.other":
       "{count} people",
-    "placement.chooseTitle": "Where should your next use case run?",
-    "placement.chooseBody":
-      "Use one of your StackKits or enrolled servers, or set up a new server. You choose the use cases next.",
-    "placement.chooseNext": "Choose its use cases in the next step",
-    "placement.leased":
-      "This managed server must keep its current provider binding. Open its existing deployment.",
-    "placement.restricted":
-      "Changes on this server are unavailable. Review its access and readiness.",
-    "placement.title": "Where should this use case run?",
-    "placement.body":
-      "Use an existing StackKit and its servers, or set up a server. Your choices come with you.",
-    "placement.loading": "Checking your existing targets…",
-    "placement.failed":
-      "Your targets could not be checked. Try again, or choose a new server.",
-    "placement.change": "Change target",
-    "placement.unknownNodes": "Server details unavailable",
-    "placement.compatible": "Verified to fit on these servers",
-    "placement.unavailable":
-      "This target cannot be recommended yet. Review its setup and capacity.",
-    "placement.new": "Set up a new server",
-    "placement.newBody":
-      "Keep your use case and answers and choose where the new server comes from.",
-    "placement.continue": "Continue with this target",
-    "placement.install": "Install a StackKit on {name}",
-    "placement.installBody":
-      "This enrolled server has no StackKit yet. Review the setup before installing.",
-    "placement.disconnected":
-      "This server must reconnect before you can install a StackKit.",
 
     "common.retry": "Try again",
     "ui.recreate.recreating": "Recreating…",
@@ -133,12 +127,34 @@ export const creationFlowMessages = {
   },
   de: {
     "creation.embed.continueFull": "In Techstack weitermachen",
-    "placement.preferred.missing":
-      "Der Server, von dem du gestartet bist, ist nicht mehr verfügbar. Wähle ein anderes Ziel.",
-    "placement.preferred.incompatible":
-      "{name} läuft mit einem StackKit, das diese Auswahl gerade nicht aufnehmen kann. Ein anderes Ziel ist vorausgewählt.",
-    "placement.preferred.notReady":
-      "{name} kann gerade keinen Use Case aufnehmen. Prüfe die Verbindung oder wähle ein anderes Ziel.",
+    "wizard.server.homelab.title":
+      "In deinem Homelab",
+    "wizard.server.homelab.lead":
+      "Wähle den Server, auf dem es läuft, oder füge einen neuen hinzu.",
+    "wizard.server.homelab.loading":
+      "Deine Server werden gesucht…",
+    "wizard.server.homelab.failed":
+      "Deine Server konnten nicht gelesen werden. Einen neuen Server kannst du trotzdem hinzufügen.",
+    "wizard.server.homelab.new":
+      "Neuen Server hinzufügen",
+    "wizard.server.homelab.newBody":
+      "Du richtest ihn im nächsten Teil dieses Schritts ein.",
+    "wizard.server.homelab.runs":
+      "Läuft mit {stackkit}",
+    "wizard.server.homelab.runsStackkit":
+      "Läuft mit einem StackKit",
+    "wizard.server.homelab.firstStackkit":
+      "Bereit für sein erstes StackKit",
+    "wizard.server.homelab.disconnected":
+      "Verbinde diesen Server zuerst neu",
+    "wizard.server.homelab.leased":
+      "Behält seine aktuelle Anbieter-Bindung",
+    "wizard.server.homelab.restricted":
+      "Änderungen auf diesem Server sind nicht möglich",
+    "wizard.server.homelab.preferredMissing":
+      "Der Server, von dem du gestartet bist, ist nicht mehr in deinem Homelab.",
+    "wizard.server.homelab.preferredUnavailable":
+      "{name} kann gerade keine neuen Anwendungsfälle aufnehmen.",
     "wizard.summary.goals.one":
       "{count} Use Case",
     "wizard.summary.goals.other":
@@ -159,34 +175,6 @@ export const creationFlowMessages = {
       "{count} Person",
     "wizard.summary.users.people.other":
       "{count} Personen",
-    "placement.chooseTitle": "Wo soll dein nächster Anwendungsfall laufen?",
-    "placement.chooseBody":
-      "Nutze eines deiner StackKits oder einen verbundenen Server, oder richte einen neuen Server ein. Die Anwendungsfälle wählst du im nächsten Schritt.",
-    "placement.chooseNext": "Die Anwendungsfälle wählst du im nächsten Schritt",
-    "placement.leased":
-      "Dieser verwaltete Server muss seine Anbieterbindung behalten. Öffne sein vorhandenes Deployment.",
-    "placement.restricted":
-      "Änderungen sind auf diesem Server nicht verfügbar. Prüfe Zugriff und Bereitschaft.",
-    "placement.title": "Wo soll dieser Anwendungsfall laufen?",
-    "placement.body":
-      "Nutze ein vorhandenes StackKit mit seinen Servern oder richte einen Server ein. Deine Auswahl bleibt erhalten.",
-    "placement.loading": "Vorhandene Ziele werden geprüft…",
-    "placement.failed":
-      "Deine Ziele konnten nicht geprüft werden. Versuche es erneut oder wähle einen neuen Server.",
-    "placement.change": "Ziel ändern",
-    "placement.unknownNodes": "Serverdetails nicht verfügbar",
-    "placement.compatible": "Passt nachweislich auf diese Server",
-    "placement.unavailable":
-      "Dieses Ziel kann noch nicht empfohlen werden. Prüfe Einrichtung und Kapazität.",
-    "placement.new": "Neuen Server einrichten",
-    "placement.newBody":
-      "Behalte Anwendungsfall und Antworten und wähle, woher der neue Server kommt.",
-    "placement.continue": "Mit diesem Ziel fortfahren",
-    "placement.install": "StackKit auf {name} installieren",
-    "placement.installBody":
-      "Dieser verbundene Server hat noch kein StackKit. Prüfe die Einrichtung vor der Installation.",
-    "placement.disconnected":
-      "Dieser Server muss sich vor der StackKit-Installation wieder verbinden.",
 
     "common.retry": "Erneut versuchen",
     "ui.recreate.recreating": "Wird neu erstellt…",
@@ -263,12 +251,34 @@ export const creationFlowMessages = {
   },
   es: {
     "creation.embed.continueFull": "Continuar en Techstack",
-    "placement.preferred.missing":
-      "El servidor desde el que empezaste ya no está disponible. Elige otro destino.",
-    "placement.preferred.incompatible":
-      "{name} ejecuta un StackKit que ahora no puede aceptar esta selección. Hay otro destino preseleccionado.",
-    "placement.preferred.notReady":
-      "{name} no puede aceptar un caso de uso ahora. Revisa su conexión o elige otro destino.",
+    "wizard.server.homelab.title":
+      "En tu Homelab",
+    "wizard.server.homelab.lead":
+      "Elige el servidor donde se ejecutará o añade uno nuevo.",
+    "wizard.server.homelab.loading":
+      "Buscando tus servidores…",
+    "wizard.server.homelab.failed":
+      "No se pudieron leer tus servidores. Aun así puedes añadir un servidor nuevo.",
+    "wizard.server.homelab.new":
+      "Añadir un servidor nuevo",
+    "wizard.server.homelab.newBody":
+      "Configúralo en la siguiente parte de este paso.",
+    "wizard.server.homelab.runs":
+      "Ejecuta {stackkit}",
+    "wizard.server.homelab.runsStackkit":
+      "Ejecuta un StackKit",
+    "wizard.server.homelab.firstStackkit":
+      "Listo para su primer StackKit",
+    "wizard.server.homelab.disconnected":
+      "Vuelve a conectar este servidor primero",
+    "wizard.server.homelab.leased":
+      "Mantiene su vinculación actual con el proveedor",
+    "wizard.server.homelab.restricted":
+      "Los cambios en este servidor no están disponibles",
+    "wizard.server.homelab.preferredMissing":
+      "El servidor desde el que empezaste ya no está en tu Homelab.",
+    "wizard.server.homelab.preferredUnavailable":
+      "{name} no puede recibir nuevos casos de uso ahora mismo.",
     "wizard.summary.goals.one":
       "{count} caso de uso",
     "wizard.summary.goals.other":
@@ -289,34 +299,6 @@ export const creationFlowMessages = {
       "{count} persona",
     "wizard.summary.users.people.other":
       "{count} personas",
-    "placement.chooseTitle": "¿Dónde debe ejecutarse tu próximo caso de uso?",
-    "placement.chooseBody":
-      "Usa uno de tus StackKits o servidores registrados, o configura un servidor nuevo. Después eliges los casos de uso.",
-    "placement.chooseNext": "Elige sus casos de uso en el siguiente paso",
-    "placement.leased":
-      "Este servidor gestionado debe conservar su vínculo con el proveedor. Abre su despliegue existente.",
-    "placement.restricted":
-      "Los cambios en este servidor no están disponibles. Revisa su acceso y disponibilidad.",
-    "placement.title": "¿Dónde debe ejecutarse este caso de uso?",
-    "placement.body":
-      "Usa un StackKit existente y sus servidores o configura un servidor. Tus elecciones se conservan.",
-    "placement.loading": "Comprobando tus destinos existentes…",
-    "placement.failed":
-      "No se pudieron comprobar los destinos. Inténtalo de nuevo o elige un servidor nuevo.",
-    "placement.change": "Cambiar destino",
-    "placement.unknownNodes": "Detalles del servidor no disponibles",
-    "placement.compatible": "Compatibilidad verificada con estos servidores",
-    "placement.unavailable":
-      "Este destino aún no se puede recomendar. Revisa su configuración y capacidad.",
-    "placement.new": "Configurar un servidor nuevo",
-    "placement.newBody":
-      "Conserva tu caso de uso y tus respuestas y elige de dónde viene el nuevo servidor.",
-    "placement.continue": "Continuar con este destino",
-    "placement.install": "Instalar un StackKit en {name}",
-    "placement.installBody":
-      "Este servidor registrado aún no tiene StackKit. Revisa la configuración antes de instalarlo.",
-    "placement.disconnected":
-      "Este servidor debe volver a conectarse antes de instalar un StackKit.",
 
     "common.retry": "Reintentar",
     "ui.recreate.recreating": "Recreando…",
@@ -392,12 +374,34 @@ export const creationFlowMessages = {
   },
   "zh-Hans": {
     "creation.embed.continueFull": "在 Techstack 中继续",
-    "placement.preferred.missing":
-      "你开始时使用的服务器已不可用。请选择其他目标。",
-    "placement.preferred.incompatible":
-      "{name} 运行的 StackKit 目前无法容纳此选择。已预选其他目标。",
-    "placement.preferred.notReady":
-      "{name} 目前无法接收用例。请检查其连接或选择其他目标。",
+    "wizard.server.homelab.title":
+      "在你的 Homelab 中",
+    "wizard.server.homelab.lead":
+      "选择运行它的服务器，或添加一台新服务器。",
+    "wizard.server.homelab.loading":
+      "正在查找你的服务器…",
+    "wizard.server.homelab.failed":
+      "无法读取你的服务器。你仍然可以添加新服务器。",
+    "wizard.server.homelab.new":
+      "添加新服务器",
+    "wizard.server.homelab.newBody":
+      "在此步骤的下一部分中进行设置。",
+    "wizard.server.homelab.runs":
+      "运行 {stackkit}",
+    "wizard.server.homelab.runsStackkit":
+      "运行一个 StackKit",
+    "wizard.server.homelab.firstStackkit":
+      "可以安装第一个 StackKit",
+    "wizard.server.homelab.disconnected":
+      "请先重新连接此服务器",
+    "wizard.server.homelab.leased":
+      "保留当前的提供商绑定",
+    "wizard.server.homelab.restricted":
+      "无法更改此服务器",
+    "wizard.server.homelab.preferredMissing":
+      "你开始时选择的服务器已不在你的 Homelab 中。",
+    "wizard.server.homelab.preferredUnavailable":
+      "{name} 目前无法接收新的用例。",
     "wizard.summary.goals.one":
       "{count} 个用例",
     "wizard.summary.goals.other":
@@ -418,29 +422,6 @@ export const creationFlowMessages = {
       "{count} 人",
     "wizard.summary.users.people.other":
       "{count} 人",
-    "placement.chooseTitle": "你的下一个使用场景应在哪里运行？",
-    "placement.chooseBody":
-      "使用你现有的 StackKit 或已注册的服务器，或设置一台新服务器。接下来再选择使用场景。",
-    "placement.chooseNext": "在下一步中选择它的使用场景",
-    "placement.leased":
-      "此托管服务器必须保留当前的提供商绑定。请打开其现有部署。",
-    "placement.restricted": "此服务器暂不允许更改。请检查访问权限和就绪状态。",
-    "placement.title": "这个使用场景应在哪里运行？",
-    "placement.body":
-      "使用现有 StackKit 及其服务器，或设置服务器。你的选择会保留。",
-    "placement.loading": "正在检查现有目标…",
-    "placement.failed": "无法检查目标。请重试或选择新服务器。",
-    "placement.change": "更改目标",
-    "placement.unknownNodes": "服务器详情不可用",
-    "placement.compatible": "已验证适合这些服务器",
-    "placement.unavailable": "暂时无法推荐此目标。请检查其设置和容量。",
-    "placement.new": "设置新服务器",
-    "placement.newBody": "保留使用场景和回答，并选择新服务器的来源。",
-    "placement.continue": "使用此目标继续",
-    "placement.install": "在 {name} 上安装 StackKit",
-    "placement.installBody":
-      "此已注册服务器尚无 StackKit。请在安装前检查设置。",
-    "placement.disconnected": "此服务器必须重新连接后才能安装 StackKit。",
 
     "common.retry": "重试",
     "ui.recreate.recreating": "正在重新创建…",
@@ -508,12 +489,34 @@ export const creationFlowMessages = {
   },
   hi: {
     "creation.embed.continueFull": "Techstack में जारी रखें",
-    "placement.preferred.missing":
-      "जिस सर्वर से आपने शुरू किया था वह अब उपलब्ध नहीं है। कोई दूसरा लक्ष्य चुनें।",
-    "placement.preferred.incompatible":
-      "{name} पर चल रहा StackKit अभी यह चयन नहीं ले सकता। दूसरा लक्ष्य पहले से चुना गया है।",
-    "placement.preferred.notReady":
-      "{name} अभी कोई उपयोग मामला नहीं ले सकता। उसका कनेक्शन जाँचें या दूसरा लक्ष्य चुनें।",
+    "wizard.server.homelab.title":
+      "आपके Homelab में",
+    "wizard.server.homelab.lead":
+      "वह सर्वर चुनें जिस पर यह चलेगा, या नया सर्वर जोड़ें।",
+    "wizard.server.homelab.loading":
+      "आपके सर्वर खोजे जा रहे हैं…",
+    "wizard.server.homelab.failed":
+      "आपके सर्वर पढ़े नहीं जा सके। आप फिर भी नया सर्वर जोड़ सकते हैं।",
+    "wizard.server.homelab.new":
+      "नया सर्वर जोड़ें",
+    "wizard.server.homelab.newBody":
+      "इसे इस चरण के अगले भाग में सेट करें।",
+    "wizard.server.homelab.runs":
+      "{stackkit} चलाता है",
+    "wizard.server.homelab.runsStackkit":
+      "एक StackKit चलाता है",
+    "wizard.server.homelab.firstStackkit":
+      "अपने पहले StackKit के लिए तैयार",
+    "wizard.server.homelab.disconnected":
+      "पहले इस सर्वर को फिर से कनेक्ट करें",
+    "wizard.server.homelab.leased":
+      "अपनी मौजूदा प्रदाता बाइंडिंग बनाए रखता है",
+    "wizard.server.homelab.restricted":
+      "इस सर्वर पर बदलाव उपलब्ध नहीं हैं",
+    "wizard.server.homelab.preferredMissing":
+      "जिस सर्वर से आपने शुरू किया था, वह अब आपके Homelab में नहीं है।",
+    "wizard.server.homelab.preferredUnavailable":
+      "{name} अभी नए उपयोग के मामले नहीं ले सकता।",
     "wizard.summary.goals.one":
       "{count} उपयोग मामला",
     "wizard.summary.goals.other":
@@ -534,34 +537,6 @@ export const creationFlowMessages = {
       "{count} व्यक्ति",
     "wizard.summary.users.people.other":
       "{count} लोग",
-    "placement.chooseTitle": "आपका अगला यूज़ केस कहाँ चलना चाहिए?",
-    "placement.chooseBody":
-      "अपने किसी StackKit या पंजीकृत सर्वर का उपयोग करें, या नया सर्वर सेट करें। यूज़ केस आप अगले चरण में चुनेंगे।",
-    "placement.chooseNext": "इसके यूज़ केस अगले चरण में चुनें",
-    "placement.leased":
-      "इस प्रबंधित सर्वर को अपना मौजूदा प्रदाता संबंध बनाए रखना होगा। इसका मौजूदा डिप्लॉयमेंट खोलें।",
-    "placement.restricted":
-      "इस सर्वर पर बदलाव उपलब्ध नहीं हैं। इसकी पहुँच और तैयारी जाँचें।",
-    "placement.title": "यह उपयोग का मामला कहाँ चले?",
-    "placement.body":
-      "मौजूदा StackKit और उसके सर्वर इस्तेमाल करें या सर्वर सेट करें। आपके विकल्प सुरक्षित रहेंगे।",
-    "placement.loading": "आपके मौजूदा लक्ष्य जाँचे जा रहे हैं…",
-    "placement.failed":
-      "लक्ष्य जाँचे नहीं जा सके। फिर प्रयास करें या नया सर्वर चुनें।",
-    "placement.change": "लक्ष्य बदलें",
-    "placement.unknownNodes": "सर्वर की जानकारी उपलब्ध नहीं है",
-    "placement.compatible": "इन सर्वर पर चलने की पुष्टि हो गई है",
-    "placement.unavailable":
-      "अभी इस लक्ष्य की अनुशंसा नहीं की जा सकती। इसका सेटअप और क्षमता जाँचें।",
-    "placement.new": "नया सर्वर सेट करें",
-    "placement.newBody":
-      "अपने उपयोग के मामले और उत्तर सुरक्षित रखें और नए सर्वर का स्रोत चुनें।",
-    "placement.continue": "इस लक्ष्य के साथ आगे बढ़ें",
-    "placement.install": "{name} पर StackKit इंस्टॉल करें",
-    "placement.installBody":
-      "इस पंजीकृत सर्वर पर अभी StackKit नहीं है। इंस्टॉल करने से पहले सेटअप की समीक्षा करें।",
-    "placement.disconnected":
-      "StackKit इंस्टॉल करने से पहले इस सर्वर को दोबारा कनेक्ट होना होगा।",
 
     "common.retry": "फिर से कोशिश करें",
     "ui.recreate.recreating": "दोबारा बनाया जा रहा है…",
@@ -636,12 +611,34 @@ export const creationFlowMessages = {
   },
   ar: {
     "creation.embed.continueFull": "المتابعة في Techstack",
-    "placement.preferred.missing":
-      "لم يعد الخادم الذي بدأت منه متاحًا. اختر وجهة أخرى.",
-    "placement.preferred.incompatible":
-      "يشغّل {name} حزمة StackKit لا يمكنها استيعاب هذا الاختيار الآن. تم تحديد وجهة أخرى مسبقًا.",
-    "placement.preferred.notReady":
-      "لا يمكن لـ {name} استقبال حالة استخدام الآن. تحقق من اتصاله أو اختر وجهة أخرى.",
+    "wizard.server.homelab.title":
+      "في Homelab الخاص بك",
+    "wizard.server.homelab.lead":
+      "اختر الخادم الذي سيعمل عليه، أو أضف خادمًا جديدًا.",
+    "wizard.server.homelab.loading":
+      "جارٍ البحث عن خوادمك…",
+    "wizard.server.homelab.failed":
+      "تعذّرت قراءة خوادمك. لا يزال بإمكانك إضافة خادم جديد.",
+    "wizard.server.homelab.new":
+      "إضافة خادم جديد",
+    "wizard.server.homelab.newBody":
+      "أعدّه في الجزء التالي من هذه الخطوة.",
+    "wizard.server.homelab.runs":
+      "يشغّل {stackkit}",
+    "wizard.server.homelab.runsStackkit":
+      "يشغّل StackKit",
+    "wizard.server.homelab.firstStackkit":
+      "جاهز لأول StackKit",
+    "wizard.server.homelab.disconnected":
+      "أعد توصيل هذا الخادم أولًا",
+    "wizard.server.homelab.leased":
+      "يحتفظ بربط المزوّد الحالي",
+    "wizard.server.homelab.restricted":
+      "التغييرات على هذا الخادم غير متاحة",
+    "wizard.server.homelab.preferredMissing":
+      "الخادم الذي بدأت منه لم يعد في Homelab الخاص بك.",
+    "wizard.server.homelab.preferredUnavailable":
+      "لا يمكن لـ {name} استقبال حالات استخدام جديدة الآن.",
     "wizard.summary.goals.one":
       "حالة استخدام واحدة ({count})",
     "wizard.summary.goals.other":
@@ -662,32 +659,6 @@ export const creationFlowMessages = {
       "شخص واحد ({count})",
     "wizard.summary.users.people.other":
       "{count} أشخاص",
-    "placement.chooseTitle": "أين يجب أن تعمل حالة الاستخدام التالية؟",
-    "placement.chooseBody":
-      "استخدم إحدى حزم StackKit أو أحد الخوادم المسجلة لديك، أو أعدّ خادمًا جديدًا. تختار حالات الاستخدام في الخطوة التالية.",
-    "placement.chooseNext": "اختر حالات الاستخدام الخاصة به في الخطوة التالية",
-    "placement.leased":
-      "يجب أن يحتفظ هذا الخادم المُدار بارتباطه الحالي بالمزوّد. افتح نشره الموجود.",
-    "placement.restricted":
-      "التغييرات على هذا الخادم غير متاحة. راجع الوصول وجاهزيته.",
-    "placement.title": "أين تريد تشغيل حالة الاستخدام هذه؟",
-    "placement.body":
-      "استخدم StackKit موجودًا وخوادمه أو أعدّ خادمًا. ستبقى اختياراتك محفوظة.",
-    "placement.loading": "جارٍ فحص الوجهات الموجودة…",
-    "placement.failed": "تعذّر فحص الوجهات. حاول مجددًا أو اختر خادمًا جديدًا.",
-    "placement.change": "تغيير الوجهة",
-    "placement.unknownNodes": "تفاصيل الخادم غير متاحة",
-    "placement.compatible": "تم التحقق من ملاءمته لهذه الخوادم",
-    "placement.unavailable":
-      "لا يمكن التوصية بهذه الوجهة بعد. راجع إعدادها وسعتها.",
-    "placement.new": "إعداد خادم جديد",
-    "placement.newBody":
-      "احتفظ بحالة الاستخدام وإجاباتك واختر مصدر الخادم الجديد.",
-    "placement.continue": "المتابعة بهذه الوجهة",
-    "placement.install": "تثبيت StackKit على {name}",
-    "placement.installBody":
-      "لا يحتوي هذا الخادم المسجل على StackKit بعد. راجع الإعداد قبل التثبيت.",
-    "placement.disconnected": "يجب إعادة اتصال هذا الخادم قبل تثبيت StackKit.",
 
     "common.retry": "إعادة المحاولة",
     "ui.recreate.recreating": "جارٍ إعادة الإنشاء…",

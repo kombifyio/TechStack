@@ -509,6 +509,9 @@ type RuntimeActions struct {
 	StackKitGenerator     StackKitArtifactGenerator
 	SimulationGate        RuntimeActionRunner
 	DiagnosticsCollector  RuntimeDiagnosticsCollector
+	// HostKeyPins keeps the managed-target SSH host-key pins in the
+	// control-plane database. When nil, the data-directory file holds them.
+	HostKeyPins RuntimeHostKeyPinBackend
 }
 
 type ManagedLeaseMetadataUpdater interface {

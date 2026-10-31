@@ -39,6 +39,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
+	"github.com/kombifyio/techstack/pkg/diskcustody"
 	"github.com/kombifyio/techstack/pkg/discovery"
 	"github.com/kombifyio/techstack/pkg/features"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
@@ -172,8 +173,8 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 		database = deps.v2.db
 	}
 	healthDeps := coreHealthDependencies(cfg, grpcSrv, database)
-	if deps.previewExecution != nil {
-		healthDeps.ExecutionScope = deps.previewExecution.Snapshot
+	if deps.secondaryExecution != nil {
+		healthDeps.ExecutionScope = deps.secondaryExecution.Snapshot
 	}
 	routes.RegisterHealthRoutesWithDeps(router, deps.version, deps.revision, deps.started, healthDeps)
 	routes.RegisterInfoRoutes(router, database, deps.version, deps.revision, deps.started, cfg.Edition, cfg.DeploymentMode, cfg.Server.Environment)
@@ -845,7 +846,11 @@ func registerVMLeaseRoutes(router *httpx.Router, deps routeDeps) (runtimeRouteSt
 	// The composed native actions remain fail-closed at their immutable
 	// activation gate until contracts, runtime-role separation, and adapter
 	// certification are complete.
-	runtimeActions, diagnostics := jobs.RuntimeActionsFromEnv(deps.providerActions)
+	baseActions := deps.providerActions
+	// Host-key pins live in the runtime database so every instance (and the
+	// next one after a deploy without a data disk) verifies the same pins.
+	baseActions.HostKeyPins = diskcustody.HostKeyPins{DB: deps.v2.db.DB}
+	runtimeActions, diagnostics := jobs.RuntimeActionsFromEnv(baseActions)
 	for _, runner := range diagnostics.Configured {
 		deps.log.Info("runtime_action_configured", "runner", runner)
 	}
@@ -1178,7 +1183,7 @@ func registerV2Routes(router *httpx.Router, deps routeDeps) {
 func mergeLocalAuthHandlers(deps routeDeps) {
 	if !config.RunsSharedWork() {
 		// Local auth's bootstrap writes break-glass state, which is shared.
-		deps.v2.server.MergeAuthHandlers(v2.AuthHandlers{Methods: nightlyAuthMethodsHandler(deps.v2.registry)})
+		deps.v2.server.MergeAuthHandlers(v2.AuthHandlers{Methods: secondaryAuthMethodsHandler(deps.v2.registry)})
 		return
 	}
 	localSvc, err := newLocalAuthService(deps)

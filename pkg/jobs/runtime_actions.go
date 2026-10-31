@@ -291,7 +291,7 @@ func compactStrings(values []string) []string {
 func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsEnvDiagnostics) {
 	actions := base
 	diagnostics := RuntimeActionsEnvDiagnostics{}
-	hostKeys := NewRuntimeHostKeyStore(runtimeHostKeyStorePath())
+	hostKeys := NewRuntimeHostKeyStoreWithBackend(runtimeHostKeyStorePath(), base.HostKeyPins)
 	if loadErr := hostKeys.Load(); loadErr != nil {
 		// The store keeps the error and refuses every verification: a
 		// corrupt pin file must never degrade to trust-on-first-use.

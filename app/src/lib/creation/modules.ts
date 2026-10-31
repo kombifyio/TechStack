@@ -23,7 +23,8 @@ export interface CreationStepModule {
   provides: SliceKey;
   /** Slices it reads besides its own. */
   requires: SliceKey[];
-  summary(config: StackConfig): string;
+  /** The frame is there for a step whose answer lives outside the config. */
+  summary(config: StackConfig, frame?: CreationFrame): string;
   // Each step takes its own props; `props` is what ties the two together.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   Component: Component<any>;
@@ -78,7 +79,13 @@ export const CREATION_MODULES: Record<CreationStepKey, CreationStepModule> = {
     key: "server",
     provides: "target",
     requires: [],
-    summary(config) {
+    summary(config, frame) {
+      const homelab = frame?.options.homelab;
+      if (homelab?.selected)
+        return (
+          homelab.servers.find((server) => server.id === homelab.selected)
+            ?.name ?? ""
+        );
       const server = config.serverProvisioning;
       if (server.mode === "connect-remote" && server.remote.host.trim())
         return server.remote.host.trim();
@@ -94,8 +101,11 @@ export const CREATION_MODULES: Record<CreationStepKey, CreationStepModule> = {
         nodeOptions: frame.options.nodeOptions,
         nodeAlternative: frame.options.nodeAlternative,
         showRole: frame.process.asksServerRole,
-        lockFoundation: frame.process.inheritsAccess,
-        joinSurface: frame.process.inheritsAccess,
+        // Offering existing servers is not joining one deployment: the step
+        // stays the full choice of where the use cases run.
+        lockFoundation: frame.process.inheritsAccess && !frame.options.homelab,
+        joinSurface: frame.process.inheritsAccess && !frame.options.homelab,
+        homelab: frame.options.homelab,
         onmanagedproviderselect: frame.options.onmanagedproviderselect,
         recommendedStackKit: frame.recommendedStackKit,
       }),

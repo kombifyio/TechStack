@@ -10,6 +10,8 @@
   import { SlidersHorizontal, ArrowRight, ShieldCheck } from "@lucide/svelte";
   import { ServerRegistryPanel } from "../index";
   import ServerProvisioningStep from "../ServerProvisioningStep.svelte";
+  import HomelabServerChoice from "../HomelabServerChoice.svelte";
+  import type { HomelabServerSelection } from "#lib/creation/homelab-servers.js";
   import type { ManagedProviderID, StackConfig } from "#lib/wizard/index.js";
   import { tr } from "#lib/i18n.svelte.js";
   import "../substep-rail.css";
@@ -30,6 +32,8 @@
     onselectionchange?: (ready: boolean) => void;
     /** Main wizard step number, the prefix of the sub-step rail (2.1, 2.2). */
     stepNumber?: number;
+    /** The person's existing servers, offered before a new one. */
+    homelab?: HomelabServerSelection;
   }
 
   let {
@@ -46,15 +50,24 @@
     selectionReady = $bindable(true),
     onselectionchange,
     stepNumber = 2,
+    homelab,
   }: Props = $props();
-  $effect(() => onselectionchange?.(selectionReady));
+  // A chosen existing server is a complete answer; nothing new is set up.
+  const existingChosen = $derived(Boolean(homelab?.selected));
+  const homelabShown = $derived(
+    Boolean(
+      homelab &&
+        (homelab.loading || homelab.failed || homelab.servers.length > 0),
+    ),
+  );
+  $effect(() => onselectionchange?.(existingChosen || selectionReady));
   let advancedOpen = $state(false);
   let detailsVisible = $state(false);
   // The provisioning module is a size container, and size containment scopes
   // CSS counters, so the advanced regions cannot continue its count on their
   // own; they start after the sub-steps shown above them.
   const substepsBeforeAdvanced = $derived(
-    nodeAlternative ? 0 : detailsVisible ? 2 : 1,
+    (homelabShown ? 1 : 0) + (nodeAlternative ? 0 : detailsVisible ? 2 : 1),
   );
 </script>
 
@@ -87,6 +100,13 @@
     </div>
   {/if}
 
+  {#if homelab && homelabShown}
+    <HomelabServerChoice {homelab} />
+  {/if}
+
+  <!-- While the person's servers are read, nothing is offered yet: the
+       choice would jump once they arrive. -->
+  {#if !existingChosen && !homelab?.loading}
   {#if !nodeAlternative}
     <ServerProvisioningStep
       bind:config
@@ -95,6 +115,7 @@
       {onmanagedproviderselect}
       {reviewMode}
       {joinSurface}
+      substepOffset={homelabShown ? 1 : 0}
     />
   {/if}
 
@@ -135,6 +156,7 @@
       </div>
     {/if}
   </section>
+  {/if}
 </div>
 
 <style>

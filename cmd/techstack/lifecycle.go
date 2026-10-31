@@ -110,13 +110,13 @@ func startRuntimeLifecycle(
 	serverMaintenance *servermaintenance.Loop,
 	driftScheduler *orchestrator.DriftScheduler,
 	log *logger.Logger,
-	previewExecution ...*config.PreviewExecution,
+	secondaryExecution ...*config.SecondaryExecution,
 ) *shutdownHandles {
 	background := newBackgroundRuntimeLifecycle(ctx)
 	handles := &shutdownHandles{background: background}
 	shared := config.RunsSharedWork()
 	if !shared {
-		for _, execution := range previewExecution {
+		for _, execution := range secondaryExecution {
 			execution.BackgroundPartitioned()
 		}
 		log.Info("preview_background_execution_partitioned", "scope", "owned-tenants")

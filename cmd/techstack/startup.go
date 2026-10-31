@@ -38,6 +38,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
+	"github.com/kombifyio/techstack/pkg/diskcustody"
 	"github.com/kombifyio/techstack/pkg/demoguard"
 	"github.com/kombifyio/techstack/pkg/enrollment"
 	"github.com/kombifyio/techstack/pkg/features"
@@ -137,9 +138,9 @@ type routeDeps struct {
 	feed *companionFeedBoot
 	// wallet is the central kombify Wallet client, nil while the deployment
 	// keeps credentials in the legacy wallet (walletSource).
-	wallet           *kombifywallet.Client
-	walletSource     kombifywallet.Source
-	previewExecution *config.PreviewExecution
+	wallet             *kombifywallet.Client
+	walletSource       kombifywallet.Source
+	secondaryExecution *config.SecondaryExecution
 }
 
 func providerControlSQL(database *db.DB) *sql.DB {
@@ -287,7 +288,7 @@ func runTechstack(ctx context.Context) error {
 		log.Error("service_auth_ed25519_invalid", "error", err)
 		return fmt.Errorf("service auth: %w", err)
 	}
-	previewExecution := config.NewPreviewExecution()
+	secondaryExecution := config.NewSecondaryExecution()
 	// Where credentials live is decided once, before anything else boots. A
 	// kombify source with an incomplete configuration refuses to start; there
 	// is no fallback to the legacy wallet.
@@ -334,6 +335,8 @@ func runTechstack(ctx context.Context) error {
 	orchCfg.ActivityStore = controlStores.Activity
 	orchCfg.RegistryStore = registryControlPlaneStore(v2Boot)
 	orchCfg.RoutingStore = controlStores.Routing
+	orchCfg.SpecFiles = diskcustody.SpecFiles{DB: v2Boot.db.DB}
+	startDiskCustodyImport(ctx, v2Boot.db.DB, log)
 	portInventory := portinventory.NewPostgresAuthority(v2Boot.db.DB)
 	orchCfg.PortInventory = portInventory
 	// Removing a stack whose owner server is gone reads that server and ends its
@@ -468,7 +471,7 @@ func runTechstack(ctx context.Context) error {
 		feed:                    feed,
 		wallet:                  walletClient,
 		walletSource:            walletSource,
-		previewExecution:        previewExecution,
+		secondaryExecution:      secondaryExecution,
 	}
 
 	// One feature service serves the routes and the backup admission below.
@@ -497,7 +500,7 @@ func runTechstack(ctx context.Context) error {
 			return err
 		}
 	}
-	previewExecution.StartupSuppressed()
+	secondaryExecution.StartupSuppressed()
 
 	registrySweeper := bootServerRegistrySweeper(v2Boot, monitorState, log)
 	platformProjector := bootPlatformServerProjector(v2Boot, log)
@@ -508,7 +511,7 @@ func runTechstack(ctx context.Context) error {
 	backupScanner := composeBackupScanner(&deps, auth.GetEncryptor())
 	serverMaintenance := bootServerMaintenanceLoop(v2Boot, orch, log)
 	driftScheduler := bootDriftScheduler(v2Boot, startup.cfg, orch, log)
-	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log, previewExecution)
+	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log, secondaryExecution)
 	if feed != nil && feed.digest != nil {
 		handles.background.run(feed.digest.Run)
 	}
@@ -1208,19 +1211,19 @@ func bindGlobalMiddleware(router *httpx.Router, deps routeDeps) {
 	router.BindFunc(middleware.RequestIDMiddleware)
 	bindCORS(router, cfg)
 	router.BindFunc(middleware.EdgeIdentityMiddlewareFromConfig(cfg))
-	router.BindFunc(hidePreviewFromCrawlers)
-	router.BindFunc(previewTransportAdmission)
+	router.BindFunc(hideStageFromCrawlers)
+	router.BindFunc(secondaryTransportAdmission)
 	router.BindFunc(v2SessionIdentityMiddleware(deps.v2))
 	router.BindFunc(testIdentityAdmission)
-	router.BindFunc(previewHTTPAdmission)
-	deps.previewExecution.HTTPInstalled()
+	router.BindFunc(secondaryHTTPAdmission)
+	deps.secondaryExecution.HTTPInstalled()
 	bindRateLimiter(router, cfg)
 	bindCSRF(router, cfg)
 }
 
 func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 	return func(e *httpx.Event) error {
-		if config.SecondaryChannel() && previewPublicPath(e.Request.URL.Path) {
+		if config.SecondaryChannel() && secondaryPublicPath(e.Request.URL.Path) {
 			return e.Next()
 		}
 		if boot == nil || boot.session == nil || e == nil || e.Request == nil {

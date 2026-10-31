@@ -9,30 +9,17 @@
   is shown to be confirmed again.
 -->
 <script lang="ts">
-  import UseCaseRunProgress from "./UseCaseRunProgress.svelte";
   import { onMount, untrack } from "svelte";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { CreationPageFrame } from "#lib/components/wizard/index.js";
   import { getKitDeployment } from "#lib/api/stacks.js";
   import { parseApiError } from "#lib/api/errors.js";
-  import type { WizardRunResponse } from "#lib/api/wizardRuns.js";
-  import { CREATION_PROCESSES } from "#lib/creation/core/index.js";
-  import { creationScreenHref, submitCreationRun } from "#lib/creation/submit.js";
-  import {
-    layoutErrorReasonCode,
-    layoutReplacementFromError,
-    type LayoutRecommendationAcceptance,
-    type LayoutRecommendationView,
-  } from "#lib/api/layout.js";
-  import {
-    createExpansionConfig,
-    WizardInputError,
-    type StackConfig,
-  } from "#lib/wizard/index.js";
-  import { START_PAGE_HREF } from "#lib/navigation.js";
-  import { emitCreationEvent } from "#lib/creation/host.js";
+  import type { LayoutRecommendationAcceptance } from "#lib/api/layout.js";
+  import { AddUseCasesRun } from "#lib/creation/add-use-cases.svelte.js";
+  import { createExpansionConfig, type StackConfig } from "#lib/wizard/index.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import UseCasesAddedResult from "./UseCasesAddedResult.svelte";
 
   interface Props {
     stackId: string;
@@ -51,14 +38,7 @@
     initialConfig,
   }: Props = $props();
 
-  const process = CREATION_PROCESSES["add-use-case"];
-
-  interface Notice {
-    tone: "warning" | "error" | "info";
-    title: string;
-    body: string;
-    details?: string;
-  }
+  const run = new AddUseCasesRun();
 
   // The deep link seeds the first selection only; later edits are the owner's.
   let config = $state<StackConfig>(
@@ -78,11 +58,6 @@
   let homelabName = $state("");
   let loading = $state(true);
   let loadError = $state<string | null>(null);
-  let submitting = $state(false);
-  let result = $state<WizardRunResponse | null>(null);
-  let notice = $state<Notice | null>(null);
-  let replacement = $state<LayoutRecommendationView | undefined>();
-  let refresh = $state(0);
 
   onMount(() => {
     void load();
@@ -103,95 +78,20 @@
     }
   }
 
-  function noticeFor(err: unknown): Notice {
-    if (err instanceof WizardInputError) {
-      return {
-        tone: "warning",
-        title: tr("layout.addUseCases.failed.title"),
-        body: err.message,
-      };
-    }
-    switch (layoutErrorReasonCode(err)) {
-      case "layout_recommendation_superseded":
-        replacement = layoutReplacementFromError(err);
-        // Without a replacement in the answer, ask for the recommendation again.
-        if (!replacement) refresh += 1;
-        return {
-          tone: "warning",
-          title: tr("layout.addUseCases.superseded.title"),
-          body: tr("layout.addUseCases.superseded.body"),
-        };
-      case "layout_recommendation_stale":
-      case "layout_recommendation_unverifiable":
-        replacement = undefined;
-        refresh += 1;
-        return {
-          tone: "warning",
-          title: tr("layout.addUseCases.stale.title"),
-          body: tr("layout.addUseCases.stale.body"),
-        };
-      case "layout_recommendation_unavailable":
-      case "layout_recommendations_unavailable":
-        return {
-          tone: "info",
-          title: tr("layout.addUseCases.unavailable.title"),
-          body: tr("layout.addUseCases.unavailable.body"),
-        };
-      default:
-        return {
-          tone: "error",
-          title: tr("layout.addUseCases.failed.title"),
-          body: tr("layout.addUseCases.failed.body"),
-          details: parseApiError(err).message,
-        };
-    }
-  }
-
-  async function addUseCases(
+  function addUseCases(
     wizardConfig: StackConfig,
     extras?: { layoutRecommendation?: LayoutRecommendationAcceptance },
   ) {
-    submitting = true;
-    notice = null;
-    try {
-      ({ run: result } = await submitCreationRun(process, wizardConfig, {
-        stackId,
-        stackName: homelabName,
-        layoutRecommendation: extras?.layoutRecommendation,
-      }));
-    } catch (err) {
-      notice = noticeFor(err);
-    } finally {
-      submitting = false;
-    }
-  }
-
-  // Saved without a rollout: nothing further will report to the host.
-  $effect(() => {
-    if (result?.state === "accepted")
-      emitCreationEvent({
-        event: "completed",
-        runId: result.run_id,
-        stackId,
-        outcome: "accepted",
-      });
-  });
-
-  const progressHref = $derived.by(() => {
-    // The inline group view follows every incremental node operation.
-    // The creation page follows one provisioning job only.
-    if (result?.job_ids?.length) return "";
-    if (!result?.job_id) return "";
-    return creationScreenHref(
-      process,
-      { ...result, kit_deployment_id: stackId },
-      result.name || homelabName,
+    void run.submit(
+      { stackId, stackName: homelabName },
+      wizardConfig,
+      extras?.layoutRecommendation,
     );
-  });
+  }
 </script>
 
 <div
-  class={embedded ? "w-full" : "mx-auto max-w-6xl p-6 md:p-8"}
+  class={embedded ? "w-full p-6" : "mx-auto max-w-6xl p-6 md:p-8"}
   data-testid="add-use-cases-page"
   data-presentation={embedded ? "embedded" : "page"}
 >
@@ -199,57 +99,13 @@
     <LoadingNote label={tr("common.loading")} />
   {:else if loadError}
     <ErrorCallout message={loadError} testId="add-use-cases-error" />
-  {:else if result}
-    <section
-      class="mx-auto max-w-2xl rounded-xl border border-success/30 bg-success/5 p-5"
-      data-testid="add-use-cases-result"
-      data-run-state={result.state}
-      role="status"
-    >
-      <h1 class="text-lg font-semibold text-foreground">
-        {result.state === "provisioning"
-          ? tr("layout.addUseCases.provisioning.title")
-          : tr("layout.addUseCases.accepted.title")}
-      </h1>
-      <p class="mt-1 text-sm text-muted-foreground">
-        {result.state === "provisioning"
-          ? tr("layout.addUseCases.provisioning.body")
-          : tr("layout.addUseCases.accepted.body")}
-      </p>
-      {#if result.state === "provisioning"}
-        <UseCaseRunProgress
-          {stackId}
-          jobIds={result.job_ids ?? (result.job_id ? [result.job_id] : [])}
-          runId={result.run_id}
-        />
-      {/if}
-      <div class="mt-4 flex flex-wrap gap-2">
-        {#if result.state === "provisioning" && progressHref}
-          <a
-            href={progressHref}
-            data-kx="control"
-            data-variant="secondary"
-            class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-medium"
-            data-testid="add-use-cases-progress"
-          >
-            {tr("layout.addUseCases.provisioning.progress")}
-          </a>
-        {/if}
-        {#if !embedded}
-          <a
-            href={START_PAGE_HREF}
-            data-kx="control"
-            data-variant={result.state === "provisioning" && progressHref
-              ? undefined
-              : "primary"}
-            class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-medium"
-            data-testid="add-use-cases-back"
-          >
-            {tr("layout.addUseCases.backToHomelab")}
-          </a>
-        {/if}
-      </div>
-    </section>
+  {:else if run.result}
+    <UseCasesAddedResult
+      result={run.result}
+      {stackId}
+      progressHref={run.progressHref(stackId, homelabName)}
+      {embedded}
+    />
   {:else}
     <header class="mb-6 space-y-1">
       <h1 class="text-2xl font-semibold tracking-tight text-foreground">
@@ -260,23 +116,23 @@
       </p>
     </header>
     <CreationPageFrame
-      {process}
+      process={run.process}
       initialConfig={config}
       oncreate={addUseCases}
-      isDeploying={submitting}
+      isDeploying={run.submitting}
       submitLabel={tr("layout.addUseCases.submit")}
       submittingLabel={tr("layout.addUseCases.submitting")}
       layoutStackId={stackId}
-      layoutReplacement={replacement}
-      layoutRefresh={refresh}
+      layoutReplacement={run.replacement}
+      layoutRefresh={run.refresh}
     >
       {#snippet footerNotice()}
-        {#if notice}
+        {#if run.notice}
           <ErrorCallout
-            tone={notice.tone}
-            title={notice.title}
-            message={notice.body}
-            details={notice.details ?? null}
+            tone={run.notice.tone}
+            title={run.notice.title}
+            message={run.notice.body}
+            details={run.notice.details ?? null}
             testId="add-use-cases-notice"
           />
         {/if}

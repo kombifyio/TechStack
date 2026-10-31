@@ -52,9 +52,13 @@
     {
       "version": "173_platform_projection_system.sql",
       "sha256": "b5cc06f6d95d2ff067509cb8ed9656edd96cda80c10a36c138bcb321f78a5e7f"
+    },
+    {
+      "version": "174_control_plane_disk_custody.sql",
+      "sha256": "559caa1c9973c8e083359f0454641b674606cc6e4320f824f6205a6894d045b3"
     }
   ],
-  "database_target": "runtime",
+  "database_target": "core",
   "database_targets": {
     "runtime": {
       "provider_resource": "clickhouse-postgres:b6140b1d-3833-455a-b515-729055d3140d:f9301db0-e99d-8ad0-bec2-efb56642a37e:migrations",
