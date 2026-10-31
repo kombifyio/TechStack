@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimelease"
+	"github.com/kombifyio/stackkits/contracts/runtimelease"
 	productlease "github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 )
 

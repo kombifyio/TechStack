@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/stackaction"
+	"github.com/kombifyio/stackkits/contracts/stackaction"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/jobs"

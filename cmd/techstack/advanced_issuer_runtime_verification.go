@@ -14,7 +14,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/db"
 
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 )
 
 // The normal producer verifies through the application's native database

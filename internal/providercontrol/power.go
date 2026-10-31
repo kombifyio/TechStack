@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	"github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 )
 
 // PowerDesiredSpecSchemaVersion identifies the desired spec of an in-place

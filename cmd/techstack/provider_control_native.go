@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	providerexecutor "github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	providerexecutor "github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/providercontroljobs"
 	"github.com/kombifyio/techstack/internal/providerevidence"

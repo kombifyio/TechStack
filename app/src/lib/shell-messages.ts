@@ -30,7 +30,7 @@ export const shellMessages = {
 
     "nav.servicesPlacement": "Placement",
     "nav.monitoring.now": "Right now",
-    "nav.createHomelab": "Create homelab",
+    "nav.addUseCases": "Add use cases",
     "nav.group.homelab": "Homelab",
 
     "shortcuts.turnedOff": "Keyboard shortcuts turned off",
@@ -111,7 +111,7 @@ export const shellMessages = {
 
     "nav.servicesPlacement": "Platzierung",
     "nav.monitoring.now": "Aktuell",
-    "nav.createHomelab": "Homelab erstellen",
+    "nav.addUseCases": "Use Cases hinzufügen",
     "nav.group.homelab": "Homelab",
 
     "shortcuts.turnedOff": "Tastenkürzel ausgeschaltet",
@@ -194,7 +194,7 @@ export const shellMessages = {
 
     "nav.servicesPlacement": "Ubicación",
     "nav.monitoring.now": "Ahora",
-    "nav.createHomelab": "Crear homelab",
+    "nav.addUseCases": "Añadir casos de uso",
     "nav.group.homelab": "Homelab",
 
     "shortcuts.turnedOff": "Atajos de teclado desactivados",
@@ -276,7 +276,7 @@ export const shellMessages = {
 
     "nav.servicesPlacement": "应用分布",
     "nav.monitoring.now": "当前状态",
-    "nav.createHomelab": "创建 Homelab",
+    "nav.addUseCases": "添加用例",
     "nav.group.homelab": "Homelab",
 
     "shortcuts.turnedOff": "键盘快捷键已关闭",
@@ -356,7 +356,7 @@ export const shellMessages = {
 
     "nav.servicesPlacement": "प्लेसमेंट",
     "nav.monitoring.now": "अभी",
-    "nav.createHomelab": "Homelab बनाएँ",
+    "nav.addUseCases": "यूज़ केस जोड़ें",
     "nav.group.homelab": "Homelab",
 
     "shortcuts.turnedOff": "कीबोर्ड शॉर्टकट बंद कर दिए गए",
@@ -438,7 +438,7 @@ export const shellMessages = {
 
     "nav.servicesPlacement": "التوزيع",
     "nav.monitoring.now": "الآن",
-    "nav.createHomelab": "إنشاء Homelab",
+    "nav.addUseCases": "إضافة حالات الاستخدام",
     "nav.group.homelab": "Homelab",
 
     "shortcuts.turnedOff": "تم إيقاف اختصارات لوحة المفاتيح",

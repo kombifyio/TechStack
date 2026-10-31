@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 )
 
 // Conformance vectors are verified with the released central wire contract.

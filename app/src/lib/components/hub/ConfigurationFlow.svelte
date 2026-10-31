@@ -124,6 +124,11 @@
       : undefined,
   );
   const chosenDeployment = $derived(chosenServer?.deploymentId);
+  // One homelab per person: once they have a server, a new one adds use cases
+  // to it rather than creating a homelab.
+  const addsToHomelab = $derived(
+    Boolean(chosenDeployment) || homelabServers.length > 0,
+  );
 
   function selectServer(id: string) {
     selectedServerId = id;
@@ -1027,10 +1032,10 @@
       layoutStackId={chosenDeployment}
       layoutReplacement={chosenDeployment ? addRun.replacement : undefined}
       layoutRefresh={addRun.refresh}
-      submitLabel={chosenDeployment
+      submitLabel={addsToHomelab
         ? tr("layout.addUseCases.submit")
         : undefined}
-      submittingLabel={chosenDeployment
+      submittingLabel={addsToHomelab
         ? tr("layout.addUseCases.submitting")
         : undefined}
     >

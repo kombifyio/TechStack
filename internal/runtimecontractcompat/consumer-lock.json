@@ -1,6 +1,6 @@
 {
   "schemaVersion": "techstack.selfhost-runtime-contract-lock/v1",
-  "contractRoot": "github.com/kombifyio/techstack/internal/selfhostcontracts",
+  "contractRoot": "github.com/kombifyio/stackkits/contracts",
   "packages": [
     "runtimeinventory",
     "runtimelease",

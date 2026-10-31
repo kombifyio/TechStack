@@ -60,7 +60,7 @@
     >
       <p class="text-sm text-foreground">{tr("wizard.settings.empty")}</p>
       <Button variant="primary" onclick={() => void goto(CREATE_HOMELAB_HREF)}>
-        {tr("nav.createHomelab")}
+        {tr("nav.addUseCases")}
       </Button>
     </div>
   {:else}

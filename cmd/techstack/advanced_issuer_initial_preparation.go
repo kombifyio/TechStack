@@ -12,7 +12,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/jackc/pgx/v5"
 
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 )
 
 // Key generation belongs to explicit governed preparation. Normal runtime

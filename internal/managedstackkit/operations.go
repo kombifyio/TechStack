@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
+	"github.com/kombifyio/stackkits/contracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/stackkits/pkg/backupbinding"
 )

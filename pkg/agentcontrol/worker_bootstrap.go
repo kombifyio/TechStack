@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	providerexecutor "github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	providerexecutor "github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"github.com/kombifyio/techstack/internal/substrate"
 	"strings"

@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeinventory"
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimelease"
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/stackaction"
+	"github.com/kombifyio/stackkits/contracts/runtimeinventory"
+	"github.com/kombifyio/stackkits/contracts/runtimelease"
+	"github.com/kombifyio/stackkits/contracts/stackaction"
 )
 
 const (
 	lockSchemaV1 = "techstack.selfhost-runtime-contract-lock/v1"
-	contractRoot = "github.com/kombifyio/techstack/internal/selfhostcontracts"
+	contractRoot = "github.com/kombifyio/stackkits/contracts"
 )
 
 type consumerLock struct {

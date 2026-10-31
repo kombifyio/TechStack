@@ -43,7 +43,7 @@ The transitional surface does **not** own:
   sub-plans in Beads
 - VM-lease authority logic; that lives in
   [`../vmleases/`](../vmleases/) with its contract in
-  `kombify-runtime-contracts-go/runtimelease` at the release pinned in `go.mod`
+  `kombify-StackKits` `contracts/runtimelease` at the release pinned in `go.mod`
 
 ## Running locally
 

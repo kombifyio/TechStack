@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	"github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 )
 
 // ProvisionDiscoveryEvidenceTime returns the one timestamp sealed into every

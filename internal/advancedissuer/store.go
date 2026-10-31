@@ -17,7 +17,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/db"
 
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 )
 
 // EnvIssuerKey overrides the stored installation key with an unpadded

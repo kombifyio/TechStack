@@ -180,15 +180,16 @@ export const mainNavItems: NavItem[] = [
 ];
 
 /**
- * The homelab entries below the main list: creating a homelab and the
- * settings (they used to live only in the account menu and the dashboard).
+ * The homelab entries below the main list. A person has one homelab, the sum
+ * of everything they run; it grows by adding use cases (onto a server they
+ * have or a new one), never by creating a second homelab.
  */
 export const homelabNavItems: NavItem[] = [
   {
-    id: "create-homelab",
+    id: "add-use-cases",
     href: CREATE_HOMELAB_HREF,
-    labelKey: "nav.createHomelab",
-    labelFallback: "Create homelab",
+    labelKey: "nav.addUseCases",
+    labelFallback: "Add use cases",
     icon: Plus,
   },
   {
@@ -274,12 +275,12 @@ export const embeddedNavItems: NavItem[] = [
     icon: Wallet,
   },
   // Cloud owns account navigation around the embed, but the tool's own
-  // settings (the Homelab tab) and creation are reachable only from here.
+  // settings (the Homelab tab) and adding use cases are reachable only from here.
   {
-    id: "embedded-create-homelab",
+    id: "embedded-add-use-cases",
     href: CREATE_HOMELAB_HREF,
-    labelKey: "nav.createHomelab",
-    labelFallback: "Create homelab",
+    labelKey: "nav.addUseCases",
+    labelFallback: "Add use cases",
     icon: Plus,
   },
   {

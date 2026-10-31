@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeinventory"
+	"github.com/kombifyio/stackkits/contracts/runtimeinventory"
 	"github.com/kombifyio/techstack/api/toolmanifest"
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/providercontrol"

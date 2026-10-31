@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimelease"
+	"github.com/kombifyio/stackkits/contracts/runtimelease"
 	"github.com/kombifyio/techstack/pkg/ril/actioncontract"
 	"github.com/google/uuid"
 )

@@ -20,7 +20,7 @@ import (
 	"github.com/kombifyio/stackkits/pkg/workloadremoval"
 	"google.golang.org/protobuf/proto"
 
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 )
 
 const (
