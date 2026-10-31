@@ -188,6 +188,11 @@ var runHostedProviderControlBootstrap = func(context.Context) error {
 	return fmt.Errorf("provider-control bootstrap is unavailable in the self-hosted build")
 }
 
+// runProviderImageMode is the private Guard image custody tool
+// (provider_image.go); the self-host edition carries no provider adapters and
+// leaves it nil.
+var runProviderImageMode func(context.Context, []string) error
+
 func runTechstack(ctx context.Context) error {
 	const defaultHTTPAddr = ":5260"
 	// The data protection profile is read before any mode, client or telemetry
@@ -208,6 +213,12 @@ func runTechstack(ctx context.Context) error {
 	}
 	if isGuardHostBaselineMode(os.Args) {
 		return runGuardHostBaseline(ctx, os.Args[3:])
+	}
+	if len(os.Args) > 1 && os.Args[1] == "provider-image" {
+		if runProviderImageMode == nil {
+			return errors.New("provider-image: this edition has no commercial provider adapters")
+		}
+		return runProviderImageMode(ctx, os.Args[2:])
 	}
 
 	// Agent/worker mode: the same binary runs as the node-side daemon

@@ -56,6 +56,10 @@
     {
       "version": "174_control_plane_disk_custody.sql",
       "sha256": "559caa1c9973c8e083359f0454641b674606cc6e4320f824f6205a6894d045b3"
+    },
+    {
+      "version": "175_household_legacy_removal.sql",
+      "sha256": "53a9b90da8d1dda4aa9784329fb4072ad1924909dbafc2bc2a58fddbedd7f471"
     }
   ],
   "database_target": "core",

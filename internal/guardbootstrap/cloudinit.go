@@ -37,6 +37,9 @@ var (
 	// ErrInvalidHostname means the requested first-boot hostname is not a safe
 	// RFC-1123 label and could change the meaning of the emitted document.
 	ErrInvalidHostname = errors.New("guardbootstrap: hostname is not a valid RFC-1123 label")
+	// ErrInvalidAuthorizedKey means a first-boot key is not one single-line
+	// OpenSSH public key, or was supplied without a Golden Image profile.
+	ErrInvalidAuthorizedKey = errors.New("guardbootstrap: authorized key is not a single OpenSSH public key for a Golden Image")
 )
 
 // CloudInitInput is the complete first-boot contract.
@@ -56,6 +59,11 @@ type CloudInitInput struct {
 	// HostPrepProfile opts a provider image into a declared first-boot host
 	// preparation contract. The empty value remains provider-neutral.
 	HostPrepProfile HostPrepProfile
+	// AuthorizedKeys are installed by cloud-init for root and the image's
+	// default user. Only a Golden Image profile accepts them: a provider's own
+	// key injection works for its public images alone (IONOS sshKeys), so a
+	// private image receives the execution-channel key here instead.
+	AuthorizedKeys []string
 }
 
 type HostPrepProfile string
@@ -71,10 +79,40 @@ const (
 	// compatibility contract used by existing explicit image choices
 	// so apply does not start without host-security packages.
 	HostPrepProfileStackKitReadyUbuntu2404V1 HostPrepProfile = "stackkit-ready-" + guardcompat.ProfileCompatibilityReleaseID + "-v1"
+	// HostPrepProfileGoldenImageUbuntu2604V1 boots an admitted Guard Golden
+	// Image (G09, scripts/os-compat/golden-README.md): the image already holds
+	// the enabled unbound Guard and the neutral baseline, so first boot redeems
+	// the capability with the baked Guard instead of the served installer,
+	// exactly as the candidate's two-clone enrollment does. Host preparation v2
+	// still runs and records its status, so readiness has one authority.
+	HostPrepProfileGoldenImageUbuntu2604V1 HostPrepProfile = "golden-image-" + guardcompat.ProfileReleaseID + "-v1"
+	// HostPrepProfileGoldenImageUbuntu2404V1 is the 24.04 compatibility image.
+	HostPrepProfileGoldenImageUbuntu2404V1 HostPrepProfile = "golden-image-" + guardcompat.ProfileCompatibilityReleaseID + "-v1"
 )
 
+// goldenImageGuardPath is where the Golden Image recipe installs the Guard.
+const goldenImageGuardPath = "/usr/local/bin/techstack"
+
 func (p HostPrepProfile) stackKitReady() bool {
-	return p == HostPrepProfileIONOSUbuntu2404DockerV1 || p == HostPrepProfileStackKitReadyUbuntu2404V1 || p == HostPrepProfileStackKitReadyUbuntu2604V1
+	return p == HostPrepProfileIONOSUbuntu2404DockerV1 || p == HostPrepProfileStackKitReadyUbuntu2404V1 || p == HostPrepProfileStackKitReadyUbuntu2604V1 ||
+		p.goldenImage()
+}
+
+func (p HostPrepProfile) goldenImage() bool {
+	return p == HostPrepProfileGoldenImageUbuntu2604V1 || p == HostPrepProfileGoldenImageUbuntu2404V1
+}
+
+// GoldenImageHostPrepProfile selects the Golden Image contract of an admitted
+// image's declared Ubuntu release; any other release has none.
+func GoldenImageHostPrepProfile(version string) HostPrepProfile {
+	switch version {
+	case guardcompat.ProfileReleaseVersion:
+		return HostPrepProfileGoldenImageUbuntu2604V1
+	case guardcompat.ProfileCompatibilityReleaseVersion:
+		return HostPrepProfileGoldenImageUbuntu2404V1
+	default:
+		return ""
+	}
 }
 
 // UbuntuHostPrepProfile preserves the OS version of an explicit image choice.
@@ -186,6 +224,20 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		"curl -fsSL --connect-timeout 3 --max-time 10 --retry 2 --retry-max-time 20 --retry-connrefused --retry-delay 1 %s | KOMBI_SERVER=%s bash",
 		shellQuote(origin+"/install.sh"), shellQuote(origin),
 	)
+	if in.HostPrepProfile.goldenImage() {
+		// The baked Guard redeems the capability from a root-only tmpfs file
+		// and activates its layout; the served installer would replace the
+		// qualified binary. agent enroll deletes the file after use; the trap
+		// removes it after a transient failure too.
+		installerCommand = fmt.Sprintf(
+			"capability=$(mktemp /run/kombify-pairing.XXXXXX) && trap 'rm -f \"$capability\"' EXIT && printf '%%s' \"$KOMBI_TOKEN\" > \"$capability\" && %s agent enroll --server %s --token-file \"$capability\" && %s guard layout apply --activate",
+			goldenImageGuardPath, shellQuote(origin), goldenImageGuardPath,
+		)
+	}
+	keys, err := authorizedKeyLines(in.AuthorizedKeys, in.HostPrepProfile)
+	if err != nil {
+		return nil, err
+	}
 	failureReport := fmt.Sprintf(
 		"status=$?; reason=installer_failed; case $status in 42) reason=bootstrap_tools_missing;; 43) reason=ssh_firewall_failed;; 44) reason=execution_channel_failed;; 124|137) reason=first_boot_deadline_exceeded;; esac; printf 'Authorization: Bearer %%s\\n' \"$KOMBI_TOKEN\" | curl -sS --max-time 5 --connect-timeout 2 -X POST %s -H @- -H %s -H %s -H \"X-Kombify-Bootstrap-Reason: $reason\" --data-binary %s >/dev/null 2>&1 || true; exit $status",
 		shellQuote(origin+"/api/v1/workers/bootstrap/logs"),
@@ -194,6 +246,9 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		shellQuote("Cloud-init could not establish the execution channel or execute the Techstack installer."),
 	)
 	readinessCommand := "command -v curl >/dev/null && command -v systemctl >/dev/null || exit 42"
+	if in.HostPrepProfile.goldenImage() {
+		readinessCommand += "; test -x " + goldenImageGuardPath + " || exit 42"
+	}
 	// cloud-init's packages module runs before runcmd, outside this deadline.
 	// A missing firewall must spend the same bounded bootstrap budget instead.
 	readinessCommand += "; if ! command -v ufw >/dev/null; then command -v apt-get >/dev/null || exit 42; timeout --signal=TERM --kill-after=1 12 env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=3 -o Acquire::Retries=0 -o Acquire::http::Timeout=3 -o Acquire::https::Timeout=3 install -y --no-install-recommends ufw || exit 42; fi; command -v ufw >/dev/null || exit 42"
@@ -229,6 +284,16 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		document.WriteString("preserve_hostname: false\n")
 	}
 	document.WriteString("package_update: false\n")
+	if len(keys) > 0 {
+		// Without disable_root: false cloud-init prefixes root's keys with a
+		// forced "login as the default user" command, and the execution channel
+		// copies root's keys first.
+		document.WriteString("disable_root: false\n")
+		document.WriteString("ssh_authorized_keys:\n")
+		for _, key := range keys {
+			document.WriteString("  - '" + key + "'\n")
+		}
+	}
 	document.WriteString("write_files:\n")
 	// The capability file is root-only; it is created before anything runs.
 	document.WriteString("  - path: " + GuardBootstrapScriptPath + "\n")
@@ -291,6 +356,40 @@ func normalizeOrigin(raw string) (string, error) {
 		return "", ErrInsecureServerURL
 	}
 	return "https://" + parsed.Host, nil
+}
+
+// authorizedKeyLines admits only single-line OpenSSH public keys, and only for
+// a Golden Image profile. Each is emitted inside YAML single quotes, so a key
+// may not contain one.
+func authorizedKeyLines(keys []string, profile HostPrepProfile) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if !profile.goldenImage() {
+		return nil, ErrInvalidAuthorizedKey
+	}
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		fields := strings.Fields(key)
+		if len(key) == 0 || len(key) > 16<<10 || len(fields) < 2 || !printableASCII(key) || strings.ContainsAny(key, "'\\\"") ||
+			!(strings.HasPrefix(fields[0], "ssh-") || strings.HasPrefix(fields[0], "ecdsa-sha2-") || strings.HasPrefix(fields[0], "sk-")) {
+			return nil, ErrInvalidAuthorizedKey
+		}
+		lines = append(lines, key)
+	}
+	return lines, nil
+}
+
+// printableASCII admits a key line made of visible ASCII and spaces only, so
+// no line break of any encoding can split it inside the YAML document.
+func printableASCII(value string) bool {
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x20 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // shellQuote wraps a value in POSIX single quotes, which suppress every form of

@@ -2,10 +2,13 @@ package household
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/systemdb"
@@ -171,8 +174,90 @@ func (r *SystemReducer) ProjectPending(ctx context.Context, service *Service, de
 			resolved++
 		}
 	}
+	for i := 0; i < 5; i++ {
+		swept, err := r.sweepLegacyRemoval(ctx, service)
+		if err != nil {
+			fail("legacy removal", err)
+		}
+		if !swept {
+			break
+		}
+	}
 	if failed > 0 {
 		return resolved, fmt.Errorf("%d household projections remain pending, first at %w", failed, first)
 	}
 	return resolved, nil
+}
+
+// sweepLegacyRemoval claims one current removal that was acknowledged as none
+// (no projection binding, platform-nt9a1) and runs the fenced legacy cleanup.
+// A claim reschedules the row by 15 minutes, so a refused or unreachable case
+// costs one node read per quarter hour. Only a complete cleanup marks the row
+// projected, under the same revision, claim and no newer lifecycle event.
+func (r *SystemReducer) sweepLegacyRemoval(ctx context.Context, service *Service) (bool, error) {
+	var req LegacyRemoval
+	var claimedAt time.Time
+	var rawEmails string
+	err := r.database.QueryRowContext(ctx, `WITH due AS (
+  SELECT owner_subject,subject FROM household_node_projections p
+  WHERE status='none' AND desired_action='remove' AND next_attempt_at<=now()
+   AND NOT EXISTS(SELECT 1 FROM household_lifecycle_outbox e WHERE e.owner_subject=p.owner_subject AND e.subject=p.subject AND e.revision>p.revision)
+  ORDER BY next_attempt_at,owner_subject,subject FOR UPDATE SKIP LOCKED LIMIT 1
+ ), claimed AS (
+  UPDATE household_node_projections p SET last_attempt_at=now(),next_attempt_at=now()+interval '15 minutes'
+  FROM due WHERE p.owner_subject=due.owner_subject AND p.subject=due.subject RETURNING p.*
+ ), households AS (
+  SELECT s.id FROM spaces s, claimed c WHERE s.deleted_at IS NULL AND (s.created_by=c.owner_subject OR EXISTS(
+   SELECT 1 FROM space_members o WHERE o.space_id=s.id AND o.subject=c.owner_subject AND o.role='owner' AND o.removed_at IS NULL))
+ ) SELECT c.owner_subject,c.subject,c.revision,COALESCE(u.email,''),c.last_attempt_at,
+  EXISTS(SELECT 1 FROM space_members m WHERE m.space_id IN(SELECT id FROM households) AND m.subject=c.subject AND m.removed_at IS NULL),
+  to_json(ARRAY(SELECT DISTINCT lower(v.email) FROM users v WHERE v.email IS NOT NULL AND (v.auth_subject=c.owner_subject OR v.auth_subject IN(
+   SELECT m.subject FROM space_members m WHERE m.space_id IN(SELECT id FROM households) AND m.removed_at IS NULL))))::text
+  FROM claimed c LEFT JOIN users u ON u.auth_subject=c.subject`).Scan(&req.OwnerSubject, &req.Subject, &req.Revision, &req.Email, &claimedAt, &req.StillMember, &rawEmails)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var emails []string
+	if err := json.Unmarshal([]byte(rawEmails), &emails); err != nil {
+		return true, err
+	}
+	req.MemberEmails = map[string]bool{}
+	for _, email := range emails {
+		req.MemberEmails[email] = true
+	}
+	// The audit line names the pair by digest and the node account by stack and
+	// username; the command itself stays in household_projection_attempts.
+	req.Recheck = func(ctx context.Context) error {
+		var current bool
+		err := r.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM household_node_projections p
+  WHERE owner_subject=$1 AND subject=$2 AND revision=$3 AND last_attempt_at=$4 AND status='none' AND desired_action='remove'
+   AND NOT EXISTS(SELECT 1 FROM household_lifecycle_outbox e WHERE e.owner_subject=p.owner_subject AND e.subject=p.subject AND e.revision>p.revision)
+   AND NOT EXISTS(SELECT 1 FROM space_members m JOIN spaces s ON s.id=m.space_id WHERE m.subject=p.subject AND m.removed_at IS NULL AND s.deleted_at IS NULL
+    AND (s.created_by=p.owner_subject OR EXISTS(SELECT 1 FROM space_members o WHERE o.space_id=s.id AND o.subject=p.owner_subject AND o.role='owner' AND o.removed_at IS NULL))))`,
+			req.OwnerSubject, req.Subject, req.Revision, claimedAt).Scan(&current)
+		if err == nil && !current {
+			err = errors.New("the removal is no longer current")
+		}
+		return err
+	}
+	pair := sha256.Sum256([]byte(req.OwnerSubject + "\n" + req.Subject))
+	outcomes, err := service.RemoveLegacyAccount(ctx, req)
+	for _, outcome := range outcomes {
+		log.Printf("household legacy removal pair=%s revision=%d stack=%s result=%s username=%s", hex.EncodeToString(pair[:8]), req.Revision, outcome.StackID, outcome.Result, outcome.Username)
+	}
+	if err != nil {
+		log.Printf("household legacy removal pair=%s revision=%d pending: %v", hex.EncodeToString(pair[:8]), req.Revision, err)
+		return true, err
+	}
+	_, err = r.database.ExecContext(ctx, `UPDATE household_node_projections p SET status='projected'
+  WHERE owner_subject=$1 AND subject=$2 AND revision=$3 AND last_attempt_at=$4 AND status='none' AND desired_action='remove'
+   AND NOT EXISTS(SELECT 1 FROM household_lifecycle_outbox e WHERE e.owner_subject=p.owner_subject AND e.subject=p.subject AND e.revision>p.revision)`,
+		req.OwnerSubject, req.Subject, req.Revision, claimedAt)
+	if err == nil {
+		log.Printf("household legacy removal pair=%s revision=%d complete", hex.EncodeToString(pair[:8]), req.Revision)
+	}
+	return true, err
 }

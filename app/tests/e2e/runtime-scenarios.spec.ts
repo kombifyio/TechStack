@@ -3792,18 +3792,31 @@ test.describe.serial("Runtime E2E scenarios", () => {
       }
       await attachScreenshot(page, "layout-two-node-panel.png");
 
-      const runResponse = page.waitForResponse(
-        (response) =>
-          response.request().method() === "POST" &&
-          /\/(?:api\/v1|v1\/techstack)\/wizard\/runs$/.test(
-            new URL(response.url()).pathname,
-          ),
-        { timeout: CREATE_STACK_REQUEST_TIMEOUT_MS },
-      );
-      await page.getByTestId("wizard-create").click();
-      const response = await runResponse;
-      const runText = await response.text();
-      expect(response.status(), runText).toBe(202);
+      // A node that just joined can still report high observed usage when the
+      // distribution is shown; once it settles the confirmation re-plans and
+      // answers with the replacement (layout_recommendation_superseded). The
+      // page adopts it, and the owner reviews and confirms again.
+      let status = 0;
+      let runText = "";
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const runResponse = page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            /\/(?:api\/v1|v1\/techstack)\/wizard\/runs$/.test(
+              new URL(response.url()).pathname,
+            ),
+          { timeout: CREATE_STACK_REQUEST_TIMEOUT_MS },
+        );
+        await page.getByTestId("wizard-create").click();
+        const response = await runResponse;
+        status = response.status();
+        runText = await response.text();
+        if (status !== 409 || !runText.includes("layout_recommendation_superseded")) break;
+        await attachJson(`layout-two-node-superseded-${attempt}.json`, redactObject(JSON.parse(runText)));
+        await expect(panel).toHaveAttribute("data-layout-verification", "verified", { timeout: 180_000 });
+        await expect(page.getByTestId("wizard-create")).toBeEnabled({ timeout: 60_000 });
+      }
+      expect(status, runText).toBe(202);
       const run = (JSON.parse(runText).data ?? {}) as Record<string, unknown>;
       const recordId = String(run.layout_recommendation_id ?? "");
       expect(recordId).not.toBe("");

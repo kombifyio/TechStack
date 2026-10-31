@@ -462,8 +462,8 @@ func applyForwardBatchBasis(t *testing.T, ctx context.Context, target *DB, batch
 		t.Fatal(err)
 	}
 	pendingFrom := "165_"
-	if !strings.HasPrefix(batch[len(batch)-1].Version, "174_") {
-		t.Fatalf("the case is calibrated on the 165-174 tail, the manifest ends at %s", batch[len(batch)-1].Version)
+	if !strings.HasPrefix(batch[len(batch)-1].Version, "175_") {
+		t.Fatalf("the case is calibrated on the 165-175 tail, the manifest ends at %s", batch[len(batch)-1].Version)
 	}
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {

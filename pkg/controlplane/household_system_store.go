@@ -69,6 +69,27 @@ func (s *HouseholdSystemStore) ResolveOwnerTenant(ctx context.Context, hint, own
 	return matches[0], nil
 }
 
+// ListHouseholdProjectionBindings returns every retained projection binding of
+// one owner. The legacy cleanup reads it to prove that the removed person has
+// no target and that a node username belongs to nobody else.
+func (s *HouseholdSystemStore) ListHouseholdProjectionBindings(ctx context.Context, tenant, owner string) ([]HouseholdProjectionBinding, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+householdProjectionColumns+`
+  FROM household_projection_bindings WHERE tenant_id=$1 AND owner_subject_id=$2 ORDER BY cloud_subject`, tenant, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var bindings []HouseholdProjectionBinding
+	for rows.Next() {
+		binding, err := scanHouseholdProjection(rows)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, *binding)
+	}
+	return bindings, rows.Err()
+}
+
 func verifyHouseholdSystemScope(ctx context.Context, tx *sql.Tx, intent HouseholdProjectionIntent) error {
 	var allowed bool
 	err := tx.QueryRowContext(ctx, `SELECT current_user=session_user AND session_user=$1

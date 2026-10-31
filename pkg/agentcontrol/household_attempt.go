@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,6 +15,23 @@ import (
 )
 
 var ErrHouseholdCommandUnresolved = errors.New("original household command remains unresolved")
+
+var householdAttemptKey = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+type householdLegacyAttemptContext struct{}
+
+type householdLegacyAttempt struct {
+	key      string
+	revision uint64
+}
+
+// WithHouseholdLegacyAttempt admits the household worker's legacy cleanup: a
+// HOUSEHOLD_LIST or HOUSEHOLD_REMOVE, which carries no projection fields of its
+// own, is retained under this attempt key exactly like a projection, so an
+// unknown earlier removal still blocks any new command for the same key.
+func WithHouseholdLegacyAttempt(ctx context.Context, key string, revision uint64) context.Context {
+	return context.WithValue(ctx, householdLegacyAttemptContext{}, householdLegacyAttempt{key: key, revision: revision})
+}
 
 // HouseholdCommandSender retains the actual original command, including its
 // release and runtime binding. A timeout never grants a replacement mutation.
@@ -25,7 +43,19 @@ func (s *HouseholdCommandSender) SendStackKitCommand(ctx context.Context, agent 
 }
 
 func (s *HouseholdCommandSender) SendStackKitCommandForTenant(ctx context.Context, tenant, agent string, command *agentpb.StackKitCommand) (*agentpb.StackKitResult, error) {
-	if s == nil || s.Hub == nil || s.Hub.db == nil || command == nil || command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT || tenant == "" || agent == "" {
+	if s == nil || s.Hub == nil || s.Hub.db == nil || command == nil || tenant == "" || agent == "" {
+		return nil, ErrResultRejected
+	}
+	key, revision := command.HouseholdProjectionKey, command.HouseholdProjectionRevision
+	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT:
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST, agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE:
+		legacy, ok := ctx.Value(householdLegacyAttemptContext{}).(householdLegacyAttempt)
+		if !ok || !householdAttemptKey.MatchString(legacy.key) || legacy.revision == 0 {
+			return nil, ErrResultRejected
+		}
+		key, revision = legacy.key, legacy.revision
+	default:
 		return nil, ErrResultRejected
 	}
 	if err := stackkitcommand.ValidateCommand(command); err != nil {
@@ -41,7 +71,7 @@ func (s *HouseholdCommandSender) SendStackKitCommandForTenant(ctx context.Contex
 		return nil, ErrResultRejected
 	}
 	// A session lock spans the network round trip; intent commits before enqueue.
-	lockKey := "household-attempt:" + tenant + ":" + command.HouseholdProjectionKey
+	lockKey := "household-attempt:" + tenant + ":" + key
 	if _, err = conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtextextended($1,0))`, lockKey); err != nil {
 		return nil, err
 	}
@@ -61,13 +91,13 @@ func (s *HouseholdCommandSender) SendStackKitCommandForTenant(ctx context.Contex
 	var priorRevision uint64
 	var priorRaw []byte
 	err = tx.QueryRowContext(ctx, `SELECT command_id,agent_id,stackkit_instance_id,projection_revision,command_json
-  FROM household_projection_attempts WHERE tenant_id=$1 AND projection_key=$2 FOR UPDATE`, tenant, command.HouseholdProjectionKey).
+  FROM household_projection_attempts WHERE tenant_id=$1 AND projection_key=$2 FOR UPDATE`, tenant, key).
 		Scan(&priorID, &priorAgent, &priorInstance, &priorRevision, &priorRaw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	if err == nil {
-		if priorAgent != agent || priorInstance != command.StackkitInstanceId || priorRevision > command.HouseholdProjectionRevision {
+		if priorAgent != agent || priorInstance != command.StackkitInstanceId || priorRevision > revision {
 			return nil, ErrResultRejected
 		}
 		var state string
@@ -115,7 +145,7 @@ func (s *HouseholdCommandSender) SendStackKitCommandForTenant(ctx context.Contex
 	_, err = tx.ExecContext(ctx, `INSERT INTO household_projection_attempts(tenant_id,projection_key,projection_revision,command_id,agent_id,stackkit_instance_id,command_json)
   VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(tenant_id,projection_key) DO UPDATE SET
   projection_revision=EXCLUDED.projection_revision,command_id=EXCLUDED.command_id,agent_id=EXCLUDED.agent_id,
-  stackkit_instance_id=EXCLUDED.stackkit_instance_id,command_json=EXCLUDED.command_json`, tenant, command.HouseholdProjectionKey, command.HouseholdProjectionRevision, command.CommandId, agent, command.StackkitInstanceId, payload)
+  stackkit_instance_id=EXCLUDED.stackkit_instance_id,command_json=EXCLUDED.command_json`, tenant, key, revision, command.CommandId, agent, command.StackkitInstanceId, payload)
 	if err != nil {
 		return nil, err
 	}

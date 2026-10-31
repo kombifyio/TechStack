@@ -136,6 +136,52 @@ func (r systemIdentity) Project(ctx context.Context, t Target, p IdentityProject
 	return invite, nil
 }
 
+// The legacy cleanup lists and removes only under its retained attempt and on
+// the exact runtime it resolved (RemoveLegacyAccount).
+func (r systemIdentity) legacyCommand(ctx context.Context, t Target, a LegacyAttempt, request orchestrator.StackKitIdentityCommandRequest) (*agentpb.StackKitResult, error) {
+	if !releasechannel.AdmitsJobExecution(t.TenantID) {
+		return nil, releasechannel.ErrTenantNotOwned
+	}
+	if config.ReleaseChannel() == "preview" && !releasechannel.StageOwnerActive() {
+		return nil, releasechannel.ErrStageOwnerNotAdmitted
+	}
+	if t.AgentID == "" || t.StackKitInstanceID == "" {
+		return nil, errors.New("legacy household command requires the resolved runtime")
+	}
+	request.TenantID, request.OwnerID, request.DeploymentID = t.TenantID, t.OwnerID, t.StackID
+	request.ExpectedAgentID, request.ExpectedStackKitInstanceID = t.AgentID, t.StackKitInstanceID
+	return r.orch.RunStackKitIdentityCommand(agentcontrol.WithHouseholdLegacyAttempt(ctx, a.Key, a.Revision), request)
+}
+
+func (r systemIdentity) ListLegacyHouseholdUsers(ctx context.Context, t Target, a LegacyAttempt) ([]HouseholdUser, error) {
+	result, err := r.legacyCommand(ctx, t, a, orchestrator.StackKitIdentityCommandRequest{Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST})
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		Data struct {
+			Users []struct {
+				Username string `json:"username"`
+				Email    string `json:"email"`
+			} `json:"users"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(result.CommandResultJson, &envelope) != nil {
+		return nil, errors.New("household member list response invalid")
+	}
+	users := make([]HouseholdUser, 0, len(envelope.Data.Users))
+	for _, user := range envelope.Data.Users {
+		users = append(users, HouseholdUser{Username: user.Username, Email: user.Email})
+	}
+	return users, nil
+}
+
+func (r systemIdentity) RemoveLegacyHouseholdUser(ctx context.Context, t Target, a LegacyAttempt, username string) error {
+	_, err := r.legacyCommand(ctx, t, a, orchestrator.StackKitIdentityCommandRequest{
+		Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE, OwnerApproved: true, HouseholdUsername: username})
+	return err
+}
+
 // The private worker has no legacy unfenced mutation surface.
 func (systemIdentity) Invite(context.Context, Target, string, string, string, AppGrant) (Invitation, error) {
 	return Invitation{}, errors.New("revision required")
