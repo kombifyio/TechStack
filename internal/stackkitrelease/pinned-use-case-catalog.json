@@ -1,14 +1,14 @@
 {
   "schemaVersion": "stackkits-use-case-catalog/v1",
   "release": {
-    "tag": "v0.54.12",
-    "version": "0.54.12",
-    "sourceSha": "06eead2a7c5d1a9886367f8abce675a2ec51c34b",
-    "publicSourceSha": "f7a5ee87aaec665829e3cb9fc2c251fa6646d395",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.12"
+    "tag": "v0.54.13",
+    "version": "0.54.13",
+    "sourceSha": "273894aa14e7faa3bfd02a67013ae4c265a81921",
+    "publicSourceSha": "37badd8bd44603ea4501fd52bd6200f8fde78a90",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.13"
   },
-  "generatedAt": "2026-10-30T08:26:47Z",
-  "generatorVersion": "0.54.12",
+  "generatedAt": "2026-10-31T00:25:19Z",
+  "generatorVersion": "0.54.13",
   "catalog": {
     "authoring": {
       "retainedRemovalCandidates": true
@@ -6365,5 +6365,5 @@
       }
     ]
   },
-  "contentDigest": "sha256:299a6ddd67fb59c0be1e4ca7f74d90b8d0e5a1e86685190ab1dee32f6a40bff3"
+  "contentDigest": "sha256:9f62375dc810dec5ad2891ca32ecc64948fc538adb3509dfcb63183ba90cf7cb"
 }
