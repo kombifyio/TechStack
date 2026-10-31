@@ -18,7 +18,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/kombifyio/stackkits v0.54.12
+	github.com/kombifyio/stackkits v0.54.13
 	github.com/lib/pq v1.12.3
 	github.com/miekg/dns v1.1.73
 	github.com/moby/moby/api v1.56.1
