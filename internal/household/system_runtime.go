@@ -18,7 +18,9 @@ import (
 )
 
 // Exact reviewed Cloud source prerequisite; update only with its owned migration.
-const householdCloudMigrationSHA256 = "f721599d0832bb7637498e4d37b882f620390e648ac221ea3cfd1d4adb6f1b1e"
+// Cloud #2137 revised 000279 before any governed database applied it (adds the
+// sequence revoke and exact function grantees); kombify-stg-pg records this one.
+const householdCloudMigrationSHA256 = "d8dc0585d02d3996bd9230b7e25808996a39d577c0d7f8aa1a7fe581c9a3b174"
 
 const cloudDSNEnv = "TECHSTACK_HOUSEHOLD_CLOUD_DATABASE_URL"
 const workerDSNEnv = "TECHSTACK_HOUSEHOLD_WORKER_DATABASE_URL"
