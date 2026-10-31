@@ -4,7 +4,7 @@
 authority. It has no public compatibility wrapper.
 
 - `providerexecutor/v1beta1` is the neutral wire. Its normative module owner is
-  `kombify-runtime-contracts-go`; Techstack consumes the immutable release pinned in `go.mod`.
+  `kombify-StackKits` (`contracts/providerexecutor`); Techstack consumes the StackKits release pinned in `go.mod`.
   Provider-control activation remains separately gated on adapter certification
   and explicit profile activation.
 - TechStack resolves execution profiles, selects adapters, creates the initial

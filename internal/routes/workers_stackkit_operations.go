@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
+	"github.com/kombifyio/stackkits/contracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )

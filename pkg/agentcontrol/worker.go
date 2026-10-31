@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	providerexecutor "github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	providerexecutor "github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 )
 
 // SendWorkerExecution transports an already admitted invocation. The existing

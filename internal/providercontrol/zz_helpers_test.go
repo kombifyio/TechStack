@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	pgx "github.com/jackc/pgx/v5"
-	providerexecutor "github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	providerexecutor "github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 	"crypto/sha256"
 	"database/sql"
 	"github.com/jackc/pgx/v5/stdlib"

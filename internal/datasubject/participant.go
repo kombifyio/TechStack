@@ -1,5 +1,5 @@
 // Package datasubject is Techstack's participant endpoint for the Cloud
-// data-subject coordinator (kombify-runtime-contracts-go datasubject). Cloud
+// data-subject coordinator (stackkits/contracts/datasubject). Cloud
 // owns the account and the opaque SubjectRef; Techstack exports and erases only
 // the control-plane rows it holds for that subject and answers a receipt signed
 // with its own Ed25519 key. Live provider resources block erasure: Techstack
@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
-	contract "github.com/kombifyio/techstack/internal/selfhostcontracts/datasubject"
+	contract "github.com/kombifyio/stackkits/contracts/datasubject"
 	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 

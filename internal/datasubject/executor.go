@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
-	contract "github.com/kombifyio/techstack/internal/selfhostcontracts/datasubject"
+	contract "github.com/kombifyio/stackkits/contracts/datasubject"
 )
 
 // Blocked reasons of the executor. They are stable: Cloud shows them to the

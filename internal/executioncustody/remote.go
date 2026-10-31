@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 	"github.com/google/uuid"
 )
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 )
 
 func TestTransferRetirementIssuanceRetainsExactScopeAndRejectsWidening(t *testing.T) {

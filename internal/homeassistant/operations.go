@@ -10,7 +10,7 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
+	"github.com/kombifyio/stackkits/contracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 )
 

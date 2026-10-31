@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	wire "github.com/kombifyio/techstack/internal/selfhostcontracts/advancedcapability"
+	wire "github.com/kombifyio/stackkits/contracts/advancedcapability"
 )
 
 func TestBackupRenewalIssuedOnlyForExactAdmittedRestore(t *testing.T) {

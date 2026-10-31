@@ -254,7 +254,6 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: |
             kombify-go-common
-            kombify-runtime-contracts-go
           permission-contents: read
 
       - name: Use read-only App access for private candidate reads

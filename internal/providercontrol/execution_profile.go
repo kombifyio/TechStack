@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	"github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 )
 
 var executionProfileDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	"github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 )
 
 const defaultExecutionClaimTTL = time.Minute

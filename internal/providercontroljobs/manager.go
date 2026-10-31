@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
+	"github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 

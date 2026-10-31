@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeinventory"
+	"github.com/kombifyio/stackkits/contracts/runtimeinventory"
 )
 
 func TestSelfhostRuntimeInventoryContractIsSecretFree(t *testing.T) {

@@ -125,6 +125,14 @@ func (r *SystemReducer) ProjectPending(ctx context.Context, service *Service, de
 		return 0, err
 	}
 	resolved, failed := 0, 0
+	// The first failure travels with the count, so the worker can name its stage.
+	var first error
+	fail := func(stage string, err error) {
+		failed++
+		if first == nil {
+			first = fmt.Errorf("%s: %w", stage, err)
+		}
+	}
 	for i := 0; i < 50; i++ {
 		pending, err := r.Pending(ctx)
 		if err != nil {
@@ -136,7 +144,7 @@ func (r *SystemReducer) ProjectPending(ctx context.Context, service *Service, de
 		p := pending[0]
 		result, err := service.Project(ctx, p.ProjectionRequest)
 		if err != nil {
-			failed++
+			fail("project "+string(p.Action), err)
 			if err := r.deferAttempt(ctx, p, false); err != nil {
 				return resolved, err
 			}
@@ -150,7 +158,7 @@ func (r *SystemReducer) ProjectPending(ctx context.Context, service *Service, de
 		}
 		if result.ActivationURL != "" {
 			if err := deliver(ctx, p, result); err != nil {
-				failed++
+				fail("deliver activation", err)
 				if err := r.deferAttempt(ctx, p, false); err != nil {
 					return resolved, err
 				}
@@ -158,13 +166,13 @@ func (r *SystemReducer) ProjectPending(ctx context.Context, service *Service, de
 			}
 		}
 		if acknowledged, err := r.Acknowledge(ctx, p, result.Status); err != nil {
-			failed++
+			fail("acknowledge", err)
 		} else if acknowledged {
 			resolved++
 		}
 	}
 	if failed > 0 {
-		return resolved, fmt.Errorf("%d household projections remain pending", failed)
+		return resolved, fmt.Errorf("%d household projections remain pending, first at %w", failed, first)
 	}
 	return resolved, nil
 }

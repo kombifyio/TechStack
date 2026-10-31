@@ -748,6 +748,9 @@ async function verifyUseCasePlacement(page: import("@playwright/test").Page) {
       timeout: 180_000,
     });
     await expect(page.getByTestId("use-case-target-back")).toHaveCount(0);
+    // One homelab per person: the sidebar adds use cases, never a homelab.
+    await expect(page.getByRole("link", { name: "Add use cases" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Create homelab" })).toHaveCount(0);
     await expect(
       page
         .getByTestId("creation-goals")
