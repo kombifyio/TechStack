@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,8 +36,6 @@ const (
 
 var (
 	announcedAgentBinaryVersion atomic.Value
-	signedArtifactMu            sync.Mutex
-	signedArtifactCache         = map[string]agentBinaryArtifact{}
 )
 
 // SetAgentBinaryVersion records the version of the executable this control plane
@@ -70,23 +67,6 @@ func guardReleaseDir() string {
 
 func signedGuardBinaryName(goos, goarch string) string {
 	return fmt.Sprintf("techstack-%s-%s", goos, goarch)
-}
-
-// signedGuardBinaryArtifact describes the signed binary of one platform. The
-// digest is computed once per file: a deployed release directory is immutable.
-func signedGuardBinaryArtifact(dir, goos, goarch string) (agentBinaryArtifact, error) {
-	path := filepath.Join(dir, signedGuardBinaryName(goos, goarch))
-	signedArtifactMu.Lock()
-	defer signedArtifactMu.Unlock()
-	if cached, ok := signedArtifactCache[path]; ok {
-		return cached, nil
-	}
-	artifact, err := agentBinaryArtifactForPath(path, goos, goarch)
-	if err != nil {
-		return agentBinaryArtifact{}, err
-	}
-	signedArtifactCache[path] = artifact
-	return artifact, nil
 }
 
 // signedGuardReleaseVersion reads the version of the release directory's manifest.

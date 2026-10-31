@@ -57,6 +57,12 @@ func (w *SystemWorker) Close() {
 }
 func (w *SystemWorker) RunOnce(ctx context.Context) (int, error) {
 	if config.ReleaseChannel() == "preview" && !releasechannel.StageOwnerActive() {
+		// Before an admitted Stage owner, only the Cloud reducer runs: it commits the
+		// canonical snapshot and outbox watermark under the household system role, a
+		// database-only step. Every node effect stays with the admitted owner.
+		if _, err := w.Reducer.Reduce(ctx); err != nil {
+			return 0, err
+		}
 		return 0, releasechannel.ErrStageOwnerNotAdmitted
 	}
 	return w.Reducer.ProjectPending(ctx, w.service, w.deliver)

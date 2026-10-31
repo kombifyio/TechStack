@@ -167,7 +167,7 @@ func evictNextExpiringAgentBinaryDownloadAttempt(attempts map[string]agentBinary
 func currentAgentBinaryArtifact() (agentBinaryArtifact, error) {
 	runningAgentBinaryOnce.Do(func() {
 		if dir := guardReleaseDir(); dir != "" {
-			runningAgentBinaryArtifact, runningAgentBinaryErr = signedGuardBinaryArtifact(dir, managedRuntimeOSLinux, "amd64")
+			runningAgentBinaryArtifact, runningAgentBinaryErr = indexedGuardBinaryArtifact(managedRuntimeOSLinux, "amd64")
 			return
 		}
 		if path := strings.TrimSpace(os.Getenv("TECHSTACK_AGENT_BINARY_LINUX_AMD64")); path != "" {

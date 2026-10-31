@@ -8,8 +8,9 @@ import (
 )
 
 // This is a startup assertion of the two migration-owned capabilities, not a
-// grant installer. Unexpected inherited/PUBLIC/column/function rights refuse
-// execution; the worker cannot repair or widen its own authority.
+// grant installer. Unexpected inherited/PUBLIC/column rights and any
+// SECURITY DEFINER routine beyond the expected ones refuse execution; the
+// worker cannot repair or widen its own authority.
 func verifyHouseholdPrivileges(ctx context.Context, pool *sql.DB, cloud bool) error {
 	tables := map[string]string{"kombify_ctx.role_class": "SELECT"}
 	columns := map[string]string{}
