@@ -84,6 +84,9 @@ func loadApplicationPolicy(ctx context.Context, q PrivilegeQuerier, requireFunct
 		"techstack_notification_outbox": "SELECT,INSERT,UPDATE", "ril_signal_delivery_tenants": "SELECT,INSERT,UPDATE,DELETE",
 		"server_maintenance_tenants": "SELECT,INSERT,UPDATE,DELETE", "guard_drive_health_tenants": "SELECT,INSERT,UPDATE",
 		"server_registry_sweep_tenants": "SELECT,UPDATE,DELETE", "server_registry_outbox_prune_tenants": "SELECT,UPDATE,DELETE",
+		// Migration 174: the data-disk custody. Pins and archive rows are
+		// added and read, never changed or removed by the runtime.
+		"runtime_host_key_pins": "SELECT,INSERT", "control_plane_disk_archive": "SELECT,INSERT",
 	}
 	for rows.Next() {
 		var oid int64

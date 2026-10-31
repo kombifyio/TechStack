@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { goto as svelteGoto } from "$app/navigation";
+  import { goto as svelteGoto, replaceState } from "$app/navigation";
+  import { page } from "$app/state";
   import { getClientBootstrap } from "#lib/client/bootstrap.js";
   import { API_BASE } from "#lib/api/client.js";
   import { parseApiError, type ParsedApiError } from "#lib/api/errors.js";
@@ -12,7 +13,21 @@
   import { getHomelab } from "#lib/api/homelab.js";
   import { storedBlockedWizardConfig } from "#lib/wizard/stored-decisions.js";
   import { WizardInputError } from "#lib/wizard/wizardRunRequest.js";
-  import { CREATION_PROCESSES } from "#lib/creation/core/index.js";
+  import {
+    CREATION_PROCESSES,
+    withServerChoice,
+  } from "#lib/creation/core/index.js";
+  import { listCanonicalServers } from "#lib/api/registry.js";
+  import { listKitDeployments } from "#lib/api/stacks.js";
+  import {
+    homelabServerChoices,
+    type HomelabServerChoice,
+    type HomelabServerSelection,
+  } from "#lib/creation/homelab-servers.js";
+  import { AddUseCasesRun } from "#lib/creation/add-use-cases.svelte.js";
+  import { clearWizardDraft } from "#lib/wizard/draft-storage.js";
+  import type { LayoutRecommendationAcceptance } from "#lib/api/layout.js";
+  import UseCasesAddedResult from "./UseCasesAddedResult.svelte";
   import {
     creationScreenHref,
     forgetCreationAttempt,
@@ -58,6 +73,14 @@
     selfDisclosure?: OperatorSelfDisclosure | null;
     /** Called once the handed-over answers were stored, discarded or given up on. */
     onSelfDisclosureSettled?: () => void;
+    /**
+     * Offer the person's existing servers on the Server step. A server that
+     * runs a StackKit takes the use cases through it; one without gets its
+     * first StackKit; otherwise a new server is set up.
+     */
+    chooseServer?: boolean;
+    /** The server the person started from, chosen first when it can be used. */
+    preferredServerId?: string;
   }
 
   let {
@@ -68,7 +91,144 @@
     existingServerId,
     selfDisclosure = null,
     onSelfDisclosureSettled,
+    chooseServer = false,
+    preferredServerId = "",
   }: Props = $props();
+
+  // -- the person's existing servers, chosen on the Server step ---------------
+  // The choice is part of the address (`?target=server:<id>`, or
+  // `?target=new` for a new server), so a reload keeps it; it is replaced, not
+  // pushed, since the step owns the history.
+  const TARGET_PREFIX = "server:";
+  const currentUrl = $derived(page.shallow?.url ?? page.url);
+  let homelabServers = $state<HomelabServerChoice[]>([]);
+  let deploymentNames = $state(new Map<string, string>());
+  let homelabLoading = $state(untrack(() => chooseServer));
+  let homelabFailed = $state(false);
+  let homelabNotice = $state("");
+  let homelabRequested = false;
+  const newServerChosen = untrack(
+    () => page.url.searchParams.get("target") === "new",
+  );
+  let selectedServerId = $state(
+    untrack(() => {
+      const target = page.url.searchParams.get("target") ?? "";
+      return target.startsWith(TARGET_PREFIX)
+        ? target.slice(TARGET_PREFIX.length)
+        : "";
+    }),
+  );
+  const chosenServer = $derived(
+    selectedServerId
+      ? homelabServers.find((server) => server.id === selectedServerId)
+      : undefined,
+  );
+  const chosenDeployment = $derived(chosenServer?.deploymentId);
+
+  function selectServer(id: string) {
+    selectedServerId = id;
+    const url = new URL(currentUrl.href);
+    url.searchParams.set("target", id ? `${TARGET_PREFIX}${id}` : "new");
+    if (url.href !== currentUrl.href)
+      replaceState(`${url.pathname}${url.search}${url.hash}`, page.state);
+  }
+
+  async function loadHomelabServers() {
+    homelabLoading = true;
+    homelabFailed = false;
+    try {
+      const [deployments, servers] = await Promise.all([
+        listKitDeployments(),
+        listCanonicalServers(),
+      ]);
+      const stackkits = new Map(
+        deployments.map((deployment) => [
+          deployment.id,
+          deployment.stackkit_id ?? "",
+        ]),
+      );
+      deploymentNames = new Map(
+        deployments.map((deployment) => [deployment.id, deployment.name]),
+      );
+      homelabServers = homelabServerChoices(
+        servers,
+        (id) => stackkits.get(id) || undefined,
+      );
+      const usable = (id: string) =>
+        homelabServers.some(
+          (server) => server.id === id && server.state === "ready",
+        );
+      // The server the person started from and cannot be used is named, not
+      // silently replaced by another.
+      const preferred = homelabServers.find(
+        (server) => server.id === preferredServerId,
+      );
+      homelabNotice =
+        !preferredServerId || usable(preferredServerId)
+          ? ""
+          : preferred
+            ? tr("wizard.server.homelab.preferredUnavailable", {
+                name: preferred.name,
+              })
+            : tr("wizard.server.homelab.preferredMissing");
+      // Existing servers come first: the one the person started from, or
+      // else the first that can take use cases. A new server stays one click
+      // away on the same step.
+      if (!usable(selectedServerId) && !newServerChosen)
+        selectServer(
+          usable(preferredServerId)
+            ? preferredServerId
+            : (homelabServers.find((server) => server.state === "ready")?.id ??
+                ""),
+        );
+    } catch {
+      // A new server stays possible while the servers cannot be read.
+      homelabFailed = true;
+      selectedServerId = "";
+    } finally {
+      homelabLoading = false;
+    }
+  }
+
+  $effect(() => {
+    if (!chooseServer || homelabRequested) return;
+    if (authStore.loading || !authStore.modeDetected) return;
+    homelabRequested = true;
+    if (!authStore.isAuthenticated) {
+      homelabLoading = false;
+      selectedServerId = "";
+      return;
+    }
+    void loadHomelabServers();
+  });
+
+  const homelab: HomelabServerSelection | undefined = untrack(() => chooseServer)
+    ? {
+        get servers() {
+          return homelabServers;
+        },
+        get loading() {
+          return homelabLoading;
+        },
+        get failed() {
+          return homelabFailed;
+        },
+        get notice() {
+          return homelabNotice;
+        },
+        get selected() {
+          return chosenServer ? selectedServerId : "";
+        },
+        select: selectServer,
+        retry: () => void loadHomelabServers(),
+      }
+    : undefined;
+
+  // Use cases for a server that runs a StackKit go through that StackKit.
+  const addRun = new AddUseCasesRun();
+  $effect(() => {
+    if (addRun.result) clearWizardDraft("stack-create");
+  });
 
   // A link only prefills. Anyone can craft one, so handed-over answers are
   // shown for review and stored only when the operator chooses "Use these
@@ -468,9 +628,16 @@
   }
 
   const process = $derived(
-    existingServerId
-      ? CREATION_PROCESSES["place-on-server"]
-      : CREATION_PROCESSES.stack,
+    chosenDeployment
+      ? withServerChoice(CREATION_PROCESSES["add-use-case"])
+      : chosenServer
+        ? withServerChoice(CREATION_PROCESSES["place-on-server"])
+        : existingServerId
+          ? CREATION_PROCESSES["place-on-server"]
+          : CREATION_PROCESSES.stack,
+  );
+  const targetServerId = $derived(
+    chosenServer && !chosenDeployment ? chosenServer.id : existingServerId,
   );
 
   function openConflictStack() {
@@ -485,7 +652,7 @@
   async function createViaWizardRun(config: StackConfig) {
     validationStage = tr("ui.configurationFlow.validatingWithStackkits");
     const { run, request } = await submitCreationRun(process, config, {
-      existingServerId,
+      existingServerId: targetServerId,
     });
     captureStackCreationEvent(
       "techstack:stack_created",
@@ -501,7 +668,22 @@
     );
   }
 
-  async function handleCreate(config: StackConfig) {
+  async function handleCreate(
+    config: StackConfig,
+    extras?: { layoutRecommendation?: LayoutRecommendationAcceptance },
+  ) {
+    if (chosenDeployment) {
+      clearCreateError();
+      await addRun.submit(
+        {
+          stackId: chosenDeployment,
+          stackName: deploymentNames.get(chosenDeployment) ?? "",
+        },
+        config,
+        extras?.layoutRecommendation,
+      );
+      return;
+    }
     isDeploying = true;
     sessionRenewalRequired = false;
     clearCreateError();
@@ -777,7 +959,7 @@
 
 <div
   class={embedded
-    ? "w-full min-w-0 overflow-x-hidden"
+    ? "w-full min-w-0 overflow-x-hidden p-6"
     : "w-full min-w-0 overflow-x-hidden px-3 py-6 sm:px-6 lg:p-8"}
   data-flow="configuration"
   data-presentation={embedded ? "embedded" : "page"}
@@ -822,17 +1004,46 @@
         </Button>
       </div>
     </ErrorCallout>
+  {:else if addRun.result && chosenDeployment}
+    <UseCasesAddedResult
+      result={addRun.result}
+      stackId={chosenDeployment}
+      progressHref={addRun.progressHref(
+        chosenDeployment,
+        deploymentNames.get(chosenDeployment) ?? "",
+      )}
+      {embedded}
+    />
   {:else if !holdWizardForSelfDisclosure}
     <CreationPageFrame
       {process}
       oncreate={handleCreate}
-      {isDeploying}
+      isDeploying={isDeploying || addRun.submitting}
       initialConfig={wizardPrefill}
       draftKey={existingServerId
         ? `stack-install-${existingServerId}`
         : "stack-create"}
+      {homelab}
+      layoutStackId={chosenDeployment}
+      layoutReplacement={chosenDeployment ? addRun.replacement : undefined}
+      layoutRefresh={addRun.refresh}
+      submitLabel={chosenDeployment
+        ? tr("layout.addUseCases.submit")
+        : undefined}
+      submittingLabel={chosenDeployment
+        ? tr("layout.addUseCases.submitting")
+        : undefined}
     >
       {#snippet footerNotice()}
+        {#if addRun.notice && chosenDeployment}
+          <ErrorCallout
+            tone={addRun.notice.tone}
+            title={addRun.notice.title}
+            message={addRun.notice.body}
+            details={addRun.notice.details ?? null}
+            testId="add-use-cases-notice"
+          />
+        {/if}
         {#if isDeploying && validationStage}
           <div
             class="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 p-4"

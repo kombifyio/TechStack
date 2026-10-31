@@ -17,14 +17,15 @@ import (
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
-// Preview admission (CI-CD-PLATFORM-STANDARD §4.6.2). The Preview deployment
-// is a full release channel: every signed-in person it reaches gets every
-// action, and the operator UI sends people who chose Stable back there. What
-// stays on stable for every tenant are the machine routes (agents, webhooks,
-// internal service calls) and the shared work that is nobody's homelab;
-// homelab work follows its owner's channel (pkg/releasechannel).
+// Admission of a deployment beside stable (config.SecondaryChannel): Early
+// Access, and the Stage execution companion whose channel value is still
+// "preview" (CI-CD-PLATFORM-STANDARD §4.6). Every signed-in person it reaches
+// gets every action, and the operator UI sends people who chose Stable back
+// there. What stays on stable for every tenant are the machine routes (agents,
+// webhooks, internal service calls) and the shared work that is nobody's
+// homelab; homelab work follows its owner's channel (pkg/releasechannel).
 
-func previewAuthPath(p string) bool {
+func secondaryAuthPath(p string) bool {
 	switch p {
 	case "/api/v2/auth/login", "/api/v2/auth/logout", config.CanonicalAuthCallbackPath:
 		return true
@@ -32,8 +33,8 @@ func previewAuthPath(p string) bool {
 	return false
 }
 
-func previewPublicPath(p string) bool {
-	if previewAuthPath(p) {
+func secondaryPublicPath(p string) bool {
+	if secondaryAuthPath(p) {
 		return true
 	}
 	switch p {
@@ -41,16 +42,18 @@ func previewPublicPath(p string) bool {
 		return true
 	}
 	// /stacks is the legacy sign-in return target (the Windows browser handoff
-	// returns there); its shell only redirects to /dashboard.
-	return p == "/" || p == "/login" || p == "/stacks" || p == "/dashboard" || strings.HasPrefix(p, "/dashboard/") || strings.HasPrefix(p, "/_app/") || strings.HasPrefix(p, "/assets/") || previewStaticAssetPath(p)
+	// returns there); its shell only redirects to /dashboard. /auth/sso is the
+	// shell a Cloud frame opens to sign in: a redirect to /login would lose the
+	// frame's host_navigation flag and bring Techstack's own navigation into it.
+	return p == "/" || p == "/login" || p == "/stacks" || p == "/auth/sso" || p == "/dashboard" || strings.HasPrefix(p, "/dashboard/") || strings.HasPrefix(p, "/_app/") || strings.HasPrefix(p, "/assets/") || secondaryStaticAssetPath(p)
 }
 
-// previewStaticAssetPath names the app's own static files outside /_app/
+// secondaryStaticAssetPath names the app's own static files outside /_app/
 // (brand marks, product logos, the creation-wizard preview catalogs, the
 // RFC 9116 security contact). They are files, not work; like every public
 // shell path they are admitted only through the router's frontend fallback,
 // never a dynamic handler.
-func previewStaticAssetPath(p string) bool {
+func secondaryStaticAssetPath(p string) bool {
 	switch p {
 	case "/kombify-navy.png", "/robots.txt", "/.well-known/security.txt":
 		return true
@@ -58,10 +61,10 @@ func previewStaticAssetPath(p string) bool {
 	return strings.HasPrefix(p, "/brand/") || strings.HasPrefix(p, "/preview-catalogs/")
 }
 
-// previewMachinePath names the service, agent and webhook routes. Guards and
+// secondaryMachinePath names the service, agent and webhook routes. Guards and
 // services talk to stable for every tenant; the work they carry is durable,
-// so a job running on Preview still completes through them.
-func previewMachinePath(p string) bool {
+// so a job running beside stable still completes through them.
+func secondaryMachinePath(p string) bool {
 	for _, prefix := range []string{"/_internal/", "/internal/", "/api/internal/", "/api/v1/internal/", "/api/v1/agent/"} {
 		if p == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(p, prefix) {
 			return true
@@ -70,12 +73,12 @@ func previewMachinePath(p string) bool {
 	return strings.HasPrefix(p, "/webhook")
 }
 
-// nightlyAuthMethodsHandler answers the login page's sign-in methods read on
-// Preview. Preview never boots local auth, whose bootstrap writes break-glass
+// secondaryAuthMethodsHandler answers the login page's sign-in methods read on
+// a deployment beside stable. It never boots local auth, whose bootstrap writes break-glass
 // state, so this lists only the registered cloud providers: no break-glass and
 // no database read. Without it the login page reports the backend unavailable
 // and never starts the cloud sign-in.
-func nightlyAuthMethodsHandler(registry *providers.Registry) http.Handler {
+func secondaryAuthMethodsHandler(registry *providers.Registry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		response := commonauthlocal.MethodsResponse{Providers: []commonauthlocal.ProviderInfo{}}
 		if registry != nil {
@@ -107,31 +110,31 @@ func nightlyAuthMethodsHandler(registry *providers.Registry) http.Handler {
 	})
 }
 
-// hidePreviewFromCrawlers keeps the Preview deployment out of search engines
-// (CI-CD-PLATFORM-STANDARD §4.6.2 "Preview is hidden from users"): every
-// response carries a noindex header and /robots.txt disallows everything.
-// Stable and Early Access, which serve the public links, are unchanged.
-func hidePreviewFromCrawlers(e *httpx.Event) error {
+// hideStageFromCrawlers keeps the Stage execution companion (channel value
+// "preview", its own host) out of search engines: every response carries a
+// noindex header and /robots.txt disallows everything. Stable and Early
+// Access, which serve the public links, are unchanged.
+func hideStageFromCrawlers(e *httpx.Event) error {
 	if config.ReleaseChannel() != "preview" {
 		return e.Next()
 	}
 	e.Response.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	if e.Request.URL.Path == "/robots.txt" && previewReadOnly(e.Request) {
+	if e.Request.URL.Path == "/robots.txt" && secondaryReadOnly(e.Request) {
 		e.Response.Header().Set("Cache-Control", "no-store")
 		return e.String(http.StatusOK, "User-agent: *\nDisallow: /\n")
 	}
 	return e.Next()
 }
 
-func previewReadOnly(r *http.Request) bool {
+func secondaryReadOnly(r *http.Request) bool {
 	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
 
-func previewStream(r *http.Request) bool {
+func secondaryStream(r *http.Request) bool {
 	return r.Header.Get("Upgrade") != "" || strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 }
 
-func admitPreviewTransport(e *httpx.Event) error {
+func admitSecondaryTransport(e *httpx.Event) error {
 	if !config.SecondaryChannel() {
 		return nil
 	}
@@ -142,17 +145,17 @@ func admitPreviewTransport(e *httpx.Event) error {
 	if e.Request.URL.RawPath != "" || e.Request.URL.EscapedPath() != p || path.Clean(p) != p || strings.Contains(p, "\\") {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Preview transport is not admitted.", nil)
 	}
-	if previewMachinePath(p) && !stageWorkerTransport(e.Request) {
+	if secondaryMachinePath(p) && !stageWorkerTransport(e.Request) {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Machine routes run on stable.", nil)
 	}
-	if !previewPublicPath(p) {
-		// Signed-in work is admitted after identity (previewHTTPAdmission).
+	if !secondaryPublicPath(p) {
+		// Signed-in work is admitted after identity (secondaryHTTPAdmission).
 		return nil
 	}
-	if !previewReadOnly(e.Request) {
+	if !secondaryReadOnly(e.Request) {
 		return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Preview mutations require a signed-in person.", nil)
 	}
-	if previewStream(e.Request) {
+	if secondaryStream(e.Request) {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Preview transport is not admitted.", nil)
 	}
 	// Static shell paths are admitted only through the router's frontend
@@ -163,35 +166,37 @@ func admitPreviewTransport(e *httpx.Event) error {
 	return nil
 }
 
-func previewTransportAdmission(e *httpx.Event) error {
-	if err := admitPreviewTransport(e); err != nil {
+func secondaryTransportAdmission(e *httpx.Event) error {
+	if err := admitSecondaryTransport(e); err != nil {
 		return err
 	}
 	return e.Next()
 }
 
-func previewHTTPAdmission(e *httpx.Event) error {
+func secondaryHTTPAdmission(e *httpx.Event) error {
 	if !config.SecondaryChannel() {
 		return e.Next()
 	}
-	if err := admitPreviewTransport(e); err != nil {
+	if err := admitSecondaryTransport(e); err != nil {
 		return err
 	}
-	if stageWorkerTransport(e.Request) || previewPublicPath(e.Request.URL.Path) {
+	// The portal exchange is how a person signs in inside a Cloud frame: nobody
+	// is signed in yet, and its handler verifies the signed launch token.
+	if stageWorkerTransport(e.Request) || secondaryPublicPath(e.Request.URL.Path) || portalExchangeRequest(e.Request) {
 		return e.Next()
 	}
 	if id := identity.FromContext(e.Request.Context()); id == nil || !id.IsAuthenticated() {
-		if !previewReadOnly(e.Request) {
+		if !secondaryReadOnly(e.Request) {
 			return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Preview mutations require a signed-in person.", nil)
 		}
 		// A person opening a page link (/servers, /settings, ...) signs in
 		// first; API and asset reads keep the plain 401.
-		if previewPageRequest(e.Request) {
+		if secondaryPageRequest(e.Request) {
 			return e.Redirect(http.StatusFound, "/login")
 		}
 		return httpx.NewUnauthorizedError("Preview requires a signed-in person.", nil)
 	}
-	if !previewReadOnly(e.Request) {
+	if !secondaryReadOnly(e.Request) {
 		if err := releasechannel.RequireStageRequestPrincipal(e.Request.Context()); err != nil {
 			return tenantguard.ExecutionRefusal(err)
 		}
@@ -205,10 +210,10 @@ func stageWorkerTransport(request *http.Request) bool {
 	return releasechannel.StageOwnerActive() && routes.WorkerMachineRoute(request.Method, request.URL.Path)
 }
 
-// previewPageRequest is a browser navigation to an app page: a read outside
+// secondaryPageRequest is a browser navigation to an app page: a read outside
 // /api/ that asks for HTML.
-func previewPageRequest(r *http.Request) bool {
-	if strings.HasPrefix(r.URL.Path, "/api/") || previewStream(r) {
+func secondaryPageRequest(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, "/api/") || secondaryStream(r) {
 		return false
 	}
 	if r.Header.Get("Sec-Fetch-Mode") == "navigate" {

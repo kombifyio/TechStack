@@ -40,7 +40,7 @@ export function serverHistoryHref(serverId: string): string {
   return `/monitoring/${encodeURIComponent(serverId)}`;
 }
 
-/** The creation wizard for a new server, without the choice of targets. */
+/** The creation wizard with a new server chosen on its Server step. */
 export const NEW_SERVER_CREATION_HREF = "/stacks/new?target=new";
 
 /** Adding a server to the homelab: its deployment, or the creation flow. */

@@ -139,3 +139,13 @@ export const CREATION_PROCESSES: Record<
     appliesLaneDefaults: false,
   },
 };
+
+/**
+ * The same process with its Server step open: the person chose one of their
+ * existing servers on that step and may still change the choice there.
+ */
+export function withServerChoice(process: CreationProcess): CreationProcess {
+  if (!process.inactive.server) return process;
+  const { server: _server, ...inactive } = process.inactive;
+  return { ...process, inactive };
+}

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/gocommon/tenantdb"
+	"github.com/kombifyio/techstack/internal/systemdb"
 )
 
 const CloudHouseholdSystemRole = "kombify_cloud_household_system"
@@ -27,7 +27,7 @@ func NewSystemReducer(ctx context.Context, database *sql.DB) (*SystemReducer, er
 	if database == nil {
 		return nil, errors.New("household system database required")
 	}
-	if err := tenantdb.AssertSystemRole(ctx, database, CloudHouseholdSystemRole); err != nil {
+	if err := systemdb.AssertSystemRoleBesideWidening(ctx, database, CloudHouseholdSystemRole); err != nil {
 		return nil, err
 	}
 	return &SystemReducer{database: database}, nil

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/kombifyio/techstack/internal/gocommon/tenantdb"
+	"github.com/kombifyio/techstack/internal/systemdb"
 )
 
 const HouseholdSystemRole = "techstack_household_worker"
@@ -14,11 +14,15 @@ const HouseholdSystemRole = "techstack_household_worker"
 // connection and does not put a fabricated owner token into a context.
 type HouseholdSystemStore struct{ *PostgresStore }
 
+// NewHouseholdSystemStore is for the household worker only: its role check
+// admits the household role beside unreachable widening policies
+// (systemdb.AssertSystemRoleBesideWidening), after that worker verified its
+// exact privileges.
 func NewHouseholdSystemStore(ctx context.Context, database *sql.DB) (*HouseholdSystemStore, error) {
 	if database == nil {
 		return nil, ErrHouseholdProjectionUnavailable
 	}
-	if err := tenantdb.AssertSystemRole(ctx, database, HouseholdSystemRole); err != nil {
+	if err := systemdb.AssertSystemRoleBesideWidening(ctx, database, HouseholdSystemRole); err != nil {
 		return nil, err
 	}
 	return &HouseholdSystemStore{PostgresStore: NewPostgresStore(database)}, nil

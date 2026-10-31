@@ -41,6 +41,7 @@
     onmanagedproviderselect,
     reviewMode = false,
     joinSurface = false,
+    substepOffset = 0,
   }: {
     config: StackConfig;
     selectionReady?: boolean;
@@ -49,6 +50,11 @@
     reviewMode?: boolean;
     joinSurface?: boolean;
     onmanagedproviderselect?: (provider: ManagedProviderID) => void;
+    /**
+     * Sub-steps shown before this module. It is a size container, which scopes
+     * CSS counters, so it cannot continue the count of the step on its own.
+     */
+    substepOffset?: number;
   } = $props();
   const provisioningModes = getServerProvisioningModeChoices();
   const sourceTips: Record<string, { text: string; docs: string }> = {
@@ -249,7 +255,11 @@
   });
 </script>
 
-<div class="node-sources" data-testid="server-provisioning-step">
+<div
+  class="node-sources"
+  data-testid="server-provisioning-step"
+  style:counter-reset={substepOffset ? `substep ${substepOffset}` : undefined}
+>
   <div class="source-region" data-substep>
   <div
     class="branch-choices"

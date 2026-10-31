@@ -58,6 +58,7 @@
   } from "#lib/creation/core/index.js";
   import { CreationFrame } from "#lib/creation/frame.svelte.js";
   import { CREATION_MODULES } from "#lib/creation/modules.js";
+  import type { HomelabServerSelection } from "#lib/creation/homelab-servers.js";
   import {
     emitCreationEvent,
     guardCreationClose,
@@ -106,6 +107,8 @@
     onmanagedproviderselect?: (provider: ManagedProviderID) => void;
     nodeOptions?: Snippet<[StackConfig]>;
     nodeAlternative?: Snippet;
+    /** The person's existing servers, offered on the Server step. */
+    homelab?: HomelabServerSelection;
   }
 
   let {
@@ -123,6 +126,7 @@
     onmanagedproviderselect,
     nodeOptions,
     nodeAlternative,
+    homelab,
   }: Props = $props();
 
   // Inside the embedded module the host owns the page around this frame: its
@@ -172,6 +176,9 @@
     },
     get nodeAlternative() {
       return nodeAlternative;
+    },
+    get homelab() {
+      return homelab;
     },
   });
   const session = frame.session;
@@ -263,7 +270,7 @@
     Object.fromEntries(
       frame.reachableSteps.map((key) => [
         creationStepNumber(key),
-        CREATION_MODULES[key].summary(frame.config),
+        CREATION_MODULES[key].summary(frame.config, frame),
       ]),
     ),
   );
@@ -308,7 +315,7 @@
   }
 
   const currentSummary = $derived(
-    CREATION_MODULES[frame.current].summary(frame.config),
+    CREATION_MODULES[frame.current].summary(frame.config, frame),
   );
   $effect(() => {
     if (entry)

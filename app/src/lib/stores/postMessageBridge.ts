@@ -55,6 +55,7 @@ import {
 } from "#lib/view-context.js";
 
 import {
+  CREATION_EMBED_PATH,
   parseCreationCommand,
   type CreationCommand,
 } from "#lib/creation/core/embed-contract.js";
@@ -486,7 +487,9 @@ function handleMessage(event: MessageEvent): void {
         const path = hostNavigationRequested(new URL(window.location.href))
           ? withHostNavigation(data.path)
           : data.path;
-        goto(path);
+        // The creation module sits in a host's dialog: moving it adds nothing
+        // to the browser history the person shares with that page.
+        goto(path, { replaceState: path.startsWith(CREATION_EMBED_PATH) });
       }
       break;
 

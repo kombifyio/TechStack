@@ -265,7 +265,7 @@
 </script>
 
 <div
-  class={embedded ? "w-full" : "mx-auto max-w-6xl p-6 md:p-8"}
+  class={embedded ? "w-full p-6" : "mx-auto max-w-6xl p-6 md:p-8"}
   data-testid="add-server-page"
   data-flow="managed-creation"
   data-presentation={embedded ? "embedded" : "page"}

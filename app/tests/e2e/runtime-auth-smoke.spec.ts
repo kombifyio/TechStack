@@ -715,9 +715,12 @@ async function observePreviewInitialRouting(page: Page) {
   } };
 }
 
-// Cloud's use-case handoff must reach a chosen existing StackKit rather
-// than always starting server provisioning. These are the real owner reads
-// and planner responses; no API or browser routes are replaced.
+// Cloud's use-case handoff opens the creation wizard with the use case
+// selected; the owner's existing servers are offered on its Server step,
+// next to a new server. A chosen server that runs a StackKit takes the use
+// case through it with its verified distribution. There is no separate target
+// page and no "Change target" control. Real owner reads and planner responses;
+// no API or browser routes are replaced.
 async function verifyUseCasePlacement(page: import("@playwright/test").Page) {
   const plans: Array<{ stack: string; goals: string[]; body: any }> = [];
   const observe = async (response: import("@playwright/test").Response) => {
@@ -741,81 +744,111 @@ async function verifyUseCasePlacement(page: import("@playwright/test").Page) {
     await page.goto("/stacks/new?use-case=vault&setup=backend:vaultwarden", {
       waitUntil: "domcontentloaded",
     });
-    const placement = page.getByTestId("use-case-placement");
-    const proceed = page.getByTestId("use-case-target-continue");
-    await expect(proceed).toBeVisible({ timeout: 180_000 });
-    const verified = page.locator(
-      '[data-testid="use-case-target"][data-compatible="true"]',
-    );
-    const count = await verified.count();
-    if (count) {
-      const selected = placement.locator('input[type="radio"]:checked');
-      const stackId = await selected.inputValue();
-      const plan = plans.find(
-        (entry) =>
-          entry.stack === stackId &&
-          entry.goals.length === 1 &&
-          entry.goals[0] === "vault",
-      );
-      expect(
-        plan,
-        "the default must come from a real verified planner response for the chosen use case",
-      ).toBeTruthy();
-      expect(plan!.body.outcome).toBe("feasible");
-      expect(plan!.body.verification.status).toBe("verified");
-      await proceed.click();
-      await expect(page.getByTestId("add-use-cases-page")).toBeVisible();
-      await expect(page.getByTestId("easy-step-2")).toHaveCount(0);
-      await expect(page.locator('[data-flow="configuration"]')).toHaveCount(0);
-    } else {
-      const bareTargets = page
-        .getByTestId("use-case-target-install")
-        .locator('input[type="radio"]:enabled');
-      await expect(
-        (await bareTargets.count())
-          ? bareTargets.first()
-          : page.getByTestId("use-case-target-new").getByRole("radio"),
-      ).toBeChecked();
-    }
-    await expect(page).toHaveURL(
-      /use-case=vault.*setup=backend%3Avaultwarden|use-case=vault.*setup=backend:vaultwarden/,
-    );
-    // Explicit new-server remains available and carries the same use case.
-    if (count) await page.getByTestId("use-case-target-back").click();
-    await page.getByTestId("use-case-target-new").getByRole("radio").check();
-    await page.getByTestId("use-case-target-continue").click();
-    await expect(page.locator('[data-flow="configuration"]')).toBeVisible();
+    await expect(page.getByTestId("easy-step-1")).toBeVisible({
+      timeout: 180_000,
+    });
+    await expect(page.getByTestId("use-case-target-back")).toHaveCount(0);
     await expect(
       page
         .getByTestId("creation-goals")
         .locator('[aria-pressed="true"]')
         .first(),
     ).toBeVisible();
+    await page.getByTestId("wizard-next").click();
+    const homelab = await openServerChoice(page);
+    if (homelab) {
+      const chosen = homelab.locator(
+        '[data-testid="homelab-server"]:has(input:checked)',
+      );
+      if (await chosen.count()) {
+        await expect(page).toHaveURL(/[?&]target=server(%3A|:)/);
+        await expect(page.getByTestId("server-provisioning-step")).toHaveCount(
+          0,
+        );
+        const stackkit = (await chosen.getAttribute("data-has-stackkit")) === "true";
+        if (stackkit) {
+          await expect
+            .poll(() =>
+              plans.some(
+                (entry) =>
+                  entry.goals.length === 1 && entry.goals[0] === "vault",
+              ),
+            )
+            .toBe(true);
+          for (const id of [3, 4, 5])
+            await expect(page.getByTestId(`wizard-step-${id}`)).toHaveAttribute(
+              "data-state",
+              "inactive",
+            );
+        }
+      }
+      // A new server stays one click away on the same step.
+      await page.getByTestId("homelab-server-new").click();
+      await expect(page).toHaveURL(/[?&]target=new(&|$)/);
+    }
+    await expect(page.getByTestId("server-provisioning-step")).toBeVisible();
+    await expect(page.getByTestId("wizard-step-3")).not.toHaveAttribute(
+      "data-state",
+      "inactive",
+    );
+    await expect(page).toHaveURL(
+      /use-case=vault.*setup=backend%3Avaultwarden|use-case=vault.*setup=backend:vaultwarden/,
+    );
   } finally {
     page.off("response", observe);
   }
 }
 
-// The creation wizard for a new server: an owner who already has servers
-// chooses "new server" explicitly; without any, the wizard opens directly.
-async function openNewServerWizard(page: import("@playwright/test").Page) {
-  // The choice shows its Continue button only once the targets are read; an
-  // owner without targets goes straight to the wizard instead.
-  const proceed = page.getByTestId("use-case-target-continue");
-  const wizard = page.getByTestId("easy-wizard");
-  await expect(proceed.or(wizard)).toBeVisible({ timeout: 180_000 });
-  if (await proceed.isVisible()) {
-    await page.getByTestId("use-case-target-new").getByRole("radio").check();
-    await proceed.click();
+// The Server step once the owner's servers are read: their homelab's servers
+// with a new server beside them, or, without any, the new server alone.
+// Returns the homelab region when the owner has servers.
+async function openServerChoice(page: import("@playwright/test").Page) {
+  await expect(page.getByTestId("easy-step-2")).toBeVisible();
+  const homelab = page.getByTestId("homelab-servers");
+  await expect(
+    page
+      .locator(
+        '[data-testid="homelab-servers"] [role="radiogroup"], [data-testid="server-provisioning-step"]',
+      )
+      .first(),
+  ).toBeVisible({ timeout: 180_000 });
+  if (!(await homelab.count())) return null;
+  await expect(homelab.locator('input[type="radio"]:checked')).toHaveCount(1);
+  return homelab;
+}
+
+// Use cases a person adds start in the same wizard: one use case is chosen,
+// then the Server step names the servers of their homelab.
+async function selectStorageAndOpenServerStep(
+  page: import("@playwright/test").Page,
+) {
+  await expect(page.getByTestId("easy-step-1")).toBeVisible({
+    timeout: 180_000,
+  });
+  const storage = page.getByTestId("easy-feature-storage");
+  await expect(storage).toBeVisible();
+  if ((await storage.getAttribute("data-plan")) === "available") {
+    await storage
+      .getByRole("button", { name: /^Add to your kit /, pressed: false })
+      .click();
   }
-  await expect(page).toHaveURL(/[?&]target=new(&|$)/);
-  await expect(wizard).toBeVisible();
+  await page.getByTestId("wizard-next").click();
+  return openServerChoice(page);
+}
+
+async function openNewServerWizard(page: import("@playwright/test").Page) {
+  // The wizard opens at once; existing servers are a choice on its Server step.
+  await expect(page.getByTestId("easy-wizard")).toBeVisible({
+    timeout: 180_000,
+  });
+  await expect(page.getByTestId("use-case-target-back")).toHaveCount(0);
 }
 
 // Use cases go onto the owner's existing servers before a new one is offered
 // (kombify-Techstack-8m9s.1): the dashboard offers "Add use cases" with any
-// number of StackKits, and a chosen StackKit opens its Goals step without a
-// server step. Real owner reads only; nothing is submitted.
+// number of StackKits, and on the Server step a server that runs a StackKit
+// is chosen first, which leaves Access, Users and Login with that StackKit.
+// Real owner reads only; nothing is submitted.
 async function verifyExistingTargetsFirst(
   page: import("@playwright/test").Page,
   token: string,
@@ -830,31 +863,29 @@ async function verifyExistingTargetsFirst(
     });
   }
   await page.goto("/use-cases/new", { waitUntil: "domcontentloaded" });
-  const placement = page.getByTestId("use-case-placement");
-  await expect(page.getByTestId("use-case-target-continue")).toBeVisible({
-    timeout: 180_000,
-  });
-  await expect(placement).toHaveAttribute("data-has-use-cases", "false");
-  await expect(page.getByTestId("use-case-target")).toHaveCount(stacks.count);
-  const existing = page.locator(
-    '[data-testid="use-case-target"][data-compatible="true"] input[type="radio"]',
-  );
-  if ((await existing.count()) === 0) {
-    await expect(page.getByTestId("use-case-target-new").getByRole("radio")).toBeVisible();
+  await expect(page.getByTestId("use-case-target-back")).toHaveCount(0);
+  const homelab = await selectStorageAndOpenServerStep(page);
+  if (!homelab) {
+    expect(stacks.count).toBe(0);
     return;
   }
-  await existing.first().check();
-  await page.getByTestId("use-case-target-continue").click();
-  await expect(page.getByTestId("add-use-cases-page")).toBeVisible();
-  await expect(page.getByTestId("easy-step-1")).toBeVisible();
-  await expect(page.getByTestId("easy-step-2")).toHaveCount(0);
-  await expect(page.getByTestId("wizard-step-2")).toHaveAttribute(
-    "data-state",
-    "inactive",
+  const ready = homelab.locator(
+    '[data-testid="homelab-server"][data-state="ready"][data-has-stackkit="true"]',
   );
-  // Back in the browser returns to the choice of target.
-  await page.goBack();
-  await expect(page.getByTestId("use-case-placement")).toBeVisible();
+  if ((await ready.count()) === 0) return;
+  await ready.first().click();
+  await expect(page).toHaveURL(/[?&]target=server(%3A|:)/);
+  for (const id of [3, 4, 5])
+    await expect(page.getByTestId(`wizard-step-${id}`)).toHaveAttribute(
+      "data-state",
+      "inactive",
+    );
+  // The choice survives a reload.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("easy-step-2")).toBeVisible({ timeout: 60_000 });
+  await expect(
+    page.locator('[data-testid="homelab-server"]:has(input:checked)'),
+  ).toHaveCount(1, { timeout: 180_000 });
 }
 
 // Each creation process shows only the steps it can change (kombify-Techstack-8m9s.3
@@ -874,9 +905,8 @@ async function verifyCreationProcesses(
   await page.goto("/use-cases/new?server=no-such-server", {
     waitUntil: "domcontentloaded",
   });
-  await expect(page.getByTestId("use-case-preferred-skipped")).toBeVisible({
-    timeout: 180_000,
-  });
+  if (await selectStorageAndOpenServerStep(page))
+    await expect(page.getByTestId("use-case-preferred-skipped")).toBeVisible();
 
   const listed = await authenticatedJSON(token, "/api/v1/stacks");
   const rows = listed.body?.data ?? listed.body;
@@ -908,12 +938,10 @@ async function verifyCreationProcesses(
     "add-use-case",
     { timeout: 60_000 },
   );
-  await expect(page.getByTestId("use-case-placement")).toBeVisible({
+  await expect(page.getByTestId("easy-wizard")).toBeVisible({
     timeout: 180_000,
   });
-  await expect(page.getByTestId("use-case-target-continue")).toBeVisible({
-    timeout: 180_000,
-  });
+  await expect(page.getByTestId("use-case-target-back")).toHaveCount(0);
 
   await page.goto("/settings/homelab", { waitUntil: "domcontentloaded" });
   const settingsEmpty = page.getByTestId("homelab-settings-empty");

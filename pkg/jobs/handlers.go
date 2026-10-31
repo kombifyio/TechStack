@@ -13,6 +13,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -99,6 +100,9 @@ type ProvisionConfig struct {
 	// When empty, defaults to ~/.techstack/stacks/<stack-id>/.
 	// Primarily used for tests.
 	SpecBaseDir string
+	// SpecFiles keeps the managed spec files durable outside the instance's
+	// local disk. When nil, the local directory is the only copy.
+	SpecFiles SpecFileStore
 	// RuntimeActions wires managed VM leases, simulation gates, and rollout verification.
 	RuntimeActions RuntimeActions
 	// StackKitCommander dispatches closed lifecycle commands to the enrolled
@@ -253,9 +257,15 @@ func defaultSpecBaseDir() string {
 	return ""
 }
 
-func newSpecPersister(cfg *ProvisionConfig, stackID string) (*unifier.SpecPersister, error) {
+func newSpecPersister(cfg *ProvisionConfig, job *Job) (*unifier.SpecPersister, error) {
+	if job == nil {
+		return nil, fmt.Errorf("spec persistence requires a job")
+	}
+	stackID := job.TargetID
+	var p *unifier.SpecPersister
 	if cfg != nil && cfg.SpecBaseDir != "" {
-		p, err := unifier.NewSpecPersisterWithPath(filepath.Join(cfg.SpecBaseDir, stackID))
+		var err error
+		p, err = unifier.NewSpecPersisterWithPath(filepath.Join(cfg.SpecBaseDir, stackID))
 		if err != nil {
 			return nil, err
 		}
@@ -263,9 +273,33 @@ func newSpecPersister(cfg *ProvisionConfig, stackID string) (*unifier.SpecPersis
 		if err := os.MkdirAll(filepath.Join(p.BaseDir, "tofu"), 0755); err != nil {
 			return nil, fmt.Errorf("create tofu directory: %w", err)
 		}
+	} else {
+		var err error
+		p, err = unifier.NewSpecPersister(stackID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if cfg == nil || cfg.SpecFiles == nil {
 		return p, nil
 	}
-	return unifier.NewSpecPersister(stackID)
+	// The local directory is a working copy; the stack's spec files live in
+	// the control-plane database so a fresh instance (no persistent disk)
+	// continues a stack prepared by an earlier one.
+	snapshot := job.Snapshot()
+	tenantID := firstJobString(snapshot.Payload, snapshot.Result, "tenant_id")
+	if tenantID == "" {
+		return nil, fmt.Errorf("durable spec persistence requires the job's tenant identity")
+	}
+	if err := p.AttachMirror(cfg.SpecFiles.SpecFiles(tenantID, stackID)); err != nil && !errors.Is(err, unifier.ErrSpecMirrorPending) {
+		return nil, err
+	}
+	return p, nil
+}
+
+// SpecFileStore is the durable custody of every stack's managed spec files.
+type SpecFileStore interface {
+	SpecFiles(tenantID, stackID string) unifier.SpecFileMirror
 }
 
 // Field names reported by missingStackKitIdentityHandoffFields.
