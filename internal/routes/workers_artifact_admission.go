@@ -191,6 +191,22 @@ func admittedArtifactBytes(request *http.Request, size int64, etag string) (int6
 	return last - first + 1, true
 }
 
+// indexedGuardBinaryArtifact describes the Guard binary a managed node
+// installs. The image carries only the signed release metadata: the bytes are
+// delivered from R2 under the digest of the verified artifact index (Render
+// download prohibition), so that index, not a local file, names them.
+func indexedGuardBinaryArtifact(goos, arch string) (agentBinaryArtifact, error) {
+	index, _, err := loadArtifactDeliveryIndex()
+	if err != nil {
+		return agentBinaryArtifact{}, err
+	}
+	entry, ok := index.artifact("guard_binary", goos, arch)
+	if !ok {
+		return agentBinaryArtifact{}, fmt.Errorf("the artifact index has no %s/%s Guard binary", goos, arch)
+	}
+	return agentBinaryArtifact{os: entry.OS, arch: entry.Arch, size: entry.Size, sha256: entry.SHA256}, nil
+}
+
 func (index *artifactDeliveryIndex) artifact(kind, goos, arch string) (artifactDeliveryEntry, bool) {
 	for _, entry := range index.Artifacts {
 		if entry.Kind == kind && entry.OS == goos && entry.Arch == arch {

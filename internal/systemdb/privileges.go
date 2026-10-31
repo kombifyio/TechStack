@@ -118,14 +118,23 @@ func verifyRoutines(ctx context.Context, pool *sql.DB, functions map[string]bool
 		}
 		oids[oid.Int64] = true
 	}
-	rows, err := pool.QueryContext(ctx, `SELECT f.oid::bigint,has_function_privilege(f.oid,'EXECUTE'),has_function_privilege(f.oid,'EXECUTE WITH GRANT OPTION') FROM pg_proc f JOIN pg_namespace n ON n.oid=f.pronamespace WHERE n.nspname!~'^pg_' AND n.nspname<>'information_schema'`)
+	// A SECURITY INVOKER routine in a trusted language runs with the caller's
+	// own SQL privileges, so reaching one adds no capability; production keeps
+	// PUBLIC EXECUTE on such trigger helpers and on the C functions of four
+	// reviewed extensions. Any other C, internal or untrusted-language routine,
+	// every SECURITY DEFINER routine and every expected routine stay exact, and
+	// no routine may carry GRANT OPTION.
+	rows, err := pool.QueryContext(ctx, `SELECT f.oid::bigint,NOT f.prosecdef AND(
+   EXISTS(SELECT 1 FROM pg_language l WHERE l.oid=f.prolang AND l.lanpltrusted)
+   OR EXISTS(SELECT 1 FROM pg_depend d JOIN pg_extension e ON e.oid=d.refobjid WHERE d.classid='pg_proc'::regclass AND d.objid=f.oid AND d.refclassid='pg_extension'::regclass AND d.deptype='e' AND e.extname IN('vector','pgcrypto','pg_trgm','uuid-ossp'))),
+  has_function_privilege(f.oid,'EXECUTE'),has_function_privilege(f.oid,'EXECUTE WITH GRANT OPTION') FROM pg_proc f JOIN pg_namespace n ON n.oid=f.pronamespace WHERE n.nspname!~'^pg_' AND n.nspname<>'information_schema'`)
 	if err != nil {
 		return denied()
 	}
 	for rows.Next() {
 		var oid int64
-		var actual, grant bool
-		if rows.Scan(&oid, &actual, &grant) != nil || grant || actual != oids[oid] {
+		var harmless, actual, grant bool
+		if rows.Scan(&oid, &harmless, &actual, &grant) != nil || grant || (actual != oids[oid] && (oids[oid] || !harmless)) {
 			_ = rows.Close()
 			return denied()
 		}
