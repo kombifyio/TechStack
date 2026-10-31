@@ -2773,6 +2773,57 @@ test.describe.serial("Runtime E2E scenarios", () => {
     });
   });
 
+  test("managed owner stack removal removes named stacks and reads back their absence", async ({
+    page,
+  }) => {
+    const raw = process.env.TECHSTACK_RUNTIME_E2E_REMOVE_STACK_IDS ?? "";
+    test.skip(!raw, "Owner stack removal runs only for named leftover stacks");
+    test.setTimeout(20 * 60_000);
+    const stackIds = raw.split(",").map((id) => id.trim()).filter(Boolean);
+    if (stackIds.length > 10 || stackIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) {
+      throw new Error("TECHSTACK_RUNTIME_E2E_REMOVE_STACK_IDS takes up to ten stack UUIDs");
+    }
+    await authenticateRuntimeUser("cloud", page, RUNTIME_AUTH_OPTIONS);
+    const api = await captureGatewayApiSession(page);
+    const lower = (value: unknown) => String(value ?? "").trim().toLowerCase();
+    // A named stack is gone when the owner's list no longer holds it and no
+    // server of it is still live (a soft-deleted stack can outlive its lease).
+    const remaining = async () => {
+      const stacks = await retryTransient("stack list", () => getStackList(api.token, api.apiBase));
+      const serverData = await retryTransient("server list", () =>
+        fetchRuntimeApi<LifecycleRecord[] | { servers?: LifecycleRecord[] }>(api.token, "/api/v1/servers", api.apiBase),
+      );
+      const servers = Array.isArray(serverData) ? serverData : (serverData.servers ?? []);
+      return {
+        stack_ids: stackIds.filter((id) => stacks.some((row: Record<string, any>) => String(row.id ?? "") === id)),
+        server_ids: servers.filter((server: Record<string, any>) =>
+          stackIds.includes(String(server.kit_deployment_id ?? "")) && !server.lifecycle?.ended_at &&
+          !["decommissioned", "ended", "removed", "deleted"].includes(lower(server.lifecycle?.state)))
+          .map((server: Record<string, any>) => String(server.id ?? "")),
+      };
+    };
+    const before = await remaining();
+    const removals: Array<Record<string, unknown>> = [];
+    let after = before;
+    try {
+      for (const stackId of before.stack_ids) {
+        const job = await destroyRuntimeStackViaApi(api.token, stackId, api.apiBase);
+        removals.push({ stack_id: stackId, destroy_job_id: job?.id ?? null, destroy_job_state: job?.state ?? null });
+      }
+      for (const deadline = Date.now() + 600_000; Date.now() < deadline;) {
+        after = await remaining();
+        if (after.stack_ids.length === 0 && after.server_ids.length === 0) break;
+        await delay(15_000);
+      }
+    } finally {
+      await attachJson("managed-owner-stack-removal.json", {
+        requested: stackIds, found: before, removals, remaining: after,
+        outcome: after.stack_ids.length === 0 && after.server_ids.length === 0 ? "removed_and_absent" : "unproven",
+      });
+    }
+    expect(after).toEqual({ stack_ids: [], server_ids: [] });
+  });
+
   test("managed absence readback lists the owner's managed footprint", async ({
     page,
   }) => {

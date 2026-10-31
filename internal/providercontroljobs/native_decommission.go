@@ -164,6 +164,7 @@ func (d *NativeDecommissioner) DecommissionManagedLeases(
 	ctx context.Context,
 	req jobs.ManagedLeaseDecommissionRequest,
 ) (*jobs.ManagedLeaseDecommissionResult, error) {
+	ctx = providercontrol.SystemAuthorityContext(ctx)
 	if d == nil || d.database == nil || d.application == nil || d.ledger == nil || d.servers == nil {
 		return nil, ErrNativeDecommissionUnavailable
 	}

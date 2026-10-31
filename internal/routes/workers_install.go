@@ -2,28 +2,50 @@
 package routes
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"os"
 
+	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/artifactdelivery"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/trustedproxy"
 )
 
-// linuxInstallerArtifactSHA256 pins the authoritative repository install.sh
-// after CRLF-to-LF normalization. The runtime image copies that exact artifact;
-// serving any partial, stale, or locally substituted shell fragment fails
-// closed until the contract digest is deliberately updated with the installer.
-const linuxInstallerArtifactSHA256 = "ee62708db4a2c74b2e52dc8e27865cf345e0e6e05d22674e3933f107e8fbc23e"
+// installerAdmissionHopHeader marks the Gateway Worker's metadata subrequest
+// (cloudflare-edge/src/artifact-delivery.ts). The Worker refuses any public
+// request that carries it, so at the edge only its own hop reaches this branch.
+const installerAdmissionHopHeader = "X-Kombify-Artifact-Admission-Hop"
+
+// installerAdmission names the installer bytes without carrying them: the
+// Gateway Worker streams the content-addressed object from private R2 only
+// after hashing the stored bytes to this digest (CI-CD "Render download
+// prohibition").
+type installerAdmission struct {
+	Schema    string `json:"schema"`
+	SHA256    string `json:"sha256"`
+	Size      int    `json:"size"`
+	ObjectKey string `json:"object_key"`
+}
 
 func (h workerRouteHandlers) installScript(e *httpx.Event) error {
-	if err := artifactdelivery.RequireAllowed(e); err != nil {
-		return err
+	if e.Request.Header.Get(installerAdmissionHopHeader) != "" {
+		return admitLinuxInstallScript(e, h.installScriptPaths())
 	}
 	return serveLinuxInstallScript(e, h.installScriptPaths())
+}
+
+// admitLinuxInstallScript returns only bounded metadata, so unlike the script
+// itself it stays available where RequireAllowed refuses file delivery.
+func admitLinuxInstallScript(e *httpx.Event, paths []string) error {
+	e.Response.Header().Set("Cache-Control", "no-store")
+	content, found := firstValidLinuxInstaller(paths)
+	if !found {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "The Linux installer artifact is unavailable", nil)
+	}
+	return httpx.Success(e, http.StatusOK, installerAdmission{
+		Schema: "techstack.installer-admission/v1", SHA256: artifactdelivery.LinuxInstallerSHA256,
+		Size: len(content), ObjectKey: artifactdelivery.LinuxInstallerObjectKey(artifactdelivery.LinuxInstallerSHA256),
+	})
 }
 
 func serveLinuxInstallScript(e *httpx.Event, paths []string) error {
@@ -44,20 +66,18 @@ func serveLinuxInstallScript(e *httpx.Event, paths []string) error {
 	return e.String(http.StatusOK, string(content))
 }
 
+// firstValidLinuxInstaller returns the normalized bytes of the pinned installer.
 func firstValidLinuxInstaller(paths []string) ([]byte, bool) {
 	for _, path := range paths {
 		content, err := os.ReadFile(path)
-		if err == nil && validLinuxInstallerArtifact(content) {
-			return content, true
+		if err != nil {
+			continue
+		}
+		if normalized, digest := artifactdelivery.NormalizeLinuxInstaller(content); digest == artifactdelivery.LinuxInstallerSHA256 {
+			return normalized, true
 		}
 	}
 	return nil, false
-}
-
-func validLinuxInstallerArtifact(content []byte) bool {
-	normalized := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
-	digest := sha256.Sum256(normalized)
-	return hex.EncodeToString(digest[:]) == linuxInstallerArtifactSHA256
 }
 
 func (h workerRouteHandlers) installScriptPaths() []string {

@@ -5,6 +5,7 @@
 //	guard-release-tool archive-digest <file.tgz>  the same digest of a bundle archive
 //	guard-release-tool verify <dir>               verify the release in <dir> the way a Guard does
 //	guard-release-tool r2-mirror <dir>            copy the indexed delivery files to private R2
+//	guard-release-tool r2-mirror-installer <file> copy a release source's Linux install.sh to private R2
 //
 // The digests are the lowercase hex values pkg/guardrelease.TreeDigest defines.
 // verify reads release-manifest.json, release-manifest.sigstore.json and, for
@@ -31,7 +32,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: guard-release-tool tree-digest <dir> | archive-digest <file.tar.gz> | verify <dir> [--expected-source <40-character SHA>] [--require-runtime-bundles] [--require-current-policy | --refresh-published] | r2-mirror <dir>")
+		fmt.Fprintln(os.Stderr, "usage: guard-release-tool tree-digest <dir> | archive-digest <file.tar.gz> | verify <dir> [--expected-source <40-character SHA>] [--require-runtime-bundles] [--require-current-policy | --refresh-published] | r2-mirror <dir> | r2-mirror-installer <install.sh> [--require-pinned]")
 		os.Exit(64)
 	}
 	output, err := run(os.Args[1], os.Args[2], os.Args[3:]...)
@@ -45,7 +46,7 @@ func main() {
 }
 
 func run(command, arg string, extra ...string) (string, error) {
-	if len(extra) != 0 && command != "verify" && command != "artifact-index" {
+	if len(extra) != 0 && command != "verify" && command != "artifact-index" && command != "r2-mirror-installer" {
 		return "", fmt.Errorf("%s takes one path", command)
 	}
 	switch command {
@@ -65,6 +66,11 @@ func run(command, arg string, extra ...string) (string, error) {
 		return releaseArtifactIndex(arg)
 	case "r2-mirror":
 		return mirrorReleaseToR2(arg)
+	case "r2-mirror-installer":
+		if len(extra) > 1 || (len(extra) == 1 && extra[0] != "--require-pinned") {
+			return "", errors.New("r2-mirror-installer takes one path and optionally --require-pinned")
+		}
+		return mirrorInstallerToR2(arg, len(extra) == 1)
 	case "tree-digest":
 		return guardrelease.TreeDigest(arg)
 	case "archive-digest":
