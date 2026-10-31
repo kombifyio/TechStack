@@ -61,6 +61,9 @@ type EnrollmentRequest struct {
 	// Hostname optionally names the node at first boot (see CloudInitInput).
 	Hostname        string
 	HostPrepProfile HostPrepProfile
+	// AuthorizedKeys reach the node through cloud-init; only a Golden Image
+	// profile accepts them (CloudInitInput.AuthorizedKeys).
+	AuthorizedKeys []string
 }
 
 // EnrollmentIssuer mints the node's enrolment capability and renders its
@@ -109,7 +112,7 @@ func (i *EnrollmentIssuer) RenderPayload(request EnrollmentRequest) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	return RenderCloudInit(CloudInitInput{ServerURL: i.origin, PairingToken: rawToken, Hostname: request.Hostname, HostPrepProfile: request.HostPrepProfile})
+	return RenderCloudInit(CloudInitInput{ServerURL: i.origin, PairingToken: rawToken, Hostname: request.Hostname, HostPrepProfile: request.HostPrepProfile, AuthorizedKeys: request.AuthorizedKeys})
 }
 
 // DeriveNodeHostname builds a provider-neutral, deterministic first-boot

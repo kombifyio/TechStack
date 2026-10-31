@@ -95,7 +95,10 @@ func (o *Orchestrator) RunStackKitIdentityCommand(ctx context.Context, request S
 	if err != nil {
 		return nil, err
 	}
-	if request.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT &&
+	// A caller that names the runtime (the household worker's legacy list and
+	// remove included) is held to it exactly like a projection.
+	expected := request.ExpectedAgentID != "" || request.ExpectedStackKitInstanceID != ""
+	if (request.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT || expected) &&
 		(request.ExpectedAgentID == "" || request.ExpectedStackKitInstanceID == "" ||
 			request.ExpectedAgentID != binding.AgentID || request.ExpectedStackKitInstanceID != stack.stackKitInstanceID) {
 		// Retain the original target even if its current inventory changed.
