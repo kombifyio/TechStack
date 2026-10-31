@@ -589,17 +589,24 @@ guard_enrollment_resumable() {
     return 1
 }
 
+# canonical_arch prints the control plane's name for an architecture. The
+# artifact routes admit only these names at the edge, so a control-plane URL
+# never carries the uname spelling (x86_64 is refused there before Techstack).
+canonical_arch() {
+    case "$1" in
+        x86_64|amd64) echo amd64 ;;
+        aarch64|arm64) echo arm64 ;;
+        armv7|armv7l|arm) echo arm ;;
+        *) echo "$1" ;;
+    esac
+}
+
 # pinned_binary_sha256 prints the TECHSTACK_BINARY_SHA256 pin for one
 # architecture. The pin is one bare digest or the dashboard's per-architecture
 # list "amd64=<sha256>,arm64=<sha256>"; a list without an entry for this
 # architecture prints nothing, so the caller fails closed.
 pinned_binary_sha256() {
-    case "$1" in
-        x86_64|amd64) _pin_arch=amd64 ;;
-        aarch64|arm64) _pin_arch=arm64 ;;
-        armv7|armv7l|arm) _pin_arch=arm ;;
-        *) _pin_arch=$1 ;;
-    esac
+    _pin_arch=$(canonical_arch "$1")
     _pins=$(printf '%s' "${TECHSTACK_BINARY_SHA256:-}" | tr 'A-F,' 'a-f ')
     _pin=""
     case "$_pins" in
@@ -649,7 +656,7 @@ install_binary_from_control_plane() {
         exit 1
     fi
 
-    CONTROL_PLANE_BINARY_URL="${SERVER}/api/v1/agent/binary/${OS}/${ARCH}"
+    CONTROL_PLANE_BINARY_URL="${SERVER}/api/v1/agent/binary/${OS}/$(canonical_arch "$ARCH")"
     TMP_DIR=$(mktemp -d)
     BINARY_TMP="${TMP_DIR}/techstack"
     HEADERS_TMP="${TMP_DIR}/headers"
@@ -820,7 +827,7 @@ probe_signed_guard_release() {
     chmod 0600 "$_probe_headers"
     _probe_code=$(server_curl -sS --request POST --connect-timeout 5 --max-time 30 \
         -H "@${_probe_headers}" -o /dev/null -w '%{http_code}' \
-        "${_probe_server}/api/v1/agent/release-evidence/${OS}/${ARCH}" 2>/dev/null) || _probe_code=000
+        "${_probe_server}/api/v1/agent/release-evidence/${OS}/$(canonical_arch "$ARCH")" 2>/dev/null) || _probe_code=000
     rm -f "$_probe_headers"
     if [ "$_probe_code" = 200 ]; then
         SIGNED_GUARD_RELEASE=1

@@ -4634,6 +4634,25 @@ async function waitForManagedDay2Enrollment(
     status_state: last?.status?.state,
     error: lastError.slice(0, 300),
   });
+  if (last?.enrollment_status !== "enrolled") {
+    // The managed installer reports the phase it failed in to the lease's
+    // runtime log (internal/routes/workers_bootstrap_logs.go); without it a
+    // Guard that never connects reads only as installer_failed.
+    const entries = await fetchRuntimeApi<Array<Record<string, any>>>(
+      api,
+      `/api/v1/runtime/logs?lease_id=${encodeURIComponent(leaseId)}&limit=50`,
+      api.apiBase,
+    ).catch((error) => [{ message: `runtime log read failed: ${error}` }]);
+    logRuntimeE2E("managed bootstrap runtime log", {
+      lease_id: leaseId,
+      entries: (Array.isArray(entries) ? entries : []).slice(-20).map((entry) => ({
+        timestamp: entry.timestamp,
+        source: entry.source,
+        level: entry.level,
+        message: redactText(String(entry.message ?? "")).slice(0, 400),
+      })),
+    });
+  }
   return last;
 }
 
