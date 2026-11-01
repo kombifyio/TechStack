@@ -120,15 +120,9 @@
   let activeTab = $state<
     "overview" | "services" | "ports" | "checks" | "logs" | "settings"
   >("overview");
+  // The server API decides which servers its owner may detach.
   let canDetachSelfOwnedServer = $derived(
-    canonicalServer?.operations_owner === "customer" &&
-      !canonicalServer.provider?.lease_id &&
-      ((canonicalServer.environment_class === "local" &&
-        canonicalServer.offering === "self_owned_device") ||
-        (canonicalServer.environment_class === "cloud" &&
-          canonicalServer.offering === "external_vps")) &&
-      canonicalServer.target_evidence?.freshness.state === "recorded" &&
-      canonicalServer.lifecycle.state !== "decommissioned",
+    canonicalServer?.allowed_actions?.includes("detach") === true,
   );
   let isDecommissionedManagedRuntime = $derived(
     Boolean(

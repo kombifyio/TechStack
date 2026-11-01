@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
 
@@ -227,8 +228,22 @@ func SelfOwnedServerDetachAllowed(server ServerRuntime) bool {
 
 func selfOwnedServerDetachAllowed(server ServerRuntime) bool {
 	target := serverregistry.NormalizeRuntimeTarget(server.RuntimeTarget)
-	if strings.TrimSpace(server.LeaseID) != "" || target.OperationsOwner != serverregistry.OperationsCustomer ||
-		serverregistry.ValidateRuntimeTarget(target, server.LeaseID) != nil {
+	if target.EnvironmentClass == "" {
+		target.EnvironmentClass = serverregistry.EnvironmentUnknown
+	}
+	if strings.TrimSpace(server.LeaseID) != "" || serverregistry.ValidateRuntimeTarget(target, server.LeaseID) != nil {
+		return false
+	}
+	// A server without a lease and without a classification is one the owner
+	// enrolled: pairing classifies only a local device, so an owner's VPS
+	// enrolled through the install command stays unclassified. Retiring an
+	// absent server already treats it as the owner's (CheckOwnerServerAbsentEligible).
+	// A substrate host stays attached: the guests it hosts depend on its Guard.
+	if target.EnvironmentClass == serverregistry.EnvironmentUnknown {
+		role, _ := server.Metadata[nodehandoff.KeyServerNodeRole].(string)
+		return !strings.EqualFold(strings.TrimSpace(role), "substrate")
+	}
+	if target.OperationsOwner != serverregistry.OperationsCustomer {
 		return false
 	}
 	return target.EnvironmentClass == serverregistry.EnvironmentLocal && target.Offering == serverregistry.OfferingSelfOwnedDevice ||
