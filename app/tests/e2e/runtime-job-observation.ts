@@ -185,7 +185,12 @@ export function managedRuntimeObservationBudgets(
     570_000,
     5_400_000,
   );
-  const rolloutMs = 450_000;
+  // The product's own limit for a managed Cloud Kit rollout
+  // (pkg/jobs/stackkit_lifecycle.go managedStackKitSequenceBudget): pre-apply
+  // 275 s, the modern Cloud bring-up 550 s, two applies of 730 s and the
+  // origin certificate 80 s, 2365 s in all. A shorter observation gives up on
+  // a rollout the product still runs (window m04-20261031-y, B4 on IONOS).
+  const rolloutMs = 2_400_000;
   // Existing typed product limits after Apply: Verify (300 + 30 grace),
   // node Plan (300 + 30), backup configure (900 + 30), Advanced restore
   // drill (900 + 30), plus 30 seconds for polling and result persistence.

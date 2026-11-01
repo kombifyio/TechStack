@@ -27,6 +27,10 @@ var (
 	// ErrCommandCancelledBeforeDispatch reports a durable command whose sender
 	// gave up before any agent received it: nothing ran on the host.
 	ErrCommandCancelledBeforeDispatch = errors.New("agent control command was cancelled before an agent received it")
+	// ErrCommandExists reports a durable command whose command_id was sent
+	// before: nothing new was queued. A caller with a deterministic id reads
+	// it as "already sent".
+	ErrCommandExists = errors.New("typed HTTPS StackKits command_id already exists")
 )
 
 // CommandAuthorityLifetime is how long a durable typed command stays
@@ -346,7 +350,7 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 		var inserted int64
 		inserted, err = result.RowsAffected()
 		if err == nil && inserted == 0 {
-			err = fmt.Errorf("typed HTTPS StackKits command_id %q already exists", command.GetCommandId())
+			err = fmt.Errorf("%w: %q", ErrCommandExists, command.GetCommandId())
 		}
 	}
 	if err != nil {

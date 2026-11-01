@@ -16,9 +16,11 @@ import (
 )
 
 // ErrRuntimeHostKeyChanged reports that a target presented a host key other
-// than the one pinned for its address. The connection must not continue: a
-// changed key on a managed target is either a re-provisioned node (delete the
-// stale pin deliberately) or an interception attempt.
+// than the one pinned for its address. The connection must not continue: the
+// server that took the pin still holds the address as far as the control
+// plane can prove, so a changed key is a re-keyed node or an interception
+// attempt. A pin retires only when its managed server is proven gone at the
+// provider (migration 176).
 var ErrRuntimeHostKeyChanged = errors.New("runtime target host key changed")
 
 // ErrRuntimeHostKeyUnverifiable reports that a presented host key could not be
@@ -35,12 +37,17 @@ func runtimeHostKeyUnverifiable(address, reason string) error {
 //
 // Trust state belongs to the node lifecycle, not to a single dial: a managed
 // node is provisioned once and then re-addressed by rollout, retry and
-// diagnostics. Pinning per host:port means a fresh lease at a reused address
-// requires a deliberate pin reset, while an in-place node keeps its identity.
+// diagnostics. A pin is keyed by host:port and bound to the managed lease
+// whose bootstrap took it. While that lease's server may still hold the
+// address, a different key at the address is refused. Providers recycle
+// addresses, so once the lease's provider resources are proven absent the
+// runtime database retires the pin (migration 176) and the next server the
+// provider assigns the address starts a fresh pin.
 //
 // The store never fails open: a pin mismatch, an unreadable file or a
 // persistence failure is returned to the caller and the SSH handshake is
-// rejected.
+// rejected. A pin this process holds (from the file) is dropped only when the
+// database recorded its retirement.
 type RuntimeHostKeyStore struct {
 	path    string
 	backend RuntimeHostKeyPinBackend
@@ -59,11 +66,47 @@ type RuntimeHostKeyStore struct {
 // RuntimeHostKeyPinBackend is the durable pin authority every control-plane
 // instance shares. PinFirst stores the fingerprint only when the address has
 // no pin yet and returns the pin that holds afterwards, so two instances that
-// observe a target concurrently converge on one pin.
+// observe a target concurrently converge on one pin. RetiredPins returns the
+// candidate addresses whose given fingerprint the database retired.
 type RuntimeHostKeyPinBackend interface {
 	LoadPins(ctx context.Context) (map[string]string, error)
 	LookupPin(ctx context.Context, address string) (string, bool, error)
-	PinFirst(ctx context.Context, address, fingerprint string) (string, error)
+	PinFirst(ctx context.Context, address, fingerprint string, binding RuntimeHostKeyBinding) (string, error)
+	RetiredPins(ctx context.Context, candidates map[string]string) (map[string]bool, error)
+}
+
+// RuntimeHostKeyBinding names the managed lease whose bootstrap dials a
+// target. A first-contact pin is bound to it, and the runtime database
+// retires the pin once that lease's provider resources are proven absent.
+// The database keeps the binding only for a lease of that tenant whose
+// recorded address is the pinned host.
+type RuntimeHostKeyBinding struct {
+	TenantID string
+	LeaseID  string
+}
+
+func (b RuntimeHostKeyBinding) normalized() RuntimeHostKeyBinding {
+	b.TenantID, b.LeaseID = strings.TrimSpace(b.TenantID), strings.TrimSpace(b.LeaseID)
+	if b.TenantID == "" || b.LeaseID == "" {
+		return RuntimeHostKeyBinding{}
+	}
+	return b
+}
+
+type runtimeHostKeyBindingKey struct{}
+
+// WithRuntimeHostKeyBinding carries the managed lease of a bootstrap to the
+// SSH host-key callback of its dials.
+func WithRuntimeHostKeyBinding(ctx context.Context, binding RuntimeHostKeyBinding) context.Context {
+	return context.WithValue(ctx, runtimeHostKeyBindingKey{}, binding.normalized())
+}
+
+func runtimeHostKeyBindingFrom(ctx context.Context) RuntimeHostKeyBinding {
+	if ctx == nil {
+		return RuntimeHostKeyBinding{}
+	}
+	binding, _ := ctx.Value(runtimeHostKeyBindingKey{}).(RuntimeHostKeyBinding)
+	return binding
 }
 
 const runtimeHostKeyBackendTimeout = 10 * time.Second
@@ -164,6 +207,29 @@ func (s *RuntimeHostKeyStore) loadBackendLocked() error {
 		s.backendErr = fmt.Errorf("%w: load runtime host key pins: %v", ErrRuntimeHostKeyUnverifiable, err)
 		return s.backendErr
 	}
+	// A file pin the database lacks or contradicts is dropped only when the
+	// database retired it; any other one keeps holding (or conflicts).
+	stale := map[string]string{}
+	for address, local := range s.pins {
+		if fingerprint, ok := durable[address]; !ok || fingerprint != local {
+			stale[address] = local
+		}
+	}
+	if len(stale) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), runtimeHostKeyBackendTimeout)
+		retired, retiredErr := s.backend.RetiredPins(ctx, stale)
+		cancel()
+		if retiredErr != nil {
+			s.backendErr = fmt.Errorf("%w: load retired runtime host key pins: %v", ErrRuntimeHostKeyUnverifiable, retiredErr)
+			return s.backendErr
+		}
+		for address := range retired {
+			delete(s.pins, address)
+		}
+		if len(retired) > 0 {
+			_ = s.persistLocked()
+		}
+	}
 	s.backendErr = nil
 	var conflicts []string
 	for address, fingerprint := range durable {
@@ -198,27 +264,53 @@ func (s *RuntimeHostKeyStore) admitLocked(address string) error {
 	return nil
 }
 
-// durablePinLocked consults the backend for an address this process has not
-// seen; another instance may have pinned it since Load. The caller holds s.mu.
-func (s *RuntimeHostKeyStore) durablePinLocked(address string) (string, bool, error) {
+// resolvePinLocked returns the pin that holds for an address whose presented
+// key this process cannot accept from its own copy: the address is new to the
+// process, or another instance may have pinned it, or the database may have
+// retired the copy since. The database pin wins over a copy it retired; a
+// copy it lacks but never retired keeps holding, and a copy it contradicts
+// without a retirement refuses the address. Unless readOnly, the process copy
+// and the file follow the database. The caller holds s.mu.
+func (s *RuntimeHostKeyStore) resolvePinLocked(address string, readOnly bool) (string, bool, error) {
+	cached, cachedOK := s.pins[address]
 	if s.backend == nil {
-		return "", false, nil
+		return cached, cachedOK, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeHostKeyBackendTimeout)
 	defer cancel()
-	pinned, ok, err := s.backend.LookupPin(ctx, address)
+	durable, found, err := s.backend.LookupPin(ctx, address)
 	if err != nil {
 		return "", false, runtimeHostKeyUnverifiable(address, "the pin store is unavailable: "+err.Error())
 	}
-	if ok {
-		s.pins[address] = pinned
+	if cachedOK && (!found || durable != cached) {
+		retired, retiredErr := s.backend.RetiredPins(ctx, map[string]string{address: cached})
+		if retiredErr != nil {
+			return "", false, runtimeHostKeyUnverifiable(address, "the pin retirements are unavailable: "+retiredErr.Error())
+		}
+		if !retired[address] {
+			if found {
+				return "", false, fmt.Errorf("%w: %s pinned to %s in the database and %s on disk", ErrRuntimeHostKeyChanged, address, durable, cached)
+			}
+			return cached, true, nil
+		}
+		if !readOnly {
+			delete(s.pins, address)
+			_ = s.persistLocked()
+		}
 	}
-	return pinned, ok, nil
+	if !found {
+		return "", false, nil
+	}
+	if !readOnly && (!cachedOK || cached != durable) {
+		s.pins[address] = durable
+		_ = s.persistLocked()
+	}
+	return durable, true, nil
 }
 
 // VerifyReadOnly checks a key against the pin without writing trust state.
 // Diagnostics use it so a failure investigation never pins a node; an
-// unpinned address passes.
+// unpinned address (or one whose pin the database retired) passes.
 func (s *RuntimeHostKeyStore) VerifyReadOnly(address string, key ssh.PublicKey) error {
 	if s == nil {
 		return runtimeHostKeyUnverifiable(address, "no host key store is configured")
@@ -233,24 +325,24 @@ func (s *RuntimeHostKeyStore) VerifyReadOnly(address string, key ssh.PublicKey) 
 	if err := s.admitLocked(address); err != nil {
 		return err
 	}
-	pinned, ok := s.pins[address]
+	if pinned, ok := s.pins[address]; ok && pinned == ssh.FingerprintSHA256(key) {
+		return nil
+	}
+	pinned, ok, err := s.resolvePinLocked(address, true)
+	if err != nil {
+		return err
+	}
 	if !ok {
-		var err error
-		pinned, ok, err = s.durablePinLocked(address)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return nil
-		}
+		return nil
 	}
 	return verifyRuntimeHostKeyFingerprint(address, pinned, key)
 }
 
 // VerifyAndPin verifies a key and pins it on first contact. Bootstrap uses it
 // so the node observed during enrollment becomes the identity later dials must
-// present.
-func (s *RuntimeHostKeyStore) VerifyAndPin(address string, key ssh.PublicKey) error {
+// present. The binding names the managed lease of the dial; the pin follows
+// that lease's lifecycle.
+func (s *RuntimeHostKeyStore) VerifyAndPin(address string, key ssh.PublicKey, binding RuntimeHostKeyBinding) error {
 	if s == nil {
 		return runtimeHostKeyUnverifiable(address, "no host key store is configured")
 	}
@@ -264,13 +356,18 @@ func (s *RuntimeHostKeyStore) VerifyAndPin(address string, key ssh.PublicKey) er
 	if err := s.admitLocked(address); err != nil {
 		return err
 	}
-	if pinned, ok := s.pins[address]; ok {
+	fingerprint := ssh.FingerprintSHA256(key)
+	if pinned, ok := s.pins[address]; ok && pinned == fingerprint {
+		return nil
+	}
+	if pinned, ok, err := s.resolvePinLocked(address, false); err != nil {
+		return err
+	} else if ok {
 		return verifyRuntimeHostKeyFingerprint(address, pinned, key)
 	}
-	fingerprint := ssh.FingerprintSHA256(key)
 	if s.backend != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), runtimeHostKeyBackendTimeout)
-		pinned, err := s.backend.PinFirst(ctx, address, fingerprint)
+		pinned, err := s.backend.PinFirst(ctx, address, fingerprint, binding.normalized())
 		cancel()
 		if err != nil {
 			return runtimeHostKeyUnverifiable(address, "the pin could not be stored: "+err.Error())

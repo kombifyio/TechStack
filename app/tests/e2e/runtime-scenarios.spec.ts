@@ -1,7 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { MonthlyRuntimeCleanupReadback } from "../../src/lib/api/stacks";
+import type {
+  ConfigureInstalledWorkloadRequest,
+  UseCaseConfigurationView,
+} from "../../src/lib/api/useCaseConfiguration";
 import {
   chmod,
   mkdir,
@@ -19,7 +23,10 @@ import {
   managedLifecycleReceipt,
   type ManagedLifecycleEvidence,
 } from "./managed-lifecycle-receipt";
-import { assertExistingTargetExtension } from "./existing-target-assertion";
+import {
+  assertExistingTargetExtension,
+  type SubmittedExtendRun,
+} from "./existing-target-assertion";
 import { assertConfigureInstalledWorkload } from "./configure-usecase-assertion";
 import { assertRemoveInstalledUseCase, assertRemoveSupersededCheckpointRetry, decodeSupersededRemovalFixture } from "./remove-usecase-assertion";
 import { removalDataSentinelsFromEnv } from "./removal-data-sentinel";
@@ -3884,6 +3891,11 @@ test.describe.serial("Runtime E2E scenarios", () => {
   // 90 s and offline within 5 min, the server page must show that state after
   // a reload, and after the rule is removed the same Guard (same server, same
   // worker, no second enrollment) must be connected again within 60 s.
+  // Connected needs an answered command, never heartbeats alone
+  // (kombify-Techstack-b57.5.1): before the cut the owner runs the read-only
+  // OS update check, the operation that confirms the connection, and after
+  // the reconnect that round trip still holds under the same credential, so
+  // the server page shows Connected without a further operation.
   test("guard-disconnect demotes an unreachable Guard and reconnects it without a second enrollment", async ({
     page,
   }) => {
@@ -3964,6 +3976,35 @@ test.describe.serial("Runtime E2E scenarios", () => {
       const guardFact = () =>
         page.locator('[data-testid="guard-fact"][data-fact="connected"]');
       const serverPage = `/stacks/${encodeURIComponent(stackId)}/servers/${encodeURIComponent(serverId)}`;
+      const roundTrip = async (): Promise<LifecycleRecord> =>
+        (await readServerAggregate(auth.token, serverId)).capabilities?.command_round_trip ?? {};
+
+      // Enrolled and idle, the Guard has only reported: API and UI agree on
+      // whether an answered command exists yet.
+      const heartbeatOnly = await roundTrip();
+      const heartbeatOnlyUi = heartbeatOnly.state === "verified" ? "ok" : "unknown";
+      await page.goto(serverPage, { waitUntil: "domcontentloaded" });
+      // The page has read the server aggregate, not only rendered its shell.
+      await expect(page.getByTestId("server-details-page")).toHaveAttribute("aria-busy", "false", { timeout: 60_000 });
+      await expect(guardFact(), "API and UI agree on the heartbeat-only Connected fact")
+        .toHaveAttribute("data-state", heartbeatOnlyUi, { timeout: 60_000 });
+      // The answered command is the check's (or a later one), never an
+      // earlier round trip: both acknowledgements are the control plane's time.
+      const earlierAck = Date.parse(String(heartbeatOnly.acknowledged_at ?? "")) || 0;
+      const updateCheck = await runOwnerUpdateCheck(auth.token, serverId);
+      const answeredAfterCheck = (trip: LifecycleRecord) =>
+        trip.state === "verified" && Date.parse(String(trip.acknowledged_at ?? "")) > earlierAck;
+      const confirmedDeadline = Date.now() + 60_000;
+      let confirmed = await roundTrip();
+      while (!answeredAfterCheck(confirmed) && Date.now() < confirmedDeadline) {
+        await delay(5_000);
+        confirmed = await roundTrip();
+      }
+      expect(answeredAfterCheck(confirmed), `the update check ${updateCheck.jobId} (${updateCheck.state}) is the Guard's round trip: ${JSON.stringify(confirmed)}`)
+        .toBe(true);
+      expect(Number(confirmed.generation), "an HTTPS round trip names its credential generation").toBeGreaterThan(0);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(guardFact()).toHaveAttribute("data-state", "ok", { timeout: 60_000 });
 
       await ssh(cutRule);
       const cut = Date.now();
@@ -3977,9 +4018,13 @@ test.describe.serial("Runtime E2E scenarios", () => {
       const restored = Date.now();
       const reconnectSeconds = await waitForState("connected", restored, 60_000);
       await page.reload({ waitUntil: "domcontentloaded" });
-      // ok needs the persisted round trip, not only a fresh heartbeat.
+      // The round trip from before the outage still proves the channel: same
+      // Guard, same credential generation, no further operation.
       await expect(guardFact()).toHaveAttribute("data-state", "ok", { timeout: 120_000 });
       await attachScreenshot(page, "guard-disconnect-reconnected.png");
+      const reconnectedTrip = await roundTrip();
+      expect(reconnectedTrip.state, "the reconnected Guard keeps its round trip").toBe("verified");
+      expect(reconnectedTrip.generation, "under the same credential generation").toBe(confirmed.generation);
 
       const after = await servers();
       const row = after.find((server) => String(server.id) === serverId);
@@ -3999,6 +4044,12 @@ test.describe.serial("Runtime E2E scenarios", () => {
         measured: { staleSeconds, offlineSeconds, reconnectSeconds },
         bounds: { staleSeconds: 90, offlineSeconds: 300, reconnectSeconds: 60 },
         ui: { offline: "attention", reconnected: "ok", source: "server page after reload" },
+        roundTrip: {
+          heartbeatOnly: { api: String(heartbeatOnly.state ?? "absent"), ui: heartbeatOnlyUi },
+          operation: { action: "os_update_plan", jobId: updateCheck.jobId, state: updateCheck.state },
+          confirmed: { state: confirmed.state, generation: confirmed.generation, acknowledgedAt: confirmed.acknowledged_at },
+          reconnected: { state: reconnectedTrip.state, generation: reconnectedTrip.generation },
+        },
         workloadUnchanged: true,
         guardRestarted: false,
         servers: after.length,
@@ -4306,6 +4357,200 @@ test.describe.serial("Runtime E2E scenarios", () => {
         );
       }
       await resource?.release();
+    }
+  });
+
+  // Day-2 changes to an existing installation (AP04.4; Beads
+  // kombify-Techstack-6q9a, -qx9a and -i3p2). One owner server runs a
+  // deployed Basement homelab, and the owner changes it without creating it
+  // again: vault comes in through Cloud's use-case handoff (the deployed
+  // server is the target, so no server is created and Access, Users and Login
+  // stay) and media through the owner API; a typed native setting of vault
+  // is changed; then the vault application and the whole media use case are
+  // removed with their data retained. Each change is an Advanced change set
+  // on the same server that a replay of its idempotency key repeats without a
+  // second effect, and the foundation, the server binding and the services
+  // installed before it stay. The stack is destroyed, the server detached and
+  // deleted, and its absence read back from the supplier.
+  test("existing-target-day2 adds, configures and removes use cases on a deployed homelab without creating it again", async ({
+    page,
+  }) => {
+    // Provision, rollout, two additions, a configuration, two removals and
+    // destroy; the window lane's cleanup step covers a timeout.
+    test.setTimeout(120 * 60_000);
+    const supplier = ownerServerSupplierFromEnv();
+    const auth = await authenticateRuntimeUser(
+      "oneliner",
+      page,
+      RUNTIME_AUTH_OPTIONS,
+    );
+    const runId = runtimeRunId();
+    let resource: OwnerServer | undefined;
+    let stackId = "";
+    let serverId = "";
+    let destroyed = false;
+    let detached = false;
+    let released = false;
+    try {
+      await enrollAndDeployLifecycleStack(
+        page,
+        auth.token,
+        supplier,
+        {
+          onStack: (id) => {
+            stackId = id;
+          },
+          onResource: (server) => {
+            resource = server;
+          },
+          onServer: (id) => {
+            serverId = id;
+          },
+        },
+        { name: `existing-target-day2-${runId}` },
+      );
+      const owned = resource!;
+      const expectedRevision =
+        String(process.env.TECHSTACK_E2E_EXPECTED_REVISION ?? "").trim() ||
+        (await testSourceCommit());
+      const url = (apiPath: string) => runtimeApiUrl(API_BASE, apiPath);
+      const waitForJob = (id: string) =>
+        waitForJobTerminal(auth.token, id, 1_200_000);
+
+      const vault = await test.step("Add vault from Cloud's use-case handoff to the deployed server (6q9a)", () =>
+        assertExistingTargetExtension({
+          token: auth.token,
+          stackId,
+          serverId,
+          expectedRevision,
+          goal: "vault",
+          serviceKey: "vaultwarden",
+          submit: () =>
+            submitCloudUseCaseHandoff(page, {
+              stackId,
+              serverId,
+              useCase: "vault",
+              setup: "backend:vaultwarden",
+            }),
+          url,
+          waitForJob,
+        }));
+      await attachJson("existing-target-day2-add-vault.json", vault);
+      const media = await test.step("Add media through the owner API beside vault (6q9a)", () =>
+        assertExistingTargetExtension({
+          token: auth.token,
+          stackId,
+          serverId,
+          expectedRevision,
+          goal: "media",
+          serviceKey: "jellyfin",
+          url,
+          waitForJob,
+        }));
+      await attachJson("existing-target-day2-add-media.json", media);
+
+      const configured = await test.step("Configure a typed native setting of the installed vault (qx9a)", async () => {
+        const change = await typedConfigurationChange(
+          auth.token,
+          stackId,
+          "vault",
+        );
+        await assertConfigureInstalledWorkload({
+          page,
+          token: auth.token,
+          stackId,
+          workloadRef: change.workloadRef,
+          changes: change.changes,
+          url,
+          waitForJob,
+        });
+        return change;
+      });
+      await attachJson("existing-target-day2-configure.json", configured);
+
+      const retained = retainedDataSentinels(owned, runId, {
+        [configured.workloadRef]: ["vaultwarden"],
+      });
+      await test.step("Remove the vault application; media, its data, the foundation and the server stay (i3p2)", () =>
+        assertRemoveInstalledUseCase({
+          page,
+          token: auth.token,
+          stackId,
+          selection: {
+            selector_kind: "workload",
+            selector_ref: configured.workloadRef,
+          },
+          verifyRetainedData: retained.verify,
+          url,
+          waitForJob,
+        }));
+      await test.step("Remove the whole media use case; its data, the foundation and the server stay (i3p2)", async () => {
+        const view = await readUseCaseConfiguration(auth.token, stackId);
+        const group = view.use_cases.find((entry) => entry.id === "media");
+        expect(group, "media is still installed after vault left").toBeTruthy();
+        for (const member of group!.workloads) retained.hint(member.workload_ref, ["jellyfin"]);
+        await assertRemoveInstalledUseCase({
+          page,
+          token: auth.token,
+          stackId,
+          selection: { selector_kind: "use_case", selector_ref: "media" },
+          verifyRetainedData: retained.verify,
+          url,
+          waitForJob,
+        });
+      });
+      const after = await readStackOperations(auth.token, stackId);
+      expect(
+        (after.servers ?? []).map((server: LifecycleRecord) => String(server.id)),
+        "the server still runs the homelab after both removals",
+      ).toContain(serverId);
+      await attachJson("existing-target-day2-removed.json", {
+        stack_id: stackId,
+        server_id: serverId,
+        retained_data: retained.evidence(),
+      });
+
+      // Remove: destroy through the product, detach the server and delete it
+      // at its supplier; the stack and the machine read back absent.
+      const destroy = await destroyRuntimeStackViaApi(auth.token, stackId);
+      expect(destroy?.state).toBe("completed");
+      await waitForStackAbsent(auth.token, stackId);
+      destroyed = true;
+      await detachOwnerServer(auth.token, serverId);
+      detached = true;
+      await owned.release();
+      released = true;
+      await expect
+        .poll(() => owned.isAbsent?.() ?? Promise.resolve(true), {
+          message: "the owner server is still listed by its supplier",
+          timeout: 600_000,
+          intervals: [15_000],
+        })
+        .toBe(true);
+      await attachJson("existing-target-day2-cleanup.json", {
+        stack_id: stackId,
+        destroy_job_id: destroy?.id,
+        stack_absent_for_owner: true,
+        server_detached: true,
+        owner_server_provider: supplier.provider,
+        provider_absent: true,
+      });
+    } finally {
+      const cleanupFailed = (step: string) => (error: unknown) =>
+        logRuntimeE2E(`existing-target-day2 cleanup ${step} failed`, {
+          message: redactText(String(error)).slice(0, 600),
+        });
+      if (stackId && !destroyed) {
+        await destroyRuntimeStackViaApi(auth.token, stackId).catch(
+          cleanupFailed("destroy"),
+        );
+      }
+      if (serverId && !detached) {
+        await detachOwnerServer(auth.token, serverId).catch(
+          cleanupFailed("detach"),
+        );
+      }
+      if (!released) await resource?.release();
     }
   });
 
@@ -5401,6 +5646,274 @@ async function allowTechstackWalletCreate(page: Page) {
   return { already_allowed: alreadyAllowed, allowed: true };
 }
 
+// Cloud hands a use case over as /stacks/new?use-case=<id>&setup=<answer>.
+// The owner keeps the deployed server chosen on the Server step, so the
+// creation adds to its StackKit (Access, Users and Login stay inactive, no
+// new server step) with the distribution the Unifier verified, and presses
+// "Add use cases". Returns what the page sent and what the product accepted.
+async function submitCloudUseCaseHandoff(
+  page: Page,
+  target: { stackId: string; serverId: string; useCase: string; setup: string },
+): Promise<SubmittedExtendRun> {
+  let verifiedPlan = false;
+  const observe = async (response: import("@playwright/test").Response) => {
+    if (
+      response.request().method() !== "POST" ||
+      !/\/(?:api\/v1|v1\/techstack)\/unifier\/layout\/recommendations$/.test(
+        new URL(response.url()).pathname,
+      ) ||
+      !response.ok()
+    )
+      return;
+    const request = response.request().postDataJSON() ?? {};
+    const body = await response.json().catch(() => ({}));
+    const plan = body.data ?? body;
+    if (
+      request.stack_id === target.stackId &&
+      JSON.stringify(request.goals) === JSON.stringify([target.useCase]) &&
+      plan.verification?.status === "verified"
+    )
+      verifiedPlan = true;
+  };
+  page.on("response", observe);
+  try {
+    const query = new URLSearchParams({
+      "use-case": target.useCase,
+      setup: target.setup,
+    });
+    await page.goto(`/stacks/new?${query}`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("easy-step-1")).toBeVisible({
+      timeout: 180_000,
+    });
+    await expect(
+      page
+        .getByTestId("creation-goals")
+        .locator('[aria-pressed="true"]')
+        .first(),
+    ).toBeVisible();
+    await page.getByTestId("wizard-next").click();
+    const server = page.locator(
+      `[data-testid="homelab-server"][data-server-id="${target.serverId}"]`,
+    );
+    await expect(server).toHaveAttribute("data-state", "ready", {
+      timeout: 180_000,
+    });
+    await expect(server).toHaveAttribute("data-has-stackkit", "true");
+    if (!(await server.locator("input").isChecked())) await server.click();
+    await expect(server.locator("input")).toBeChecked();
+    await expect(page).toHaveURL(
+      new RegExp(`[?&]target=server(?:%3A|:)${target.serverId}(?:[&#]|$)`),
+    );
+    await expect(page.getByTestId("server-provisioning-step")).toHaveCount(0);
+    for (const id of [3, 4, 5])
+      await expect(page.getByTestId(`wizard-step-${id}`)).toHaveAttribute(
+        "data-state",
+        "inactive",
+      );
+    await expect
+      .poll(() => verifiedPlan, {
+        message: `no verified ${target.useCase} distribution for ${target.stackId}`,
+        timeout: 180_000,
+      })
+      .toBe(true);
+    await attachScreenshot(page, `cloud-handoff-${target.useCase}.png`);
+    // With Access, Users and Login inactive, the Server step is the last one.
+    const create = page.getByTestId("wizard-create");
+    await expect(create).toBeEnabled({ timeout: 180_000 });
+    const submitted = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        /\/(?:api\/v1|v1\/techstack)\/wizard\/runs$/.test(
+          new URL(response.url()).pathname,
+        ),
+      { timeout: CREATE_STACK_REQUEST_TIMEOUT_MS },
+    );
+    await create.click();
+    const response = await submitted;
+    const text = await response.text();
+    expect(response.status(), redactText(text)).toBe(202);
+    const key = response.request().headers()["x-idempotency-key"] ?? "";
+    expect(key, "the handoff run carries its idempotency key").not.toBe("");
+    const body = response.request().postDataJSON();
+    // Cloud's setup answers travel with the use case into the run.
+    for (const pair of target.setup.split(",")) {
+      const [question, choice] = pair.split(":");
+      expect(
+        body.intent?.use_case_setup_answers?.[target.useCase]?.[question],
+        `the handoff answer ${pair} reaches the run`,
+      ).toContain(choice);
+    }
+    await expect(page.getByTestId("add-use-cases-result")).toBeVisible({
+      timeout: 60_000,
+    });
+    await attachScreenshot(page, `cloud-handoff-${target.useCase}-added.png`);
+    return {
+      body,
+      key,
+      run: (JSON.parse(text).data ?? {}) as SubmittedExtendRun["run"],
+    };
+  } finally {
+    page.off("response", observe);
+  }
+}
+
+async function readUseCaseConfiguration(
+  token: string,
+  stackId: string,
+): Promise<UseCaseConfigurationView> {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(
+      API_BASE,
+      `/api/v1/stacks/${encodeURIComponent(stackId)}/use-cases/configuration`,
+    ),
+    { headers: { Accept: "application/json" } },
+  );
+  const text = await response.text();
+  expect(response.ok, `configuration HTTP ${response.status}: ${redactText(text)}`).toBe(true);
+  const parsed = JSON.parse(text);
+  return parsed.data ?? parsed;
+}
+
+// The change the owner makes to an installed workload of the use case: only
+// what the pinned native catalog describes for it. A public toggle is
+// flipped, a choice takes another of its options, else a storage or compute
+// profile moves to another executable option.
+async function typedConfigurationChange(
+  token: string,
+  stackId: string,
+  useCase: string,
+): Promise<{
+  workloadRef: string;
+  changes: Omit<ConfigureInstalledWorkloadRequest, "expected_spec_hash">;
+}> {
+  const view = await readUseCaseConfiguration(token, stackId);
+  const member = view.use_cases
+    .find((entry) => entry.id === useCase)
+    ?.workloads.find((entry) => entry.eligible);
+  expect(
+    member,
+    `the installed ${useCase} has no workload the pinned catalog lets the owner configure`,
+  ).toBeTruthy();
+  const workloadRef = member!.workload_ref;
+  for (const setting of member!.settings) {
+    if (setting.type === "boolean" && !setting.options?.length)
+      return {
+        workloadRef,
+        changes: { settings: { [setting.key]: setting.current !== true } },
+      };
+    const other = setting.options?.find(
+      (option) => !Object.is(option, setting.current),
+    );
+    if (other !== undefined)
+      return { workloadRef, changes: { settings: { [setting.key]: other } } };
+  }
+  for (const profile of ["storage", "compute"] as const) {
+    const { current, options } = member!.profiles[profile];
+    const other = options.find((option) => option !== current);
+    if (other) return { workloadRef, changes: { [`${profile}_profile`]: other } };
+  }
+  throw new Error(
+    `the pinned catalog describes no typed setting or profile of ${workloadRef} to change`,
+  );
+}
+
+// The owner's own files in a removed application's data: before the first
+// removal of a workload, one file goes into a directory its container binds
+// from the native data root; it must read back byte for byte after the
+// removal (data disposition retain). Containers are matched by the workload
+// ref or a service name hint.
+function retainedDataSentinels(
+  server: OwnerServer,
+  runId: string,
+  hints: Record<string, string[]>,
+) {
+  const placed = new Map<string, { path: string; sha256: string; container: string }>();
+  const ssh = (command: string) =>
+    runSSH(server.ip, server.keyPair.privateKeyPath, command, 60_000, server.ssh);
+  async function place(workloadRef: string, root: string) {
+    const names = [workloadRef, ...(hints[workloadRef] ?? [])].map((name) =>
+      name.toLowerCase(),
+    );
+    const { stdout } = await ssh(
+      "docker ps -aq | xargs -r docker inspect --format '{{json .Name}}\t{{json .Config.Labels}}\t{{json .Mounts}}'",
+    );
+    const candidates: Array<{ container: string; dir: string }> = [];
+    const observed: string[] = [];
+    for (const line of stdout.split("\n").filter(Boolean)) {
+      const [name, labels, mounts] = line.split("\t").map((field) => JSON.parse(field));
+      const identity = [
+        String(name),
+        String(labels?.["com.docker.compose.project"] ?? ""),
+        String(labels?.["com.docker.compose.service"] ?? ""),
+      ]
+        .join(" ")
+        .toLowerCase();
+      for (const mount of (mounts ?? []) as Array<{ Type: string; Source: string }>) {
+        observed.push(`${String(name)} ${mount.Type} ${mount.Source}`);
+        if (
+          mount.Type === "bind" &&
+          mount.Source.startsWith(`${root}/`) &&
+          /^\/[A-Za-z0-9_./-]+$/.test(mount.Source) &&
+          names.some((hint) => identity.includes(hint))
+        )
+          candidates.push({ container: String(name), dir: mount.Source });
+      }
+    }
+    candidates.sort((a, b) => a.dir.localeCompare(b.dir));
+    let target: (typeof candidates)[number] | undefined;
+    for (const candidate of candidates) {
+      const kind = (await ssh(`test -d ${shellQuote(candidate.dir)} && echo dir || echo other`)).stdout.trim();
+      if (kind === "dir") {
+        target = candidate;
+        break;
+      }
+    }
+    if (!target)
+      throw new Error(
+        `no data directory under ${root} is bound by a container of ${workloadRef}; observed mounts: ${observed.join("; ").slice(0, 2_000)}`,
+      );
+    const content = `kombify retained-data sentinel ${workloadRef} ${runId} ${randomUUID()}\n`;
+    // One file per workload, so members that share a directory keep their own.
+    const sentinelPath = `${target.dir.replace(/\/+$/, "")}/.kombify-e2e-retained-${runId}-${workloadRef.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+    await ssh(`printf '%s' ${shellQuote(content)} > ${shellQuote(sentinelPath)}`);
+    const sentinel = {
+      path: sentinelPath,
+      sha256: createHash("sha256").update(content).digest("hex"),
+      container: target.container,
+    };
+    placed.set(workloadRef, sentinel);
+    return sentinel;
+  }
+  return {
+    hint(workloadRef: string, names: string[]) {
+      hints[workloadRef] = [...(hints[workloadRef] ?? []), ...names];
+    },
+    async verify(workloadRefs: readonly string[], dataRoot: string) {
+      expect(dataRoot).toMatch(/^\/[A-Za-z0-9_./-]+$/);
+      const root = dataRoot.replace(/\/+$/, "");
+      for (const workloadRef of workloadRefs) {
+        const sentinel = placed.get(workloadRef) ?? (await place(workloadRef, root));
+        expect(sentinel.path.startsWith(`${root}/`)).toBe(true);
+        const { stdout } = await ssh(`sha256sum -- ${shellQuote(sentinel.path)}`);
+        expect(
+          stdout.trim().split(/\s+/)[0],
+          `retained data for ${workloadRef}`,
+        ).toBe(sentinel.sha256);
+      }
+    },
+    evidence() {
+      return [...placed.entries()].map(([workload_ref, sentinel]) => ({
+        workload_ref,
+        container: sentinel.container,
+        path: sentinel.path,
+        sha256: sentinel.sha256,
+        retained: true,
+      }));
+    },
+  };
+}
+
 async function startStackRollout(token: string, stackId: string) {
   const response = await authorizedFetch(
     token,
@@ -5471,6 +5984,46 @@ async function readServerAggregate(token: string, serverId: string) {
       `/api/v1/servers/${encodeURIComponent(serverId)}`,
     ),
   );
+}
+
+// The owner's read-only OS update check (os_update_plan): the Guard runs the
+// typed host update plan and its accepted result is a command round trip,
+// whatever the plan says. A moved inventory revision is retried with a fresh
+// read, as the server page does.
+async function runOwnerUpdateCheck(token: string, serverId: string) {
+  const actions = `/api/v1/servers/${encodeURIComponent(serverId)}/actions`;
+  let jobId = "";
+  for (let attempt = 1; !jobId; attempt++) {
+    const server = await readServerAggregate(token, serverId);
+    const response = await authorizedFetch(token, runtimeApiUrl(API_BASE, actions), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `guard-disconnect-${randomUUID()}` },
+      body: JSON.stringify({
+        action: "os_update_plan",
+        expected_inventory_revision: Number(server.inventory_revision),
+        owner_approved: false,
+      }),
+    });
+    const text = await response.text();
+    if (response.status === 409 && text.includes("inventory_revision_stale") && attempt < 3) continue;
+    expect(response.status, `the owner's update check is accepted: ${redactText(text)}`).toBe(202);
+    jobId = String(lifecycleRecord(lifecycleRecord(text).data).job_id ?? "");
+    expect(jobId, "the update check is accepted as a job").not.toBe("");
+  }
+  // A plan's command budget is about 6 min; the bound leaves room for the queue
+  // (servermaintenance.QueueTimeout) inside the journey's own timeout.
+  const deadline = Date.now() + 15 * 60_000;
+  let job: LifecycleRecord = {};
+  while (Date.now() < deadline) {
+    job = await retryTransient("update check", () =>
+      fetchRuntimeApi<LifecycleRecord>(token, `${actions}/${encodeURIComponent(jobId)}`),
+    );
+    if (["completed", "failed", "cancelled"].includes(String(job.state))) {
+      return { jobId, state: String(job.state), failure: String(job.failure?.code ?? "") };
+    }
+    await delay(5_000);
+  }
+  throw new Error(`The update check ${jobId} did not finish within 15 min; last=${String(job.state)}`);
 }
 
 async function waitForConnectedOwnerServer(

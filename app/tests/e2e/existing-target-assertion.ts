@@ -4,17 +4,34 @@ import { authorizedFetch, type RuntimeBearer } from "./runtime-auth";
 
 type TargetRecord = Record<string, any>;
 
-/** Adds one use case through the real owner API, preserving the existing foundation. */
+/** The extend run a caller started itself: the request, its idempotency key and the accepted run. */
+export interface SubmittedExtendRun {
+  body: TargetRecord;
+  key: string;
+  run: TargetRecord;
+}
+
+/** Adds one use case to the existing foundation, preserving it. The run is
+ * started through the real owner API, or by `submit` (the Cloud handoff in
+ * the browser); either way the same server-side outcome is asserted. */
 export async function assertExistingTargetExtension(options: {
   token: RuntimeBearer;
   stackId: string;
   serverId?: string;
   expectedRevision: string;
   previewOnly?: boolean;
+  /** Canonical use case to add (default vault) and the service it installs. */
+  goal?: string;
+  serviceKey?: string;
+  submit?: () => Promise<SubmittedExtendRun>;
   url: (path: string) => string;
   waitForJob: (id: string) => Promise<Record<string, unknown>>;
 }) {
   const { token, stackId, url, waitForJob } = options;
+  if (options.goal && !options.serviceKey)
+    throw new Error("existing_target_service_key_required_with_goal");
+  const goal = options.goal ?? "vault";
+  const serviceKey = options.serviceKey ?? "vaultwarden";
   if (!stackId.trim()) throw new Error("existing_target_stack_id_required");
   if (!/^[a-f0-9]{40}$/.test(options.expectedRevision))
     throw new Error("existing_target_exact_source_revision_required");
@@ -201,16 +218,17 @@ export async function assertExistingTargetExtension(options: {
       "existing_target_foundation_has_no_healthy_managed_services",
     );
   }
-  if (existing.some((row) => row.key === "vaultwarden"))
+  if (existing.some((row) => row.key === serviceKey))
     throw new Error(
-      "existing_target_vault_already_installed_choose_unextended_target",
+      `existing_target_${goal}_already_installed_choose_unextended_target`,
     );
-  let primaryError: unknown;
-  try {
+  // The default start: the owner API asks the Unifier for the add-use-case
+  // distribution and starts the extend run that accepts it.
+  async function submitThroughApi(): Promise<SubmittedExtendRun> {
     const selection = {
       flow: "add-use-case",
       stack_id: stackId,
-      goals: ["vault"],
+      goals: [goal],
     };
     const recommendation = await request(
       "/api/v1/unifier/layout/recommendations",
@@ -232,7 +250,29 @@ export async function assertExistingTargetExtension(options: {
       },
     };
     const key = `existing-target-${randomUUID()}`;
-    const run = await request("/api/v1/wizard/runs", body, key);
+    return { body, key, run: await request("/api/v1/wizard/runs", body, key) };
+  }
+  let primaryError: unknown;
+  try {
+    const { body, key, run } = await (options.submit ?? submitThroughApi)();
+    // Whoever started it, the run extends this deployment with exactly the
+    // goal and accepts a verified distribution; no server is created.
+    expect(body.intent?.run_kind).toBe("expansion");
+    expect(body.intent?.goals).toEqual([goal]);
+    expect(body.intent?.kit_assignment).toEqual({
+      mode: "extend",
+      kit_deployment_id: stackId,
+    });
+    expect(body.intent?.server ?? {}).toEqual({});
+    const layoutId = String(body.intent?.layout_recommendation?.id ?? "");
+    expect(layoutId, "existing_target_run_accepts_no_distribution").not.toBe(
+      "",
+    );
+    const layout = await request(
+      `/api/v1/unifier/layout/recommendations/${encodeURIComponent(layoutId)}`,
+    );
+    expect(["accepted", "executing", "done"]).toContain(layout.state);
+    expect(layout.verification?.status).toBe("verified");
     expect(run.job_ids?.length).toBeGreaterThan(0);
     expect(run.state).toBe("provisioning");
     const replay = await request("/api/v1/wizard/runs", body, key);
@@ -266,7 +306,7 @@ export async function assertExistingTargetExtension(options: {
           const current = await services(serverIds);
           return current.some(
             (row) =>
-              row.key === "vaultwarden" &&
+              row.key === serviceKey &&
               row.management_state === "managed" &&
               row.observed_state === "running" &&
               row.freshness?.state === "fresh" &&
@@ -279,6 +319,10 @@ export async function assertExistingTargetExtension(options: {
     return {
       stack_id: stackId,
       server_ids: serverIds,
+      goal,
+      service_key: serviceKey,
+      started_by: options.submit ? "caller" : "owner-api",
+      layout_recommendation_id: layoutId,
       run_id: run.run_id,
       job_ids: run.job_ids,
       source: sourceBefore,

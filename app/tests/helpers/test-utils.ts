@@ -256,15 +256,24 @@ export async function listWorkersViaApi(
   apiBase?: string,
 ): Promise<any[]> {
   const base = apiBase ?? requireApiBase();
-  const resp = await fetch(`${base}/api/v1/workers`, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  });
-  if (!resp.ok) {
-    throw new Error(`List workers failed (HTTP ${resp.status})`);
+  // The list is paginated (20 per page by default, ordered by worker id), so a
+  // persona with many workers can have its newest one on a later page.
+  const workers: any[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const resp = await fetch(`${base}/api/v1/workers?per_page=100&page=${page}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (!resp.ok) {
+      throw new Error(`List workers failed (HTTP ${resp.status})`);
+    }
+    const json = (await resp.json()) as any;
+    const rows = json.data ?? json;
+    if (!Array.isArray(rows)) break;
+    workers.push(...rows);
+    const total = Number(json.meta?.total ?? 0);
+    if (rows.length === 0 || !(total > workers.length)) break;
   }
-  const json = (await resp.json()) as any;
-  const workers = json.data ?? json;
-  return Array.isArray(workers) ? workers : [];
+  return workers;
 }
 
 /**

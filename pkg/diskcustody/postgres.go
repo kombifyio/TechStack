@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -42,8 +43,18 @@ func schemaPending(err error, pending error) error {
 	return err
 }
 
+func pgErrorCode(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
+}
+
 // HostKeyPins is the runtime_host_key_pins table: one pin per normalized
-// host:port, never overwritten by the runtime.
+// host:port, never overwritten by the runtime. A pin is bound to the managed
+// lease that took it and retired by the database once that lease's provider
+// resources are proven absent (migration 176).
 type HostKeyPins struct {
 	DB *sql.DB
 }
@@ -88,9 +99,97 @@ func (p HostKeyPins) LookupPin(ctx context.Context, address string) (string, boo
 }
 
 // PinFirst stores an observed pin unless the address already has one and
-// returns the pin that holds.
-func (p HostKeyPins) PinFirst(ctx context.Context, address, fingerprint string) (string, error) {
-	return p.pinFirst(ctx, address, fingerprint, pinSourceObserved)
+// returns the pin that holds. A bound pin is written in the lease's tenant
+// scope with the lease in app.runtime_host_key_lease; the admit trigger of
+// migration 176 keeps the binding only for that tenant's lease recording the
+// pinned host and refuses a lease already proven absent. Before migration 176
+// the setting is ignored and the pin is stored unbound.
+func (p HostKeyPins) PinFirst(ctx context.Context, address, fingerprint string, binding jobs.RuntimeHostKeyBinding) (string, error) {
+	if p.DB == nil {
+		return "", errors.New("host key pin database is not configured")
+	}
+	if binding.TenantID == "" || binding.LeaseID == "" {
+		slog.Default().Warn("runtime_host_key_pin_unbound", "address", address, "reason", "no managed lease")
+		return p.pinFirst(ctx, address, fingerprint, pinSourceObserved)
+	}
+	tx, err := db.BeginTenantTransaction(ctx, p.DB, binding.TenantID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.runtime_host_key_lease', $1, true)`, binding.LeaseID); err != nil {
+		_ = tx.Rollback()
+		return "", err
+	}
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO runtime_host_key_pins (address, fingerprint, source)
+		VALUES ($1, $2, $3) ON CONFLICT (address) DO NOTHING`, address, fingerprint, pinSourceObserved)
+	if err != nil {
+		_ = tx.Rollback()
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	if rows, _ := inserted.RowsAffected(); rows == 1 {
+		p.warnUnbound(ctx, address, binding)
+	}
+	pinned, ok, err := p.LookupPin(ctx, address)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("host key pin for %s was not stored", address)
+	}
+	return pinned, nil
+}
+
+// warnUnbound reports a new pin the database stored without its lease: it
+// does not retire with the lease, so a recycled address would refuse the next
+// server again.
+func (p HostKeyPins) warnUnbound(ctx context.Context, address string, binding jobs.RuntimeHostKeyBinding) {
+	var bound bool
+	err := p.DB.QueryRowContext(ctx, `SELECT lease_binding IS NOT NULL FROM runtime_host_key_pins WHERE address = $1`, address).Scan(&bound)
+	if err != nil || bound {
+		return
+	}
+	slog.Default().Warn("runtime_host_key_pin_unbound", "address", address, "tenant_id", binding.TenantID, "lease_id", binding.LeaseID)
+}
+
+// RetiredPins returns the candidate addresses whose given fingerprint the
+// database retired. Before migration 176 no pin has ever been retired.
+func (p HostKeyPins) RetiredPins(ctx context.Context, candidates map[string]string) (map[string]bool, error) {
+	retired := map[string]bool{}
+	if len(candidates) == 0 {
+		return retired, nil
+	}
+	if p.DB == nil {
+		return nil, errors.New("host key pin database is not configured")
+	}
+	addresses := make([]string, 0, len(candidates))
+	fingerprints := make([]string, 0, len(candidates))
+	for address, fingerprint := range candidates {
+		addresses = append(addresses, address)
+		fingerprints = append(fingerprints, fingerprint)
+	}
+	rows, err := p.DB.QueryContext(ctx, `SELECT DISTINCT retired.address
+		FROM runtime_host_key_pin_retirements AS retired
+		JOIN unnest($1::text[], $2::text[]) AS candidate(address, fingerprint)
+		  ON candidate.address = retired.address AND candidate.fingerprint = retired.fingerprint`,
+		addresses, fingerprints)
+	if pgErrorCode(err) == "42P01" {
+		return retired, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var address string
+		if err := rows.Scan(&address); err != nil {
+			return nil, err
+		}
+		retired[address] = true
+	}
+	return retired, rows.Err()
 }
 
 func (p HostKeyPins) pinFirst(ctx context.Context, address, fingerprint, source string) (string, error) {

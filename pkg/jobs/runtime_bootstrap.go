@@ -364,18 +364,20 @@ func (b *SSHRuntimeTargetBootstrapper) dial(ctx context.Context, target *Runtime
 }
 
 // bootstrapHostKeyCallback returns the host-key policy for managed target
-// bootstrap: the first contact pins and every later contact must match.
+// bootstrap: the first contact pins and every later contact must match. The
+// pin is bound to the managed lease the context names (WithRuntimeHostKeyBinding).
 // Without a pin store the handshake is rejected.
-func (b *SSHRuntimeTargetBootstrapper) bootstrapHostKeyCallback() ssh.HostKeyCallback {
+func (b *SSHRuntimeTargetBootstrapper) bootstrapHostKeyCallback(ctx context.Context) ssh.HostKeyCallback {
 	if b == nil || b.hostKeys == nil {
 		return rejectUnverifiableRuntimeHostKey()
 	}
 	store := b.hostKeys
+	binding := runtimeHostKeyBindingFrom(ctx)
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		if remote == nil {
 			return runtimeHostKeyUnverifiable(hostname, "no remote address")
 		}
-		return store.VerifyAndPin(remote.String(), key)
+		return store.VerifyAndPin(remote.String(), key, binding)
 	}
 }
 
@@ -383,7 +385,7 @@ func (b *SSHRuntimeTargetBootstrapper) dialAs(ctx context.Context, target *Runti
 	config := &ssh.ClientConfig{
 		User:            login,
 		Auth:            auth,
-		HostKeyCallback: b.bootstrapHostKeyCallback(),
+		HostKeyCallback: b.bootstrapHostKeyCallback(ctx),
 		Timeout:         minDuration(b.timeout, 10*time.Second),
 	}
 	addr := net.JoinHostPort(target.Host, strconv.Itoa(target.Port))
