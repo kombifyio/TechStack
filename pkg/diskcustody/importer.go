@@ -39,7 +39,10 @@ type ImportReport struct {
 	HostKeyPins       int
 	HostKeyImported   int
 	HostKeyMatching   int
-	HostKeyConflicts  []string
+	// HostKeyRetired counts disk pins the database retired: their managed
+	// server is proven gone, so they are not imported again.
+	HostKeyRetired   int
+	HostKeyConflicts []string
 
 	StacksOnDisk       int
 	StacksMapped       int
@@ -95,6 +98,7 @@ func Import(ctx context.Context, pool *sql.DB, dataDir string, log *slog.Logger)
 		"host_key_pins", report.HostKeyPins,
 		"host_key_imported", report.HostKeyImported,
 		"host_key_matching", report.HostKeyMatching,
+		"host_key_retired", report.HostKeyRetired,
 		"host_key_conflicts", strings.Join(report.HostKeyConflicts, ","),
 		"stacks_on_disk", report.StacksOnDisk,
 		"stacks_mapped", report.StacksMapped,
@@ -116,12 +120,12 @@ func Import(ctx context.Context, pool *sql.DB, dataDir string, log *slog.Logger)
 }
 
 // Complete reports whether the database holds every durable item of the disk
-// byte for byte: every pin, every managed spec file and an archive copy of
+// byte for byte: every pin it has not retired, every managed spec file and an archive copy of
 // every file of each stack the database knows, and an archive copy of the
 // control-plane files. A stack without a confirmed tenant leaves it false; a
 // stack whose row is gone under its recorded tenant (orphaned) does not.
 func (r ImportReport) Complete() bool {
-	return r.Errors == 0 && len(r.HostKeyConflicts) == 0 && r.HostKeyMatching == r.HostKeyPins &&
+	return r.Errors == 0 && len(r.HostKeyConflicts) == 0 && r.HostKeyMatching+r.HostKeyRetired == r.HostKeyPins &&
 		r.StackFilesMatching == r.StackFilesOnDisk && r.StackArchiveMatch == r.StackArchiveFiles &&
 		len(r.StacksUnresolved) == 0 && r.ArchiveMatching == r.ArchiveFiles
 }
@@ -175,12 +179,20 @@ func importHostKeys(ctx context.Context, pool *sql.DB, dataDir string, report *I
 	if err != nil {
 		return err
 	}
+	retired, err := store.RetiredPins(ctx, pins)
+	if err != nil {
+		return err
+	}
 	addresses := make([]string, 0, len(pins))
 	for address := range pins {
 		addresses = append(addresses, address)
 	}
 	sort.Strings(addresses)
 	for _, address := range addresses {
+		if retired[address] {
+			report.HostKeyRetired++
+			continue
+		}
 		held, err := store.pinFirst(ctx, address, pins[address], pinSourceDiskImport)
 		if err != nil {
 			return err

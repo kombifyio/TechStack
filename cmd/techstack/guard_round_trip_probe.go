@@ -39,6 +39,9 @@ type guardRoundTripProbeTarget struct {
 	// generation is the HTTPS credential generation the Guard holds now, zero
 	// for an mTLS agent.
 	generation int64
+	// mtls marks an agent of the mTLS listener, whose round trip is recorded
+	// after its waiting sender wakes and whose commands have no durable id.
+	mtls bool
 }
 
 // guardRoundTripProbe keeps the Connected round-trip evidence of a healthy
@@ -47,8 +50,9 @@ type guardRoundTripProbeTarget struct {
 // last did) receives one read-only typed command: `stackkit host updates plan`
 // through the existing typed channel, never a shell. The hub (HTTPS) or the
 // mTLS listener records the accepted result as the round trip; the probe
-// itself discards the plan. A Guard that cannot run host commands is never
-// probed and keeps its evidence from real commands only.
+// itself discards the plan. A Guard that cannot run host commands, or an
+// HTTPS Guard without a credential generation, is never probed and keeps its
+// evidence from real commands only.
 type guardRoundTripProbe struct {
 	candidates func(ctx context.Context) ([]guardRoundTripProbeTarget, error)
 	trips      interface {
@@ -58,6 +62,12 @@ type guardRoundTripProbe struct {
 	interval   time.Duration
 	now        func() time.Time
 	log        *slog.Logger
+
+	// sent holds the probe command IDs of the current window that this
+	// process sent or found sent, so a spent window takes no slot of a pass.
+	mu         sync.Mutex
+	sentWindow string
+	sent       map[string]bool
 }
 
 // bootGuardRoundTripProbe composes the probe over the deployment's typed
@@ -116,6 +126,8 @@ func httpsRoundTripProbeCandidates(store *controlplane.PostgresStore, grpcState 
 				if err != nil {
 					return out, err
 				}
+				// A Guard without a readable credential generation cannot leave
+				// a round trip (agentcontrol.recordRoundTrip), so it is not probed.
 				generations := map[string]int64{}
 				if workers, err := store.ListWorkersByTenant(ctx, tenantID); err == nil {
 					for _, worker := range workers {
@@ -133,8 +145,12 @@ func httpsRoundTripProbeCandidates(store *controlplane.PostgresStore, grpcState 
 						!containsString(capabilities(server), stackkitcommand.HostMaintenanceCapability) {
 						continue
 					}
+					generation := generations[workerID]
+					if generation <= 0 {
+						continue
+					}
 					out = append(out, guardRoundTripProbeTarget{
-						tenantID: tenantID, serverID: server.ID, agentID: workerID, generation: generations[workerID],
+						tenantID: tenantID, serverID: server.ID, agentID: workerID, generation: generation,
 					})
 				}
 			}
@@ -157,7 +173,7 @@ func mtlsRoundTripProbeCandidates(grpcSrv *grpcserver.Server) func(context.Conte
 				!containsString(agent.Capabilities, stackkitcommand.HostMaintenanceCapability) {
 				continue
 			}
-			out = append(out, guardRoundTripProbeTarget{tenantID: agent.Tenant, agentID: agent.ID})
+			out = append(out, guardRoundTripProbeTarget{tenantID: agent.Tenant, agentID: agent.ID, mtls: true})
 		}
 		return out, nil
 	}
@@ -191,12 +207,17 @@ func guardRoundTripProbeDue(target guardRoundTripProbeTarget, trip *agentcontrol
 	return trip.Transport != agentcontrol.RoundTripTransportMTLS
 }
 
-// guardRoundTripProbeCommandID is deterministic per Guard and probe window, so
-// replicas that race for the same Guard send one command between them (the
-// durable hub refuses a second command_id) and a Guard gets at most one probe
-// per window.
+// guardRoundTripProbeCommandID is deterministic per Guard identity and probe
+// window, so replicas that race for the same Guard send one command between
+// them (the durable hub refuses a second command_id) and a Guard gets at most
+// one probe per window. A rotated HTTPS credential is a new identity whose
+// earlier round trip no longer counts, so it gets its own probe.
 func guardRoundTripProbeCommandID(target guardRoundTripProbeTarget, now time.Time) string {
-	sum := sha256.Sum256([]byte("kombify.guard/round-trip-probe/v1\x00" + target.tenantID + "\x00" + target.agentID))
+	identity := "kombify.guard/round-trip-probe/v1\x00" + target.tenantID + "\x00" + target.agentID
+	if target.generation > 0 {
+		identity += "\x00" + strconv.FormatInt(target.generation, 10)
+	}
+	sum := sha256.Sum256([]byte(identity))
 	window := now.UTC().Truncate(guardcompat.CommandRoundTripProbeAfter).Unix()
 	return "guard-probe:" + hex.EncodeToString(sum[:])[:24] + ":" + strconv.FormatInt(window, 36)
 }
@@ -226,7 +247,7 @@ func (p *guardRoundTripProbe) pass(ctx context.Context) {
 		if found, ok := tenantTrips[target.agentID]; ok {
 			trip = &found
 		}
-		if guardRoundTripProbeDue(target, trip, now) {
+		if guardRoundTripProbeDue(target, trip, now) && !p.windowSpent(target, now) {
 			due = append(due, target)
 		}
 	}
@@ -261,11 +282,77 @@ func (p *guardRoundTripProbe) probe(ctx context.Context, target guardRoundTripPr
 		// Refused before sending: the configured StackKits pin has no host
 		// commands, so this deployment cannot probe.
 		p.log.Info("guard_round_trip_probe_unavailable", "agent_id", target.agentID, "reason", refusal.Code)
+	case errors.Is(err, agentcontrol.ErrCommandExists):
+		// This window's probe was sent already, by an earlier pass or another
+		// replica; the outcome of that one probe is logged where it ended.
+		p.markWindowSpent(target, now)
 	case err == nil, errors.As(err, &refusal), errors.As(err, &failure):
 		// The Guard answered: its accepted result is the round trip, whatever
-		// the plan said.
+		// the plan said. A Guard that answers outside the binding contract
+		// (the legacy result path) or without a credential generation leaves
+		// none, so it stays not Connected and is not probed again in this window.
+		p.markWindowSpent(target, now)
+		p.reportMissingEvidence(ctx, target, now)
 	case ctx.Err() != nil:
 	default:
 		p.log.Info("guard_round_trip_probe_unanswered", "agent_id", target.agentID, "error", err.Error())
 	}
+}
+
+// reportMissingEvidence logs, once per Guard and probe window, an answered
+// probe that left no round trip the Connected fact accepts.
+func (p *guardRoundTripProbe) reportMissingEvidence(ctx context.Context, target guardRoundTripProbeTarget, now time.Time) {
+	if target.mtls {
+		// The listener records an mTLS round trip after it wakes the sender.
+		return
+	}
+	trips, err := p.trips.CommandRoundTripsForTenant(ctx, target.tenantID)
+	if err != nil {
+		p.log.Warn("guard_round_trip_probe_read_failed", "error", err.Error())
+		return
+	}
+	var trip *agentcontrol.CommandRoundTrip
+	if found, ok := trips[target.agentID]; ok {
+		trip = &found
+	}
+	if !guardRoundTripProbeDue(target, trip, now) {
+		return
+	}
+	reason := "no_round_trip_recorded"
+	if trip != nil {
+		reason = "round_trip_not_current"
+	}
+	p.log.Info("guard_round_trip_probe_no_evidence", "agent_id", target.agentID, "reason", reason,
+		"credential_generation", target.generation, "command_id", guardRoundTripProbeCommandID(target, now))
+}
+
+// windowSpent reports whether this window's probe of the Guard was already
+// sent; markWindowSpent records it. Only HTTPS probes have a durable id.
+func (p *guardRoundTripProbe) windowSpent(target guardRoundTripProbeTarget, now time.Time) bool {
+	if target.mtls {
+		return false
+	}
+	id := guardRoundTripProbeCommandID(target, now)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sentWindow == guardRoundTripProbeWindow(id) && p.sent[id]
+}
+
+func (p *guardRoundTripProbe) markWindowSpent(target guardRoundTripProbeTarget, now time.Time) {
+	if target.mtls {
+		return
+	}
+	id := guardRoundTripProbeCommandID(target, now)
+	window := guardRoundTripProbeWindow(id)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.sentWindow != window || p.sent == nil {
+		p.sentWindow, p.sent = window, map[string]bool{}
+	}
+	p.sent[id] = true
+}
+
+// guardRoundTripProbeWindow is the window suffix of a probe command ID.
+func guardRoundTripProbeWindow(commandID string) string {
+	return commandID[strings.LastIndex(commandID, ":")+1:]
 }

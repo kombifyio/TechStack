@@ -60,6 +60,10 @@
     {
       "version": "175_household_legacy_removal.sql",
       "sha256": "53a9b90da8d1dda4aa9784329fb4072ad1924909dbafc2bc2a58fddbedd7f471"
+    },
+    {
+      "version": "176_runtime_host_key_pin_lifecycle.sql",
+      "sha256": "5a6e8f9daa6bc7b4ec8baabff6d085ae872cb17250afae7f2a7817f9cbfbbc24"
     }
   ],
   "database_target": "core",

@@ -87,6 +87,9 @@ func loadApplicationPolicy(ctx context.Context, q PrivilegeQuerier, requireFunct
 		// Migration 174: the data-disk custody. Pins and archive rows are
 		// added and read, never changed or removed by the runtime.
 		"runtime_host_key_pins": "SELECT,INSERT", "control_plane_disk_archive": "SELECT,INSERT",
+		// Migration 176: a pin retires only through the provider-absence
+		// trigger; the runtime reads the record to drop a retired file pin.
+		"runtime_host_key_pin_retirements": "SELECT",
 	}
 	for rows.Next() {
 		var oid int64

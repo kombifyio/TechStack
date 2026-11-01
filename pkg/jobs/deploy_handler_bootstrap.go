@@ -21,6 +21,9 @@ func (r *deployRollout) bootstrapManagedRuntimeTarget(ctx context.Context) error
 	if !nativeCustody && !runtimeActionTargetHasSSHCredential(target) {
 		return nil
 	}
+	// The host-key pin a first dial takes belongs to this lease's server and
+	// retires once that server is proven absent at the provider.
+	ctx = WithRuntimeHostKeyBinding(ctx, r.runtimeHostKeyBinding())
 	started := time.Now()
 	message := "Preparing managed VPS with StackKits CLI..."
 	if nativeCustody {
@@ -58,6 +61,17 @@ func (r *deployRollout) bootstrapManagedRuntimeTarget(ctx context.Context) error
 	r.e2eProof["target_bootstrap"] = result.Status
 	r.q.addLog(r.job, "info", fmt.Sprintf("Managed VPS bootstrap %s: %s", firstNonEmpty(result.Status, "completed"), result.Message))
 	return nil
+}
+
+func (r *deployRollout) runtimeHostKeyBinding() RuntimeHostKeyBinding {
+	if r.job == nil {
+		return RuntimeHostKeyBinding{}
+	}
+	snapshot := r.job.Snapshot()
+	return RuntimeHostKeyBinding{
+		TenantID: r.actionReq.TenantID,
+		LeaseID:  firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField)),
+	}
 }
 
 const ManagedRuntimeHostPreparationPendingReason = "managed_runtime_host_preparation_pending"
