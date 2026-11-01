@@ -5331,6 +5331,11 @@ async function enrollAndDeployLifecycleStack(
           transport: "install-command",
           environment_class: run.environmentClass ?? "cloud",
         },
+        // A first run inherits the access mode the person's homelab recorded
+        // (wizard_goal_reconciliation.go). A server at home that serves only
+        // its LAN chooses local access, as the owner does in the wizard;
+        // otherwise a remote mode asks for a domain first.
+        ...(run.environmentClass === "local" ? { access: { mode: "local" } } : {}),
         kit_assignment: { mode: "found", kit_slug: "basement-kit" },
       },
     },
