@@ -15,6 +15,8 @@ import (
 	"time"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/artifactdelivery"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/guardidentity"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -251,6 +253,9 @@ func (h workerRouteHandlers) agentInstallPins(e *httpx.Event) error {
 	if ownerID, err := requireWorkerOwner(e); err != nil || ownerID == "" {
 		return err
 	}
+	if servesOwnGuardBinary() {
+		return h.selfHostedInstallPins(e)
+	}
 	index, _, err := loadArtifactDeliveryIndex()
 	if err != nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Artifact delivery admission is unavailable", nil)
@@ -274,9 +279,200 @@ func (h workerRouteHandlers) agentInstallPins(e *httpx.Event) error {
 	})
 }
 
-// agentBinary admits delivery at the Cloudflare/R2 edge; it never serves a file.
+// agentBinary admits delivery at the Cloudflare/R2 edge. Only a self-hosted
+// installation without that delivery serves the file itself, outside Render.
 func (h workerRouteHandlers) agentBinary(e *httpx.Event) error {
+	if servesOwnGuardBinary() {
+		return h.serveSelfHostedAgentBinary(e)
+	}
 	return h.admitArtifact(e, "guard_binary")
+}
+
+// servesOwnGuardBinary reports whether this control plane sends the Guard
+// binary itself. A control plane with an artifact delivery index (every hosted
+// image) only admits the R2 transfer that delivery serves. A self-hosted
+// installation without one has nothing in front of it, so it serves the
+// binary, outside Render (workspace standard "Render download prohibition":
+// account-free local and self-hosted modes keep their own download behavior).
+func servesOwnGuardBinary() bool {
+	mode, err := config.BootDeploymentModeFromEnv()
+	return err == nil && mode.IsSelfHosted() && strings.TrimSpace(os.Getenv(artifactIndexPathEnv)) == ""
+}
+
+// serveSelfHostedAgentBinary sends the Guard binary this self-hosted control
+// plane publishes: the signed release's file when a release directory is
+// configured, otherwise the binary it runs. Render is refused before any file
+// is opened.
+func (h workerRouteHandlers) serveSelfHostedAgentBinary(e *httpx.Event) error {
+	if err := artifactdelivery.RequireAllowed(e); err != nil {
+		return err
+	}
+	requestedOS := strings.ToLower(strings.TrimSpace(e.Request.PathValue("os")))
+	requestedArch := normalizeAgentBinaryArch(e.Request.PathValue("arch"))
+	if requestedOS != managedRuntimeOSLinux || requestedArch == "" {
+		return httpx.BadRequest(e, "Unsupported agent platform", nil)
+	}
+	rawToken := workerRequestCredential(e.Request)
+	if rawToken == "" {
+		return httpx.Unauthorized(e, "A valid agent download capability is required")
+	}
+	now := time.Now().UTC()
+	authorization, authorized, err := h.authorizeAgentBinary(e, rawToken, now)
+	if err != nil || !authorized {
+		return err
+	}
+	artifactProvider := h.binaryArtifact
+	if artifactProvider == nil {
+		artifactProvider = func() (agentBinaryArtifact, error) {
+			return selfHostedAgentBinaryArtifact(requestedOS, requestedArch)
+		}
+	}
+	artifact, err := artifactProvider()
+	if err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary is temporarily unavailable", nil)
+	}
+	if artifact.os != requestedOS || artifact.arch != requestedArch {
+		e.Response.Header().Set("X-Kombify-Artifact-OS", artifact.os)
+		e.Response.Header().Set("X-Kombify-Artifact-Arch", artifact.arch)
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The deployed control plane does not publish a binary for the requested architecture", nil)
+	}
+	if artifact.size <= 0 || len(artifact.sha256) != sha256.Size*2 {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary is temporarily unavailable", nil)
+	}
+	etag := `"` + artifact.sha256 + `"`
+	e.Response.Header().Set("ETag", etag)
+	e.Response.Header().Set(agentBinaryChecksumHeader, artifact.sha256)
+	if version := guardArtifactVersion(); version != "" {
+		e.Response.Header().Set(agentBinaryVersionHeader, version)
+	}
+	e.Response.Header().Set("Cache-Control", "private, no-store")
+	e.Response.Header().Set("Vary", "Authorization")
+	if strings.TrimSpace(e.Request.Header.Get("If-None-Match")) == etag {
+		e.Response.WriteHeader(http.StatusNotModified)
+		return nil
+	}
+	if h.binaryDownloadGuard == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary download guard is unavailable", nil)
+	}
+	budgetKey := "guard_binary:" + authorization.tokenHash
+	release, allowed := h.binaryDownloadGuard.acquire(budgetKey, authorization.resetAt, now, artifact.size)
+	if !allowed {
+		e.Response.Header().Set("Retry-After", "900")
+		return httpx.Error(e, http.StatusTooManyRequests, ksapi.ErrCodeRateLimited, "Agent binary download is rate limited", nil)
+	}
+	defer release()
+	file, err := os.Open(artifact.path)
+	if err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary is temporarily unavailable", nil)
+	}
+	defer func() { _ = file.Close() }()
+	// A file replaced since its digest was taken would be sent under the old
+	// digest; refuse it and digest it afresh on the next request.
+	if info, statErr := file.Stat(); statErr != nil || info.Size() != artifact.size || !info.ModTime().UTC().Equal(artifact.modTime) {
+		forgetSelfHostedAgentBinaryArtifact(artifact.path)
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Agent binary is temporarily unavailable", nil)
+	}
+	filename := fmt.Sprintf("techstack-%s-%s", artifact.os, artifact.arch)
+	e.Response.Header().Set("X-Content-Type-Options", "nosniff")
+	e.Response.Header().Set("Content-Type", "application/octet-stream")
+	e.Response.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	// The API write timeout is one minute; a bounded extension keeps the large
+	// binary viable on slow links while the transfer guard caps concurrency.
+	deadlineErr := http.NewResponseController(e.Response).SetWriteDeadline(time.Now().Add(agentBinaryWriteTimeout))
+	// The handler owns the status line from here on, so a transfer cut short
+	// is logged as truncated instead of producing a second response.
+	e.MarkResponseStreamed()
+	counter := &agentBinaryTransferCounter{ResponseWriter: e.Response}
+	started := time.Now()
+	// ServeContent honours Range, so an interrupted transfer can resume.
+	http.ServeContent(counter, e.Request, filename, artifact.modTime, file)
+	h.binaryDownloadGuard.record(budgetKey, counter.written)
+	logAgentBinaryTransfer(e, artifact, counter, started, deadlineErr)
+	return nil
+}
+
+// selfHostedInstallPins pins the binary serveSelfHostedAgentBinary sends. With
+// a signed release an architecture is pinned only when its file matches the
+// signed manifest entry; an empty set means no trusted digest is known.
+func (h workerRouteHandlers) selfHostedInstallPins(e *httpx.Event) error {
+	pins := map[string]string{}
+	version := guardArtifactVersion()
+	if h.binaryArtifact != nil {
+		if artifact, err := h.binaryArtifact(); err == nil && artifact.os == managedRuntimeOSLinux && len(artifact.sha256) == sha256.Size*2 {
+			pins[artifact.arch] = artifact.sha256
+		}
+	} else if dir := guardReleaseDir(); dir != "" {
+		if served, _, err := currentGuardManifest(dir); err == nil {
+			version = served.manifest.Version
+			for _, arch := range []string{managedRuntimeArchAMD64, "arm64"} {
+				entry, found := served.manifest.Artifact(managedRuntimeOSLinux, arch)
+				if !found {
+					continue
+				}
+				if artifact, err := selfHostedAgentBinaryArtifact(managedRuntimeOSLinux, arch); err == nil && artifact.sha256 == entry.SHA256 {
+					pins[arch] = artifact.sha256
+				}
+			}
+		}
+	} else if artifact, err := selfHostedAgentBinaryArtifact(managedRuntimeOSLinux, runtime.GOARCH); err == nil && len(artifact.sha256) == sha256.Size*2 {
+		pins[artifact.arch] = artifact.sha256
+	}
+	e.Response.Header().Set("Cache-Control", "private, no-store")
+	return httpx.Success(e, http.StatusOK, map[string]any{
+		"os":      managedRuntimeOSLinux,
+		"version": version,
+		"pins":    pins,
+	})
+}
+
+var (
+	selfHostedArtifactMu    sync.Mutex
+	selfHostedArtifactCache = map[string]agentBinaryArtifact{}
+)
+
+func forgetSelfHostedAgentBinaryArtifact(path string) {
+	selfHostedArtifactMu.Lock()
+	defer selfHostedArtifactMu.Unlock()
+	for key, cached := range selfHostedArtifactCache {
+		if cached.path == path {
+			delete(selfHostedArtifactCache, key)
+		}
+	}
+}
+
+// selfHostedAgentBinaryArtifact describes the Guard binary a self-hosted
+// control plane serves. With a configured signed release it is only that
+// release's file, never a rebuild; without one it is the executable this
+// process runs (or TECHSTACK_AGENT_BINARY_LINUX_AMD64). A file's digest is
+// computed once per path: release files and the executable are immutable for
+// the life of the process.
+func selfHostedAgentBinaryArtifact(goos, arch string) (agentBinaryArtifact, error) {
+	path, artifactOS, artifactArch := "", goos, arch
+	if dir := guardReleaseDir(); dir != "" {
+		path = filepath.Join(dir, signedGuardBinaryName(goos, arch))
+	} else if configured := strings.TrimSpace(os.Getenv("TECHSTACK_AGENT_BINARY_LINUX_AMD64")); configured != "" {
+		path, artifactOS, artifactArch = configured, managedRuntimeOSLinux, "amd64"
+	} else {
+		if runtime.GOOS != managedRuntimeOSLinux {
+			return agentBinaryArtifact{}, errors.New("running binary is not a Linux artifact")
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return agentBinaryArtifact{}, err
+		}
+		path, artifactOS, artifactArch = executable, runtime.GOOS, runtime.GOARCH
+	}
+	selfHostedArtifactMu.Lock()
+	defer selfHostedArtifactMu.Unlock()
+	if cached, ok := selfHostedArtifactCache[path]; ok {
+		return cached, nil
+	}
+	artifact, err := agentBinaryArtifactForPath(path, artifactOS, artifactArch)
+	if err != nil {
+		return agentBinaryArtifact{}, err
+	}
+	selfHostedArtifactCache[path] = artifact
+	return artifact, nil
 }
 
 // agentBinaryTransferCounter records how much of the artifact actually reached

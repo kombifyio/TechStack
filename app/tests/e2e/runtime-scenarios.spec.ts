@@ -208,6 +208,8 @@ interface RuntimeStackOperationService {
   name?: string;
   display_name?: string;
   application_name?: string;
+  application_key?: string;
+  management_state?: string;
   stack_id?: string;
   stack_name?: string;
   server_id?: string;
@@ -216,6 +218,7 @@ interface RuntimeStackOperationService {
   url?: string;
   desired_state?: string;
   observed_state?: string;
+  observed_at?: string;
   allowed_actions?: string[];
   inventory_revision?: number;
 }
@@ -1109,6 +1112,37 @@ async function fetchRuntimeApi<T>(
   return (json.data ?? json) as T;
 }
 
+// The worker list is paginated (20 per page by default, ordered by worker id)
+// and keeps a row for every lease the owner decommissioned, so a fresh managed
+// node can be on a later page.
+async function listRuntimeWorkers(
+  bearer: RuntimeBearer,
+  apiBase = API_BASE,
+): Promise<RuntimeWorkerRecord[]> {
+  const workers: RuntimeWorkerRecord[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const path = `/api/v1/workers?per_page=100&page=${page}`;
+    const response = await authorizedFetch(
+      bearer,
+      runtimeApiUrl(apiBase, path),
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `Runtime API GET ${path} failed with HTTP ${response.status}: ${text}`,
+      );
+    }
+    const json = text ? JSON.parse(text) : {};
+    const rows = json.data ?? json;
+    if (!Array.isArray(rows)) break;
+    workers.push(...rows);
+    const total = Number(json.meta?.total ?? 0);
+    if (rows.length === 0 || !(total > workers.length)) break;
+  }
+  return workers;
+}
+
 // Read the owner-bound native receipt. Terminal server aggregates remain for
 // audit, so their presence is not a cleanup failure or a substitute for proof.
 class ManagedRuntimeCleanupReadbackError extends Error {
@@ -1178,11 +1212,7 @@ async function waitForManagedRuntimeInventoryEvidence(args: {
   let lastRegistry: RuntimeRegistryServicePayload | undefined;
 
   while (Date.now() < deadline) {
-    lastWorkers = await fetchRuntimeApi<RuntimeWorkerRecord[]>(
-      args.token,
-      "/api/v1/workers",
-      args.apiBase,
-    );
+    lastWorkers = await listRuntimeWorkers(args.token, args.apiBase);
     // The lease binds the node; which projection produced the row
     // (worker registry, canonical server) is not part of the contract.
     const worker = lastWorkers.find((item) => item.lease_id === args.leaseId);
@@ -1360,30 +1390,50 @@ async function runManagedServiceActionEvidence(args: {
   );
   expect(restartJob.state).toBe("completed");
 
-  const deadline = Date.now() + 120_000;
-  let convergedService: RuntimeStackOperationService | undefined;
-  while (Date.now() < deadline) {
+  // The inventory revision moves only when the reported inventory materially
+  // changes (platform-s00qn), and a restart can leave the service exactly as
+  // it was reported; every accepted inventory still refreshes its observation
+  // time, which the Guard stamps on its own clock. So the service is read once
+  // the job is terminal, and a later observation at the same or a newer
+  // revision proves the inventory saw it again after the restart.
+  const initialRevision = service.inventory_revision;
+  const readRestartedService = async () => {
     const registry = await fetchRuntimeApi<RuntimeRegistryServicePayload>(
       args.token,
       "/api/v1/registry/services",
       args.apiBase,
     );
-    convergedService = servicesForStack(
+    return servicesForStack(
       registry.services ?? [],
       args.stackId,
       args.stackName,
     ).find((candidate) => candidate.id === service.id);
-    if (
-      Number(convergedService?.inventory_revision ?? 0) >
-      service.inventory_revision
-    ) {
+  };
+  const baselineService = await readRestartedService();
+  expect(
+    baselineService,
+    "the restarted service is still in the registry",
+  ).toBeTruthy();
+  const baselineObservedAt = Date.parse(baselineService?.observed_at ?? "");
+  expect(
+    Number.isFinite(baselineObservedAt),
+    "the service reports when the inventory last observed it",
+  ).toBe(true);
+  const observedAfterRestart = (candidate?: RuntimeStackOperationService) =>
+    Number(candidate?.inventory_revision ?? 0) >= initialRevision &&
+    Date.parse(candidate?.observed_at ?? "") > baselineObservedAt;
+  const deadline = Date.now() + 120_000;
+  let convergedService: RuntimeStackOperationService | undefined;
+  while (Date.now() < deadline) {
+    convergedService = await readRestartedService();
+    if (observedAfterRestart(convergedService)) {
       break;
     }
     await delay(2_000);
   }
   if (
     !convergedService?.inventory_revision ||
-    convergedService.inventory_revision <= service.inventory_revision
+    !observedAfterRestart(convergedService)
   ) {
     throw new Error(
       `Managed service restart completed without a newer inventory observation for ${service.id}`,
@@ -1419,6 +1469,9 @@ async function runManagedServiceActionEvidence(args: {
     declared_actions: service.allowed_actions,
     initial_inventory_revision: service.inventory_revision,
     converged_inventory_revision: convergedService.inventory_revision,
+    restart_finished_at: restartJob.updated_at,
+    baseline_observed_at: baselineService?.observed_at,
+    converged_observed_at: convergedService.observed_at,
     restart_job_id: restart.job_id,
     replay_job_id: replay.job_id,
     logs_job_id: logsAction.job_id,
@@ -1824,29 +1877,50 @@ async function validateManagedRuntimePostSetupUi(args: {
   leaseId: string;
   inventory: Awaited<ReturnType<typeof waitForManagedRuntimeInventoryEvidence>>;
 }) {
-  const serviceLabels =
-    args.inventory.service_registry.services.map(runtimeServiceLabel);
-  const primaryServiceLabel = serviceLabels[0];
+  // The services page shows applications as cards and lists the host's
+  // observed units (systemd, unclassified rows) apart, so the primary service
+  // is the first one that belongs to an application of this stack.
+  const primaryService = args.inventory.service_registry.services.find(
+    (service) =>
+      service.application_key !== "system" &&
+      service.management_state !== "observed",
+  );
+  expect(
+    primaryService,
+    "the managed stack reports an application service",
+  ).toBeTruthy();
+  const primaryServiceLabel =
+    primaryService?.application_name ||
+    (primaryService ? runtimeServiceLabel(primaryService) : "");
 
+  // `/stacks` lands on the owner's one Homelab dashboard: it lists the stack
+  // and carries the operations section with the running-services count. The
+  // lease's own controls are on the stack page, which has no operations
+  // section of its own.
   await args.page.goto("/stacks", { waitUntil: "domcontentloaded" });
   await expect(args.page.getByTestId("stacks-dashboard")).toBeVisible();
   await expect(
     args.page.getByText(args.stackName, { exact: false }),
   ).toBeVisible();
-  await attachScreenshot(args.page, "runtime-kombify-cloud-stacks.png");
+  try {
+    await expect(
+      args.page.getByTestId("stack-operations-dashboard"),
+    ).toBeVisible({ timeout: 60_000 });
+    await expect
+      .poll(() => numericMetricValue(args.page, "stack-running-services-kpi"), {
+        message: "stack operations must expose running services",
+        timeout: 60_000,
+      })
+      .toBeGreaterThan(0);
+  } finally {
+    // Runtime runs keep no trace or failure screenshot, so the dashboard is
+    // captured whether or not the section appeared.
+    await attachScreenshot(args.page, "runtime-kombify-cloud-stacks.png");
+  }
 
   await args.page.goto(`/stacks/${args.stackId}`, {
     waitUntil: "domcontentloaded",
   });
-  await expect(args.page.getByTestId("stack-operations-dashboard")).toBeVisible(
-    { timeout: 60_000 },
-  );
-  await expect
-    .poll(() => numericMetricValue(args.page, "stack-running-services-kpi"), {
-      message: "stack operations must expose running services",
-      timeout: 60_000,
-    })
-    .toBeGreaterThan(0);
   await expect(args.page.getByTestId("monthly-runtime-card")).toBeVisible({
     timeout: 60_000,
   });
@@ -1860,14 +1934,23 @@ async function validateManagedRuntimePostSetupUi(args: {
   // The power controls follow the server's state: Start is offered while it
   // is stopped, Stop while it is running (both while the state is unknown), so
   // at least one of them is always available; the SSH switch and the
-  // connection details stay available.
-  const startEnabled = await args.page
-    .getByTestId("monthly-runtime-action-start")
-    .isEnabled();
-  const stopEnabled = await args.page
-    .getByTestId("monthly-runtime-action-stop")
-    .isEnabled();
-  expect(startEnabled || stopEnabled).toBe(true);
+  // connection details stay available. Both are locked while the runtime
+  // status is still loading, so the check waits for it to settle.
+  await expect
+    .poll(
+      async () =>
+        (await args.page
+          .getByTestId("monthly-runtime-action-start")
+          .isEnabled()) ||
+        (await args.page
+          .getByTestId("monthly-runtime-action-stop")
+          .isEnabled()),
+      {
+        message: "the managed server must offer start or stop",
+        timeout: 30_000,
+      },
+    )
+    .toBe(true);
   await expect(
     args.page.getByTestId("monthly-runtime-ssh-switch"),
   ).toBeEnabled();
@@ -1887,14 +1970,17 @@ async function validateManagedRuntimePostSetupUi(args: {
   await expect(
     args.page.getByTestId("runtime-service-card").first(),
   ).toBeVisible({ timeout: 60_000 });
-  if (primaryServiceLabel) {
-    await expect(
-      args.page
-        .getByTestId("runtime-service-card")
-        .filter({ hasText: primaryServiceLabel })
-        .first(),
-    ).toBeVisible({ timeout: 60_000 });
-  }
+  // The page lists every application of the homelab, grouped by server, so
+  // the primary application is looked up on this stack's server.
+  await expect(
+    args.page
+      .locator(
+        `[data-testid="runtime-service-group"][data-runtime-target-id="${primaryService?.server_id ?? ""}"]`,
+      )
+      .getByTestId("runtime-service-card")
+      .filter({ hasText: primaryServiceLabel })
+      .first(),
+  ).toBeVisible({ timeout: 60_000 });
   await attachScreenshot(args.page, "runtime-kombify-cloud-services.png");
   await validateMonitoringUi(args.page, args.token, "kombify-cloud", {
     apiBase: args.apiBase,
@@ -4362,20 +4448,21 @@ test.describe.serial("Runtime E2E scenarios", () => {
 
   // Day-2 changes to an existing installation (AP04.4; Beads
   // kombify-Techstack-6q9a, -qx9a and -i3p2). One owner server runs a
-  // deployed Basement homelab, and the owner changes it without creating it
-  // again: vault comes in through Cloud's use-case handoff (the deployed
-  // server is the target, so no server is created and Access, Users and Login
-  // stay) and media through the owner API; a typed native setting of vault
-  // is changed; then the vault application and the whole media use case are
-  // removed with their data retained. Each change is an Advanced change set
-  // on the same server that a replay of its idempotency key repeats without a
-  // second effect, and the foundation, the server binding and the services
-  // installed before it stay. The stack is destroyed, the server detached and
-  // deleted, and its absence read back from the supplier.
+  // deployed Basement homelab with its default use cases, vault and media,
+  // and the owner changes it without creating it again: files comes in
+  // through Cloud's use-case handoff (the deployed server is the target, so
+  // no server is created and Access, Users and Login stay); a typed native
+  // setting of vault is changed; then the vault application and the whole
+  // media use case are removed with their data retained. Each change is an
+  // Advanced change set on the same server that a replay of its idempotency
+  // key repeats without a second effect, and the foundation, the server
+  // binding and the services installed before it stay. The stack is
+  // destroyed, the server detached and deleted, and its absence read back
+  // from the supplier.
   test("existing-target-day2 adds, configures and removes use cases on a deployed homelab without creating it again", async ({
     page,
   }) => {
-    // Provision, rollout, two additions, a configuration, two removals and
+    // Provision, rollout, an addition, a configuration, two removals and
     // destroy; the window lane's cleanup step covers a timeout.
     test.setTimeout(120 * 60_000);
     const supplier = ownerServerSupplierFromEnv();
@@ -4417,37 +4504,34 @@ test.describe.serial("Runtime E2E scenarios", () => {
       const waitForJob = (id: string) =>
         waitForJobTerminal(auth.token, id, 1_200_000);
 
-      const vault = await test.step("Add vault from Cloud's use-case handoff to the deployed server (6q9a)", () =>
+      // A first run without goals installs the default use cases.
+      const installed = (
+        await readUseCaseConfiguration(auth.token, stackId)
+      ).use_cases.map((entry) => entry.id);
+      expect(installed, "the default use cases are installed").toEqual(
+        expect.arrayContaining(["media", "vault"]),
+      );
+      expect(installed, "files is not installed yet").not.toContain("files");
+
+      const files = await test.step("Add files from Cloud's use-case handoff to the deployed server (6q9a)", () =>
         assertExistingTargetExtension({
           token: auth.token,
           stackId,
           serverId,
           expectedRevision,
-          goal: "vault",
-          serviceKey: "vaultwarden",
+          goal: "files",
+          serviceKey: "cloudreve",
           submit: () =>
             submitCloudUseCaseHandoff(page, {
               stackId,
               serverId,
-              useCase: "vault",
-              setup: "backend:vaultwarden",
+              useCase: "files",
+              setup: "backend:cloudreve",
             }),
           url,
           waitForJob,
         }));
-      await attachJson("existing-target-day2-add-vault.json", vault);
-      const media = await test.step("Add media through the owner API beside vault (6q9a)", () =>
-        assertExistingTargetExtension({
-          token: auth.token,
-          stackId,
-          serverId,
-          expectedRevision,
-          goal: "media",
-          serviceKey: "jellyfin",
-          url,
-          waitForJob,
-        }));
-      await attachJson("existing-target-day2-add-media.json", media);
+      await attachJson("existing-target-day2-add-files.json", files);
 
       const configured = await test.step("Configure a typed native setting of the installed vault (qx9a)", async () => {
         const change = await typedConfigurationChange(
@@ -4471,7 +4555,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       const retained = retainedDataSentinels(owned, runId, {
         [configured.workloadRef]: ["vaultwarden"],
       });
-      await test.step("Remove the vault application; media, its data, the foundation and the server stay (i3p2)", () =>
+      await test.step("Remove the vault application; media, files, its data, the foundation and the server stay (i3p2)", () =>
         assertRemoveInstalledUseCase({
           page,
           token: auth.token,
@@ -4484,7 +4568,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
           url,
           waitForJob,
         }));
-      await test.step("Remove the whole media use case; its data, the foundation and the server stay (i3p2)", async () => {
+      await test.step("Remove the whole media use case; files, its data, the foundation and the server stay (i3p2)", async () => {
         const view = await readUseCaseConfiguration(auth.token, stackId);
         const group = view.use_cases.find((entry) => entry.id === "media");
         expect(group, "media is still installed after vault left").toBeTruthy();
@@ -4511,7 +4595,13 @@ test.describe.serial("Runtime E2E scenarios", () => {
       });
 
       // Remove: destroy through the product, detach the server and delete it
-      // at its supplier; the stack and the machine read back absent.
+      // at its supplier; the stack and the machine read back absent. The
+      // owner's own VPS, enrolled through the install command, carries no
+      // hosting classification and is still the owner's to detach.
+      expect(
+        (await readServerAggregate(auth.token, serverId)).allowed_actions,
+        "the owner may detach the server they enrolled",
+      ).toContain("detach");
       const destroy = await destroyRuntimeStackViaApi(auth.token, stackId);
       expect(destroy?.state).toBe("completed");
       await waitForStackAbsent(auth.token, stackId);
@@ -4541,14 +4631,24 @@ test.describe.serial("Runtime E2E scenarios", () => {
           message: redactText(String(error)).slice(0, 600),
         });
       if (stackId && !destroyed) {
-        await destroyRuntimeStackViaApi(auth.token, stackId).catch(
-          cleanupFailed("destroy"),
+        destroyed = await destroyRuntimeStackViaApi(auth.token, stackId).then(
+          () => true,
+          (error) => (cleanupFailed("destroy")(error), false),
         );
       }
       if (serverId && !detached) {
-        await detachOwnerServer(auth.token, serverId).catch(
-          cleanupFailed("detach"),
+        detached = await detachOwnerServer(auth.token, serverId).then(
+          () => true,
+          (error) => (cleanupFailed("detach")(error), false),
         );
+      }
+      // A first rollout that failed after Apply ran leaves no applied
+      // workload to tear down on the node, so the plain destroy is refused;
+      // once the server is detached, the owner removes the stack without it.
+      if (stackId && !destroyed && detached) {
+        await removeLifecycleStackWithOwnerWord(auth.token, stackId)
+          .then(() => waitForStackAbsent(auth.token, stackId))
+          .catch(cleanupFailed("destroy after detach"));
       }
       if (!released) await resource?.release();
     }

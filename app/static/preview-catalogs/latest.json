@@ -2,11 +2,11 @@
   "configured": true,
   "deliverability_known": true,
   "release": {
-    "tag": "v0.54.17",
-    "version": "0.54.17",
-    "sourceSha": "9655da95b73b1a8b98005f1417f7913496b4e2a5",
-    "publicSourceSha": "f53f45b7d9bf954536063c8a2f60049f148b3da8",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.17"
+    "tag": "v0.54.18",
+    "version": "0.54.18",
+    "sourceSha": "fdbdd2185ecfdae1c9de3851f4cefd271ebbd3d9",
+    "publicSourceSha": "3cd4010c90313567aa9e91cf43c9f981d8b01dac",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.18"
   },
   "use_cases": [
     {
