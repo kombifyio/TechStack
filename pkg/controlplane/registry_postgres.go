@@ -253,13 +253,15 @@ func (s *PostgresStore) DeleteService(ctx context.Context, tenantID, serviceID s
 
 func scanNode(row rowScanner) (*Node, error) {
 	var node Node
-	var instanceID, workerID, address sql.NullString
+	// stack_id is optional since migration 051: a node can exist before or
+	// after its stack assignment, and the tenant-wide read sees it too.
+	var instanceID, stackID, workerID, address sql.NullString
 	var metadataJSON []byte
 	if err := row.Scan(
 		&node.ID,
 		&node.TenantID,
 		&instanceID,
-		&node.StackID,
+		&stackID,
 		&workerID,
 		&node.Name,
 		&node.Role,
@@ -272,6 +274,7 @@ func scanNode(row rowScanner) (*Node, error) {
 		return nil, err
 	}
 	node.InstanceID = instanceID.String
+	node.StackID = stackID.String
 	node.WorkerID = workerID.String
 	node.Address = address.String
 	if err := decodeObject(metadataJSON, &node.Metadata); err != nil {
