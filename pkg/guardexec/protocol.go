@@ -63,6 +63,10 @@ const (
 	// OpBackupStatus runs `stackkit backup status`, a read-only observation of
 	// the local backup repository, with a fixed argument vector.
 	OpBackupStatus = "backup.status"
+	// OpHouseholdList runs `stackkit user list`, a read-only observation of the
+	// household identities of the node workspace, with a fixed argument vector.
+	// It is the reconciliation oracle of household identity mutations.
+	OpHouseholdList = "household.list"
 )
 
 // Frame types of a response stream.
@@ -200,6 +204,8 @@ type Observation struct {
 	Stdout         []byte `json:"stdout,omitempty"`
 	Stderr         string `json:"stderr,omitempty"`
 	ReleaseVersion string `json:"release_version,omitempty"`
+	// Workspace is the StackKits workspace an observation read, when it read one.
+	Workspace string `json:"workspace,omitempty"`
 	// Reason is a stable code when the observation could not run:
 	// stackkit_runtime_unavailable, stackkit_cli_unsupported or
 	// workspace_unavailable.

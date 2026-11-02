@@ -138,15 +138,31 @@ func (h workerRouteHandlers) agentReleaseEvidence(e *httpx.Event) error {
 	if err != nil {
 		return unavailable("artifact_bundle", err)
 	}
-	index, _, err := loadArtifactDeliveryIndex()
-	if err != nil {
-		return unavailable("artifact_index", err)
+	// The bytes this control plane hands out: the R2 index names them, or a
+	// self-hosted installation serves its release file itself.
+	var servedSHA256 string
+	var servedSize int64
+	if servesOwnGuardBinary() {
+		artifact, err := selfHostedAgentBinaryArtifact(requestedOS, requestedArch)
+		if err != nil {
+			return unavailable("artifact", err)
+		}
+		servedSHA256, servedSize = artifact.sha256, artifact.size
+	} else {
+		index, _, err := loadArtifactDeliveryIndex()
+		if err != nil {
+			return unavailable("artifact_index", err)
+		}
+		artifact, indexed := index.artifact("guard_binary", requestedOS, requestedArch)
+		if !indexed {
+			return unavailable("manifest_artifact_mismatch", fmt.Errorf("the artifact index has no %s/%s Guard binary", requestedOS, requestedArch))
+		}
+		servedSHA256, servedSize = artifact.SHA256, artifact.Size
 	}
-	artifact, indexed := index.artifact("guard_binary", requestedOS, requestedArch)
-	if !indexed || artifact.SHA256 != entry.SHA256 || artifact.Size != entry.Size {
+	if servedSHA256 != entry.SHA256 || servedSize != entry.Size {
 		// The manifest names other bytes than the ones this control plane serves.
 		// The Guard would refuse them; do not send evidence that cannot match.
-		return unavailable("manifest_artifact_mismatch", fmt.Errorf("manifest %s, file %s", entry.SHA256, artifact.SHA256))
+		return unavailable("manifest_artifact_mismatch", fmt.Errorf("manifest %s, file %s", entry.SHA256, servedSHA256))
 	}
 	if !json.Valid(manifestSig) || !json.Valid(artifactSig) {
 		return unavailable("bundle_invalid", fmt.Errorf("a signature bundle is not JSON"))

@@ -190,6 +190,14 @@ type Issuers interface {
 	PocketIDIssuer(ctx context.Context, tenantID, stackID string) (string, error)
 }
 
+// PocketIDInventory reports whether a stack runs the StackKits-managed Pocket ID
+// issuer, from Techstack's own service inventory, and whether the stack reported
+// any inventory. When a Service has one, it selects the identity stacks instead
+// of Issuers (identityStacks).
+type PocketIDInventory interface {
+	RunsPocketID(ctx context.Context, tenantID, stackID string) (runs, inventoried bool, err error)
+}
+
 // IDTokenVerifier verifies an ID token against one issuer's published keys.
 type IDTokenVerifier interface {
 	Verify(ctx context.Context, issuer, clientID, rawToken string) (*oidcclient.Claims, error)
@@ -203,6 +211,7 @@ type Service struct {
 	Links        controlplane.HouseholdLinkStore
 	Identity     IdentityRuntime
 	Issuers      Issuers
+	PocketID     PocketIDInventory
 	Verifier     IDTokenVerifier
 	LinkClientID string
 	Now          func() time.Time
@@ -345,7 +354,11 @@ func (s *Service) add(ctx context.Context, tenantID, owner string, member Member
 }
 
 // identityStacks returns the owner's stacks of the homelab, preferring the ones
-// that run a Pocket ID, oldest first.
+// that run a Pocket ID, oldest first. With PocketID set it leaves out every
+// stack whose reported inventory holds no Pocket ID: such a stack has no
+// household account to add or remove (platform-n3dcz). A stack that reported no
+// inventory yet stays, and an inventory read error is returned; neither is
+// evidence that no account exists.
 func (s *Service) identityStacks(ctx context.Context, tenantID, owner, homelabID string) ([]controlplane.Stack, error) {
 	all, err := s.Stacks.ListStacksByTenant(ctx, tenantID)
 	if err != nil {
@@ -358,6 +371,19 @@ func (s *Service) identityStacks(ctx context.Context, tenantID, owner, homelabID
 		}
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].CreatedAt.Before(candidates[j].CreatedAt) })
+	if s.PocketID != nil {
+		var selected []controlplane.Stack
+		for _, stack := range candidates {
+			runs, inventoried, err := s.PocketID.RunsPocketID(ctx, tenantID, stack.ID)
+			if err != nil {
+				return nil, err
+			}
+			if runs || !inventoried {
+				selected = append(selected, stack)
+			}
+		}
+		return selected, nil
+	}
 	if s.Issuers == nil {
 		return candidates, nil
 	}

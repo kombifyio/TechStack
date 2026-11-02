@@ -141,6 +141,8 @@ func (c *Client) PostStream(ctx context.Context, url string, body interface{}, o
 // OnBehalfOfIdentity converts an identity.Identity into an OnBehalfOf.
 // Returns nil when id has no UserID — the call is then treated as purely
 // service-to-service with no end-user attribution.
+// Roles are not copied: the edge envelope is the only signed role source,
+// and IssueToken refuses a service token that asserts roles.
 func OnBehalfOfIdentity(id *identity.Identity) *OnBehalfOf {
 	if id == nil || id.UserID == "" {
 		return nil
@@ -150,6 +152,5 @@ func OnBehalfOfIdentity(id *identity.Identity) *OnBehalfOf {
 		OrgID:         id.OrgID,
 		Email:         id.Email,
 		EmailVerified: id.EmailVerified,
-		Roles:         id.Roles,
 	}
 }

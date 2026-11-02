@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { earlyAccessUse } from "./tests/helpers/early-access-use";
 
 // A failed test would attach an ARIA snapshot of the page to the report, and
 // that snapshot prints input values, passwords included.
@@ -64,6 +65,7 @@ export default defineConfig({
   outputDir: `${outputDir}/authority-preflight-results`,
   use: {
     baseURL,
+    ...earlyAccessUse(),
     // The request carries a short-lived access token. The report below records
     // only redacted claim/authority facts, so failure diagnostics must not
     // persist browser network material or login-screen PII.

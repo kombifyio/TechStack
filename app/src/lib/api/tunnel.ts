@@ -44,3 +44,22 @@ export async function setLocalLANBridge(
   );
   return res.data;
 }
+
+export interface GuardReinstallCommand {
+  linux: string;
+  expires_at?: string;
+}
+
+/**
+ * Mint the command that reinstalls the Guard of an enrolled server in place.
+ * Its capability only downloads the Guard; the enrollment stays as it is.
+ *
+ * Backend endpoint: POST /api/v1/tunnel/install-command (mode reinstall-guard)
+ */
+export async function createGuardReinstallCommand(): Promise<GuardReinstallCommand> {
+  const res = await fetchApi<GuardReinstallCommand>(
+    "/api/v1/tunnel/install-command",
+    { method: "POST", body: JSON.stringify({ mode: "reinstall-guard" }) },
+  );
+  return res.data;
+}

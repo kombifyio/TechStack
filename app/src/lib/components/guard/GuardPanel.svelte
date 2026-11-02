@@ -25,6 +25,7 @@
   import GuardOutcomes from "./GuardOutcomes.svelte";
   import GuardReachControl from "./GuardReachControl.svelte";
   import GuardIdentityUpgrade from "./GuardIdentityUpgrade.svelte";
+  import GuardReinstall from "./GuardReinstall.svelte";
   import { parseApiError } from "#lib/api/errors.js";
   import {
     collectGuardEvidence,
@@ -1385,6 +1386,12 @@
         required={evidence.worker.identity_binding === "legacy_bearer"}
         {onChanged}
       />
+    </div>
+  {/if}
+
+  {#if evidence.extension.updates?.guard?.state === "reinstall_required"}
+    <div class="mt-5">
+      <GuardReinstall />
     </div>
   {/if}
 

@@ -9,7 +9,6 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 var ErrStackKitLifecycleUnavailable = errors.New("typed StackKits lifecycle is unavailable")
@@ -158,9 +157,6 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	}
 	if stack.tenantID != normalized.TenantID || stack.ownerID != normalized.OwnerID {
 		return "", controlplane.ErrNotFound
-	}
-	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
-		return "", releasechannel.ErrTenantNotOwned
 	}
 	normalized = jobs.ApplyStackKitRolloutDefaults(normalized, stackKitRolloutBinding(stack), stackKitCatalogRef(stack))
 	if normalized.Operation == jobs.StackKitLifecycleBackupRestoreActivate || normalized.Operation == jobs.StackKitLifecycleBackupRestoreRecover {

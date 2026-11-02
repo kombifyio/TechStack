@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -514,7 +515,6 @@ func runTechstack(ctx context.Context) error {
 	secondaryExecution.StartupSuppressed()
 
 	registrySweeper := bootServerRegistrySweeper(v2Boot, monitorState, log)
-	platformProjector := bootPlatformServerProjector(v2Boot, log)
 	jobReclaimer := bootJobExecutionReclaimer(v2Boot, orch, monitorState, log)
 	if observer := jobExecutionDeferObserver(monitorState); observer != nil {
 		orch.Queue().SetExecutionDeferObserver(observer)
@@ -522,7 +522,7 @@ func runTechstack(ctx context.Context) error {
 	backupScanner := composeBackupScanner(&deps, auth.GetEncryptor())
 	serverMaintenance := bootServerMaintenanceLoop(v2Boot, orch, log)
 	driftScheduler := bootDriftScheduler(v2Boot, startup.cfg, orch, log)
-	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log, secondaryExecution)
+	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log, secondaryExecution)
 	if feed != nil && feed.digest != nil {
 		handles.background.run(feed.digest.Run)
 	}
@@ -648,8 +648,6 @@ func techstackSentryEnvironment() string {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("TECHSTACK_ENV"))) {
 	case "development", "dev", "local":
 		return "dev"
-	case "preview":
-		return "preview"
 	default:
 		return "prod"
 	}
@@ -872,7 +870,7 @@ func configureV2Auth(ctx context.Context, cfg *config.Config, log *logger.Logger
 		SessionCookieName:   boot.cookieName,
 		SessionCookieSecure: cfg.IsProduction(),
 		TenantResolver:      tenantResolver,
-		UserUpsert:          v2CloudUserUpsert(authStore, boot.saasMode),
+		UserUpsert:          v2CloudUserUpsert(authStore, boot.saasMode, newAdministrationEntitlements()),
 		Exchanger:           newRotatingOIDCCodeExchanger(nil, v2FirstEnv(techstackAuthCloudClientSecretNext)),
 	})
 	if err != nil {
@@ -1222,7 +1220,6 @@ func bindGlobalMiddleware(router *httpx.Router, deps routeDeps) {
 	router.BindFunc(middleware.RequestIDMiddleware)
 	bindCORS(router, cfg)
 	router.BindFunc(middleware.EdgeIdentityMiddlewareFromConfig(cfg))
-	router.BindFunc(hideStageFromCrawlers)
 	router.BindFunc(secondaryTransportAdmission)
 	router.BindFunc(v2SessionIdentityMiddleware(deps.v2))
 	router.BindFunc(testIdentityAdmission)
@@ -1677,7 +1674,7 @@ func v2SessionTenantID(claims *session.Claims) string {
 // Postgres-backed authority. The membership lands only under the tenant
 // resolved by the login-time TenantResolver; cloud identities never gain a
 // second membership in a shared fallback tenant.
-func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonauthflow.UserUpsert {
+func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool, entitlements cloudEntitlementReader) commonauthflow.UserUpsert {
 	if authStore == nil {
 		return nil
 	}
@@ -1721,8 +1718,16 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonau
 		membershipMetadata := map[string]any{
 			"platform_roles": v2CloudPlatformRoles(claims),
 		}
-		if entitlements := v2CloudEntitlements(claims); len(entitlements) > 0 {
-			membershipMetadata["entitlements"] = entitlements
+		// The membership fallback grants come from Administration's committed projection, never from
+		// a token claim. An unreadable projection persists none (fail closed); the next login retries.
+		if saasMode && entitlements != nil {
+			granted, err := entitlements.Current(ctx, subject, tenantID)
+			switch {
+			case err != nil:
+				slog.Warn("cloud_membership_entitlements_unavailable", "error", err)
+			case len(granted) > 0:
+				membershipMetadata["entitlements"] = granted
+			}
 		}
 		roleKey := v2CloudMembershipRoleKey(claims)
 		if _, err := authStore.UpsertMembership(ctx, controlplane.Membership{
@@ -1772,18 +1777,6 @@ func contextWithMembershipAuthorization(ctx context.Context, membership *control
 		ctx = middleware.WithMembershipEntitlements(ctx, entitlements...)
 	}
 	return ctx
-}
-
-func v2CloudEntitlements(claims *oidcclient.Claims) []string {
-	if claims == nil {
-		return nil
-	}
-	for _, key := range []string{"https://kombify.io/entitlements", "entitlements"} {
-		if entitlements := stringSliceFromAny(claims.Raw[key]); len(entitlements) > 0 {
-			return entitlements
-		}
-	}
-	return nil
 }
 
 func stringSliceFromAny(value any) []string {

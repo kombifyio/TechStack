@@ -10,7 +10,6 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 type DriftLifecycleRequest struct {
@@ -48,9 +47,6 @@ func (o *Orchestrator) triggerDriftJob(req DriftLifecycleRequest, jobType jobs.J
 	})
 	if err != nil {
 		return "", fmt.Errorf("stack not found: %w", err)
-	}
-	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
-		return "", releasechannel.ErrTenantNotOwned
 	}
 	if jobType == jobs.JobTypeDriftResolve && stack.driftStatus != "drifted" {
 		return "", fmt.Errorf("stack is not eligible for drift resolution")

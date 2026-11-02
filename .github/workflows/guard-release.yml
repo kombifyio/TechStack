@@ -705,7 +705,7 @@ jobs:
           # The publication token is pinned to this repository. The App
           # installation covers the whole organization, so an unscoped mint
           # would reach every repository of the installation.
-          repositories: kombify-Techstack
+          repositories: kombify-StackKits
           permission-contents: write
           permission-workflows: write
 

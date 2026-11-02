@@ -173,7 +173,7 @@ func runAgentMode(ctx context.Context, args []string) error {
 		return runAgentEnroll(ctx, args[1:], os.Stdout)
 	}
 	if isAgentHandoff(args) {
-		return runAgentHandoff(args[1:], os.Stdout)
+		return runAgentHandoff(ctx, args[1:], os.Stdout)
 	}
 	cfg, err := parseAgentModeConfig(args)
 	if err != nil {

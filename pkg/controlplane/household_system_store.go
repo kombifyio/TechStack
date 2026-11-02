@@ -90,6 +90,17 @@ func (s *HouseholdSystemStore) ListHouseholdProjectionBindings(ctx context.Conte
 	return bindings, rows.Err()
 }
 
+// RunsPocketID reports whether the stack's service inventory holds the Pocket ID
+// that StackKits rolled out, by its service key or name (platform-n3dcz), and
+// whether the stack reported any service at all. Access is not required: a
+// Basement LAN issuer records none.
+func (s *HouseholdSystemStore) RunsPocketID(ctx context.Context, tenant, stack string) (runs, inventoried bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(bool_or(management_state='managed'
+   AND (translate(lower(btrim(service_key)),' -','__') IN('pocket_id','pocketid') OR translate(lower(btrim(name)),' -','__') IN('pocket_id','pocketid'))),false),
+  count(*)>0 FROM services WHERE tenant_id=$1 AND stack_id=$2`, tenant, stack).Scan(&runs, &inventoried)
+	return runs, inventoried, err
+}
+
 func verifyHouseholdSystemScope(ctx context.Context, tx *sql.Tx, intent HouseholdProjectionIntent) error {
 	var allowed bool
 	err := tx.QueryRowContext(ctx, `SELECT current_user=session_user AND session_user=$1

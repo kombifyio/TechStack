@@ -1,15 +1,13 @@
-import { expect, test, type Page } from "@playwright/test";
-import { createHash, randomUUID } from "node:crypto";
+import { expect, test } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import {
   authenticateRuntimeUser,
   captureGatewayApiSession,
   fetchBrowserWhoAmI,
   type RuntimeAuthRole,
-  type RuntimeGatewaySession,
 } from "./runtime-auth";
 import {
   assertRuntimeInventoryExpectation,
@@ -49,29 +47,8 @@ const INVENTORY_TOOLS = [
   "server_health",
 ].sort();
 const INVENTORY_EXPECTATION = runtimeInventoryExpectation(process.env);
-const NIGHTLY =
-  process.env.TECHSTACK_E2E_EXPECTED_CHANNEL?.trim() === "preview";
-const ONBOARDING_CONTEXT_JOURNEY = process.env.TECHSTACK_RUNTIME_E2E_ONBOARDING_CONTEXT === "1";
-const PERSONAL_SETTINGS_CONTEXT_JOURNEY = process.env.TECHSTACK_RUNTIME_E2E_PERSONAL_SETTINGS_CONTEXT === "1";
-const STAGE_CONTEXT_JOURNEY = ONBOARDING_CONTEXT_JOURNEY || PERSONAL_SETTINGS_CONTEXT_JOURNEY;
-// Both users propose only within their own Stage tenant through signed Gateway
-// context. Provider execution retains its separate assigned-owner guard.
-const STAGE_PROPOSAL_FIXTURE = "TEST_ALL_YOU_NEED_USER";
-const STAGE_COHORT_FIXTURE = "TEST_RIL_PRO_USER";
-if (STAGE_CONTEXT_JOURNEY && (!NIGHTLY || new URL(PRODUCT_BASE).origin !== "https://preview.techstack.kombify.io")) {
-  throw new Error("The isolation journey requires the fixed managed Stage product");
-}
-if (ONBOARDING_CONTEXT_JOURNEY && PERSONAL_SETTINGS_CONTEXT_JOURNEY) {
-  throw new Error("Select one Stage context cohort per runtime journey");
-}
-if (PERSONAL_SETTINGS_CONTEXT_JOURNEY) {
-  const required = ["TECHSTACK_E2E_EXPECTED_GATEWAY_SHA", "TEST_RIL_PRO_USER_EMAIL", "TEST_RIL_PRO_USER_PASSWORD",
-    "TEST_ALL_YOU_NEED_USER_EMAIL", "TEST_ALL_YOU_NEED_USER_PASSWORD"];
-  if (required.some((name) => !process.env[name]?.trim()) ||
-    !/^[a-f0-9]{40}$/.test(process.env.TECHSTACK_E2E_EXPECTED_GATEWAY_SHA ?? "")) {
-    throw new Error("Personal settings isolation requires the qualified shared Gateway SHA and both canonical Stage fixtures");
-  }
-}
+const EARLY_ACCESS =
+  process.env.TECHSTACK_E2E_EXPECTED_CHANNEL?.trim() === "early-access";
 
 // Data protection profile journey step (DATA-ARCHITECTURE.md §5.6). Set only
 // where the profile chain is switched on: "off" (Techstack verification off),
@@ -80,18 +57,10 @@ if (PERSONAL_SETTINGS_CONTEXT_JOURNEY) {
 // profile; the product origin never carries one.
 const EXPECTED_DATA_PROFILE =
   process.env.TECHSTACK_E2E_EXPECTED_DATA_PROFILE?.trim().toLowerCase() ?? "";
-const GATEWAY_TECHSTACK_BASE = (
-  process.env.TECHSTACK_E2E_GATEWAY_API_URL?.trim() ||
-  "https://api.kombify.io/v1/techstack"
-).replace(/\/+$/g, "");
-
 const allRoles: RuntimeAuthRole[] = ["oneliner", "remote", "cloud"];
 const roles = runtimeAuthRolesFromEnv(
   process.env.TECHSTACK_RUNTIME_E2E_AUTH_ROLES,
 );
-if (PERSONAL_SETTINGS_CONTEXT_JOURNEY && !roles.includes("cloud")) {
-  throw new Error("The selected personal settings journey requires the cloud runtime role");
-}
 
 type WizardPageContext = {
   surface?: string;
@@ -289,29 +258,20 @@ test.describe.serial("Runtime Auth0 smoke", () => {
     test(`${role} user can create a TechStack browser session`, async ({
       page,
     }) => {
-      test.skip(STAGE_CONTEXT_JOURNEY && role !== "cloud", "The Stage A/B journey uses the canonical cloud users");
       const ownPropertyErrors: string[] = [];
       page.on("pageerror", (error) => {
         if (/Object\.hasOwn is not a function/.test(error.message)) {
           ownPropertyErrors.push(error.message);
         }
       });
-      const previewRouting = NIGHTLY ? await observePreviewInitialRouting(page) : undefined;
       const auth = await authenticateRuntimeUser(
         role,
         page,
-        { ...RUNTIME_AUTH_OPTIONS,
-          ...(role !== "cloud" ? {}
-            : STAGE_CONTEXT_JOURNEY ? { fixturePrefix: STAGE_COHORT_FIXTURE }
-            : NIGHTLY ? { fixturePrefix: STAGE_PROPOSAL_FIXTURE } : {}) },
+        RUNTIME_AUTH_OPTIONS,
       );
-      await previewRouting?.assertInitialRequest();
       expect(auth.token).toBeTruthy();
       await expect(page.getByText("Session Expired")).toHaveCount(0);
-      if (
-        !NIGHTLY &&
-        process.env.TECHSTACK_RUNTIME_E2E_USE_CASE_PLACEMENT === "1"
-      ) {
+      if (process.env.TECHSTACK_RUNTIME_E2E_USE_CASE_PLACEMENT === "1") {
         test.setTimeout(300_000);
         await verifyUseCasePlacement(page);
       }
@@ -324,30 +284,12 @@ test.describe.serial("Runtime Auth0 smoke", () => {
         verifyMaintenanceCancelRefusedOnce(auth.token),
       );
       if (role === "cloud") {
-        if (INVENTORY_EXPECTATION && !STAGE_CONTEXT_JOURNEY) {
+        if (INVENTORY_EXPECTATION) {
           assertCanonicalDemoPrincipal(whoami.body);
         }
-        if (!PERSONAL_SETTINGS_CONTEXT_JOURNEY) await verifyTestTenantBoundary(auth.token, whoami.body);
-        if (STAGE_CONTEXT_JOURNEY) {
-          if (PERSONAL_SETTINGS_CONTEXT_JOURNEY) await verifyStagePersonalSettingsIsolation(page);
-          else await verifyStageOnboardingContextIsolation(page);
-          expect(ownPropertyErrors).toEqual([]);
-          await previewRouting?.assertInitialRequest();
-          return;
-        }
-        if (NIGHTLY) {
-          // Desired-state writes use the public bearer's signed Stage context.
-          // Provider execution retains its separate assigned-owner guard.
-          const stacks = await authenticatedJSON(auth.token, "/api/v1/stacks");
-          expect(stacks.status).toBe(200);
-          await test.step("Owner action card uses the shared Gateway to fixed Preview", () =>
-            verifyOwnerActionCardDecision(page, auth.token),
-          );
-          await verifyPreviewStackIsolation(page);
-        } else {
-          await verifyCloudInventoryCore(page, auth.token);
-          await verifyConnectClientList(page);
-        }
+        await verifyTestTenantBoundary(auth.token, whoami.body);
+        await verifyCloudInventoryCore(page, auth.token);
+        await verifyConnectClientList(page);
         if (EXPECTED_DATA_PROFILE) {
           await verifyDataProfile(page, EXPECTED_DATA_PROFILE);
         }
@@ -372,14 +314,12 @@ test.describe.serial("Runtime Auth0 smoke", () => {
         await verifyStepNavigation(page);
       }
       expect(ownPropertyErrors).toEqual([]);
-      await previewRouting?.assertInitialRequest();
     });
   }
 
   test("cloud user can create a session through the Windows browser handoff login URL", async ({
     page,
   }) => {
-    test.skip(STAGE_CONTEXT_JOURNEY, "The isolated Stage journey does not exercise native handoff");
     const identifierSubmissions: boolean[] = [];
     page.on("request", (request) => {
       const url = new URL(request.url());
@@ -408,312 +348,6 @@ test.describe.serial("Runtime Auth0 smoke", () => {
     }
   });
 });
-
-// The existing settings APIs run through the shared Gateway and real Stage
-// persistence. Feature management stays with Edge/OpenFeature: /features is
-// deliberately read-only, so this journey never invents a local flag writer.
-async function verifyStagePersonalSettingsIsolation(page: Page) {
-  const browser = page.context().browser();
-  if (!browser) throw new Error("Personal settings isolation requires separate browser contexts");
-  const own = await captureGatewayApiSession(page);
-  expect(own.apiBase).toBe("https://api.kombify.io/v1/techstack");
-  const secondContext = await browser.newContext({ baseURL: PRODUCT_BASE });
-  try {
-    const secondPage = await secondContext.newPage();
-    const routing = await observePreviewInitialRouting(secondPage);
-    await authenticateRuntimeUser("cloud", secondPage, {
-      ...RUNTIME_AUTH_OPTIONS, fixturePrefix: "TEST_ALL_YOU_NEED_USER",
-    });
-    await routing.assertInitialRequest();
-    const other = await captureGatewayApiSession(secondPage);
-    expect(other.apiBase).toBe(own.apiBase);
-    const subject = (token: string) => {
-      const claims: unknown = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
-      if (!isRecord(claims) || typeof claims.sub !== "string" || !claims.sub) throw new Error("Stage bearer omitted its subject");
-      return claims.sub;
-    };
-    const ownSubject = subject(own.token);
-    const otherSubject = subject(other.token);
-    expect(ownSubject).not.toBe(otherSubject);
-    const request = async (token: string, route: string, method = "GET", body?: unknown, forgedSubject?: string): Promise<Record<string, unknown>> => {
-      const response = await fetch(`${own.apiBase}${route}`, {
-        method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json",
-          "x-kombify-release-channel": "preview",
-          ...(forgedSubject ? { "x-user-id": forgedSubject, "x-org-id": `usr:${forgedSubject}` } : {}) },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000),
-      });
-      expect(response.status, `Stage personal settings ${method} ${route}`).toBe(200);
-      const raw: unknown = await response.json();
-      if (!isRecord(raw) || !isRecord(raw.data)) throw new Error("Stage personal settings returned an invalid response");
-      return raw.data;
-    };
-    const disclosurePath = "/operator/self-disclosure";
-    const value = (record: Record<string, unknown>) => {
-      if ((record.source !== "techstack" && record.source !== "link") || !isRecord(record.disclosure)) {
-        // There is no DELETE or legacy-cloud writer in this API. Refuse before
-        // mutation unless the existing fixture can be restored exactly by PUT.
-        throw new Error("Personal settings isolation requires an existing restorable disclosure for each canonical fixture");
-      }
-      return { source: record.source, disclosure: record.disclosure };
-    };
-    const profile = async (token: string) => {
-      const result = await request(token, "/unifier/recommendations", "POST", {
-        deployment_lane: "saas", surface: "easy", goals: ["files"], services: [],
-      });
-      if (!isRecord(result.decision_context) || !isRecord(result.decision_context.operator)) {
-        throw new Error("The real Unifier omitted its operator evidence");
-      }
-      const operator = result.decision_context.operator;
-      return { score: operator.score, source: operator.source, evidence: operator.evidence };
-    };
-    const featureStates = async (token: string, forgedSubject?: string) => {
-      const result = await request(token, "/features", "GET", undefined, forgedSubject);
-      return ["security", "beta", "ux"].map((category) => {
-        const states = result[category];
-        if (!Array.isArray(states) || states.length === 0) throw new Error("The Stage feature reader omitted its effective preferences/consents");
-        return states.map((state: unknown) => {
-          if (!isRecord(state) || typeof state.key !== "string" || typeof state.enabled !== "boolean" || typeof state.has_consent !== "boolean") {
-            throw new Error("The Stage feature reader returned an invalid preference/consent state");
-          }
-          return { key: state.key, enabled: state.enabled, has_consent: state.has_consent };
-        }).sort((left, right) => left.key.localeCompare(right.key));
-      });
-    };
-    const ownBefore = value(await request(own.token, disclosurePath));
-    const otherBefore = value(await request(other.token, disclosurePath));
-    const ownProfile = await profile(own.token);
-    const otherProfile = await profile(other.token);
-    const ownFeatures = await featureStates(own.token);
-    const otherFeatures = await featureStates(other.token);
-    const ownExperience = ownBefore.disclosure.experience === "expert" ? "techie" : "expert";
-    const otherExperience = otherBefore.disclosure.experience === "guided" ? "hands-off" : "guided";
-    const ownChange = { source: ownBefore.source, disclosure: { ...ownBefore.disclosure, experience: ownExperience } };
-    const otherChange = { source: otherBefore.source, disclosure: { ...otherBefore.disclosure, experience: otherExperience } };
-    const restores: Array<() => Promise<void>> = [];
-    const replace = async (token: string, previous: typeof ownBefore, next: typeof ownChange, forgedSubject: string) => {
-      // Register restoration before sending a write: a lost response may still
-      // have committed. Conditional PUT never overwrites a concurrent edit.
-      restores.push(async () => {
-        const observed = value(await request(token, disclosurePath));
-        if (isDeepStrictEqual(observed, previous)) return;
-        if (!isDeepStrictEqual(observed, next)) throw new Error("The Stage disclosure changed concurrently; conditional restoration refused");
-        await request(token, disclosurePath, "PUT", { ...previous, if_unchanged: next });
-        expect(value(await request(token, disclosurePath))).toEqual(previous);
-      });
-      const updated = await request(token, disclosurePath, "PUT", { ...next, if_unchanged: previous }, forgedSubject);
-      expect(value(updated)).toEqual(next);
-      expect(value(await request(token, disclosurePath))).toEqual(next);
-      expect(isRecord(updated.profile)).toBe(true);
-      const derived = await profile(token);
-      expect(derived.source).toBe("self-disclosure");
-      expect(derived.score).toBe(isRecord(updated.profile) ? updated.profile.score : undefined);
-      expect(derived.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ signal: `self-disclosure:experience:${next.disclosure.experience}` })]));
-    };
-    try {
-      await replace(own.token, ownBefore, ownChange, otherSubject);
-      expect(value(await request(other.token, disclosurePath, "GET", undefined, ownSubject))).toEqual(otherBefore);
-      expect(await profile(other.token)).toEqual(otherProfile);
-      await replace(other.token, otherBefore, otherChange, ownSubject);
-      expect(value(await request(own.token, disclosurePath, "GET", undefined, otherSubject))).toEqual(ownChange);
-      expect(await featureStates(own.token, otherSubject)).toEqual(ownFeatures);
-      expect(await featureStates(other.token, ownSubject)).toEqual(otherFeatures);
-      const anonymous = await fetch(`${own.apiBase}${disclosurePath}`, {
-        headers: { "x-kombify-release-channel": "preview" }, signal: AbortSignal.timeout(15_000),
-      });
-      expect([401, 403]).toContain(anonymous.status);
-    } finally {
-      const restoration = await Promise.allSettled(restores.reverse().map((restore) => restore()));
-      if (restoration.some((result) => result.status === "rejected")) throw new Error("Stage personal settings restoration/readback failed; inspect the canonical fixture before retrying");
-    }
-    expect(await profile(own.token)).toEqual(ownProfile);
-    expect(await profile(other.token)).toEqual(otherProfile);
-  } finally {
-    await secondContext.close();
-  }
-}
-
-// Stack isolation on kombify-stg-pg (platform-ld78c.5): two canonical users
-// on the shared Gateway. The other user cannot read, list or change the first
-// user's stack, a forged identity header changes nothing and anonymous is
-// refused. The write probe carries a body the owner's own validation refuses,
-// so even a broken boundary mutates nothing and there is nothing to clean up.
-async function verifyPreviewStackIsolation(page: Page) {
-  const browser = page.context().browser();
-  if (!browser) throw new Error("Stack isolation requires separate browser contexts");
-  const own = await captureGatewayApiSession(page);
-  expect(new URL(own.apiBase).origin).toBe("https://api.kombify.io");
-  const secondContext = await browser.newContext({ baseURL: PRODUCT_BASE });
-  try {
-    const secondPage = await secondContext.newPage();
-    await authenticateRuntimeUser("cloud", secondPage, {
-      ...RUNTIME_AUTH_OPTIONS, fixturePrefix: STAGE_COHORT_FIXTURE,
-    });
-    const other = await captureGatewayApiSession(secondPage);
-    expect(other.apiBase).toBe(own.apiBase);
-    const subject = (token: string) => {
-      const claims: unknown = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
-      if (!isRecord(claims) || typeof claims.sub !== "string" || !claims.sub) throw new Error("Gateway bearer omitted its subject");
-      return claims.sub;
-    };
-    const ownSubject = subject(own.token);
-    expect(subject(other.token)).not.toBe(ownSubject);
-    const call = async (token: string | undefined, route: string, method = "GET", forgedSubject?: string) => {
-      const response = await fetch(`${own.apiBase}${route}`, {
-        method,
-        headers: { "Content-Type": "application/json", "x-kombify-release-channel": "preview",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...(forgedSubject ? { "x-user-id": forgedSubject, "x-org-id": `usr:${forgedSubject}` } : {}) },
-        ...(method === "PUT" ? { body: JSON.stringify({ mode: "isolation-probe" }) } : {}),
-        signal: AbortSignal.timeout(15_000),
-      });
-      const raw: unknown = await response.json().catch(() => null);
-      return { status: response.status, data: isRecord(raw) ? raw.data : undefined };
-    };
-    const stackIDs = async (token: string, forgedSubject?: string) => {
-      const listed = await call(token, "/stacks", "GET", forgedSubject);
-      expect(listed.status, "Stage stack list").toBe(200);
-      if (!Array.isArray(listed.data)) throw new Error("Stage stack list returned an invalid response");
-      return listed.data.map((stack: unknown) => (isRecord(stack) ? String(stack.id ?? "") : ""));
-    };
-    // The write probe stops at validation, so no live Execution host is needed.
-    const ownStacks = await stackIDs(own.token);
-    const stackID = ownStacks[0];
-    if (!stackID) throw new Error("The canonical Stage fixture has no stack to isolate");
-    const ownBefore = await call(own.token, `/stacks/${stackID}`);
-    expect(ownBefore.status, "owner stack read").toBe(200);
-    // The owner's mutation passes the Stage guard and reaches validation (422);
-    // the other user must stop at 404.
-    expect((await call(own.token, `/stacks/${stackID}/routing`, "PUT")).status, "owner invalid routing write").toBe(422);
-    expect((await call(other.token, `/stacks/${stackID}`)).status, "other user stack read").toBe(404);
-    expect((await call(other.token, `/stacks/${stackID}`, "GET", ownSubject)).status, "forged-subject stack read").toBe(404);
-    expect((await call(other.token, `/stacks/${stackID}/routing`, "PUT", ownSubject)).status, "other user routing write").toBe(404);
-    expect(await stackIDs(other.token)).not.toContain(stackID);
-    expect(await stackIDs(other.token, ownSubject)).not.toContain(stackID);
-    expect([401, 403]).toContain((await call(undefined, `/stacks/${stackID}`)).status);
-    const ownAfter = await call(own.token, `/stacks/${stackID}`);
-    expect(ownAfter.status).toBe(200);
-    expect(ownAfter.data).toEqual(ownBefore.data);
-    expect(await stackIDs(own.token)).toEqual(ownStacks);
-  } finally {
-    await secondContext.close();
-  }
-}
-
-// Extends the real signed-user smoke; no API/DB is replaced. The explicit
-// selection admits only the fixed managed Stage product through shared Gateway.
-async function verifyStageOnboardingContextIsolation(page: import("@playwright/test").Page) {
-  expect(NIGHTLY).toBe(true);
-  expect(new URL(PRODUCT_BASE).origin).toBe("https://preview.techstack.kombify.io");
-  const browser = page.context().browser();
-  if (!browser) throw new Error("The Stage A/B journey requires isolated browser contexts");
-  const ownSession = await captureGatewayApiSession(page);
-  expect(ownSession.apiBase).toBe("https://api.kombify.io/v1/techstack");
-  const secondContext = await browser.newContext({ baseURL: PRODUCT_BASE });
-  try {
-    const secondPage = await secondContext.newPage();
-    const previewRouting = await observePreviewInitialRouting(secondPage);
-    await authenticateRuntimeUser("cloud", secondPage, {
-      ...RUNTIME_AUTH_OPTIONS, fixturePrefix: "TEST_ALL_YOU_NEED_USER"
-    });
-    await previewRouting.assertInitialRequest();
-    const otherSession = await captureGatewayApiSession(secondPage);
-    expect(otherSession.apiBase).toBe(ownSession.apiBase);
-    const subject = (token: string) => {
-      const value: unknown = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
-      if (!isRecord(value) || typeof value.sub !== "string" || !value.sub) throw new Error("Gateway bearer omitted its subject");
-      return value.sub;
-    };
-    const ownSubject = subject(ownSession.token);
-    const otherSubject = subject(otherSession.token);
-    expect(ownSubject).not.toBe(otherSubject);
-    const request = async (token: string, method = "GET", action?: string, revision?: number, forgedSubject?: string) => {
-      const response = await fetch(`${ownSession.apiBase}/onboarding/techstack.platform`, {
-        method,
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json",
-          "x-kombify-release-channel": "preview",
-          ...(revision === undefined ? {} : { "If-Match": String(revision) }),
-          ...(forgedSubject ? { "x-user-id": forgedSubject, "x-org-id": `usr:${forgedSubject}` } : {}) },
-        ...(action ? { body: JSON.stringify({ action }) } : {}), signal: AbortSignal.timeout(15_000)
-      });
-      expect(response.status, `Stage onboarding ${method}`).toBe(200);
-      const raw: unknown = await response.json();
-      if (!isRecord(raw) || !isRecord(raw.data) || !isRecord(raw.data.state) || typeof raw.data.revision !== "number") {
-        throw new Error("Stage onboarding returned an invalid persisted state");
-      }
-      return { revision: raw.data.revision, state: raw.data.state };
-    };
-    const retained = (state: Record<string, unknown>) => ({ completed: state.completed, seen: state.seen_steps, status: state.status });
-    const before = await request(ownSession.token);
-    const otherBefore = await request(otherSession.token);
-    expect(["active", "dismissed"]).toContain(before.state.status);
-    const action = before.state.status === "dismissed" ? "resume" : "dismiss";
-    let changed = false;
-    try {
-      const updated = await request(ownSession.token, "PUT", action, before.revision, otherSubject);
-      changed = true;
-      expect(updated.revision).toBeGreaterThan(before.revision);
-      expect(updated.state.completed).toEqual(before.state.completed);
-      expect(updated.state.seen_steps).toEqual(before.state.seen_steps);
-      const ownRead = await request(ownSession.token);
-      expect(ownRead.revision).toBe(updated.revision);
-      expect(retained(ownRead.state)).toEqual(retained(updated.state));
-      const otherAfter = await request(otherSession.token, "GET", undefined, undefined, ownSubject);
-      expect(otherAfter.revision).toBe(otherBefore.revision);
-      expect(retained(otherAfter.state)).toEqual(retained(otherBefore.state));
-    } finally {
-      // Restore dismissal through its supported action, retaining completions.
-      if (changed) await request(ownSession.token, "PUT", before.state.status === "dismissed" ? "dismiss" : "resume");
-    }
-  } finally {
-    await secondContext.close();
-  }
-}
-
-// Observe the real bootstrap and first signed-in data request. An unexpected
-// Stable request is stopped before reaching persistence; no response is mocked.
-async function observePreviewInitialRouting(page: Page) {
-  const gateway = new URL(GATEWAY_TECHSTACK_BASE);
-  const expected = process.env.TECHSTACK_E2E_EXPECTED_GATEWAY_SHA?.trim() ?? "";
-  if (gateway.origin !== "https://api.kombify.io" || !/^[a-f0-9]{40}$/.test(expected)) {
-    throw new Error("Preview routing requires the qualified shared Gateway source SHA before a user journey");
-  }
-  const assertSource = async () => {
-    const health = await fetch(`${gateway.origin}/gateway/health`, {
-      redirect: "error", headers: { "Cache-Control": "no-store" }, signal: AbortSignal.timeout(10_000),
-    });
-    const release = await health.json();
-    if (health.status !== 200 || release.release?.sha !== expected || release.release_channel !== "stable") {
-      throw new Error("The shared Gateway does not serve the qualified stable source");
-    }
-  };
-  await assertSource();
-  let bootstrapReturned = false;
-  let bootstrapChannel = "";
-  const initial: { afterBootstrap: boolean; channel: string }[] = [];
-  page.on("response", async (response) => {
-    const url = new URL(response.url());
-    if (url.origin !== new URL(PRODUCT_BASE).origin || url.pathname !== "/api/v1/client/bootstrap") return;
-    bootstrapReturned = response.status() === 200;
-    const body = await response.json().catch(() => ({}));
-    bootstrapChannel = (body.data ?? body).release_channel ?? "";
-  });
-  await page.route((url) => url.origin === gateway.origin &&
-    (url.pathname === gateway.pathname || url.pathname.startsWith(`${gateway.pathname}/`)), async (route) => {
-    const channel = route.request().headers()["x-kombify-release-channel"] ?? "";
-    initial.push({ afterBootstrap: bootstrapReturned, channel });
-    if (!bootstrapReturned || channel !== "preview") {
-      await route.abort("blockedbyclient");
-      return;
-    }
-    await route.continue();
-  });
-  return { async assertInitialRequest() {
-    await expect.poll(() => initial.length).toBeGreaterThan(0);
-    expect(bootstrapChannel).toBe("preview");
-    expect(initial.every((request) => request.afterBootstrap && request.channel === "preview")).toBe(true);
-    await assertSource();
-  } };
-}
 
 // Cloud's use-case handoff opens the creation wizard with the use case
 // selected; the owner's existing servers are offered on its Server step,
@@ -1032,311 +666,6 @@ async function verifyConnectClientList(page: import("@playwright/test").Page) {
       await expect(page.getByTestId("nodes-summary")).toBeVisible();
     }
   }
-}
-
-// The prepared owner creates and declines a proposal on their own server.
-// Missing approval stops at Gateway; an unissued envelope reaches Techstack's
-// own card-approval check without approving the proposal or starting a workflow.
-async function verifyOwnerActionCardDecision(page: Page, privateToken: string) {
-  // The product session can read this owner's inventory, but Stage mutations
-  // require the public bearer and the Gateway's verified origin context.
-  expect(new URL(PRODUCT_BASE).origin).toBe(
-    "https://preview.techstack.kombify.io",
-  );
-  expect(API_BASE).toBe(PRODUCT_BASE);
-  const gateway = await captureGatewayApiSession(page);
-  qualifyStageGatewaySession(gateway, STAGE_PROPOSAL_FIXTURE);
-  const expectedSHA =
-    process.env.TECHSTACK_E2E_EXPECTED_GATEWAY_SHA?.trim() ?? "";
-  expect(expectedSHA).toMatch(/^[a-f0-9]{40}$/);
-  const gatewayHealth = await fetch(
-    new URL("/gateway/health", gateway.apiBase),
-    {
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(15_000),
-    },
-  );
-  expect(gatewayHealth.status).toBe(200);
-  const health = requireRecord(
-    await gatewayHealth.json(),
-    "shared Gateway health",
-  );
-  expect(health.release_channel).toBe("stable");
-  expect(health.release?.sha).toBe(expectedSHA);
-  test
-    .info()
-    .annotations.push({
-      type: "ril-shared-gateway-source",
-      description: expectedSHA,
-    });
-  const serverResponse = await gatewayRequest(gateway, "/v1/techstack/servers");
-  const stackResponse = await gatewayRequest(gateway, "/v1/techstack/stacks");
-  expect(serverResponse.status, serverResponse.diagnostic).toBe(200);
-  expect(stackResponse.status, stackResponse.diagnostic).toBe(200);
-  const servers = canonicalRows(serverResponse.body, "servers");
-  // The card names the server's stack, or the owner's first stack for a
-  // server that is not in one yet.
-  const server =
-    servers.find((row) => String(row.techstack_id ?? "").trim()) ?? servers[0];
-  const stackID =
-    String(server?.techstack_id ?? "").trim() ||
-    (uiStackIDs(stackResponse.body)[0] ?? "");
-  expect(
-    server && stackID,
-    `the fixture owner needs one server and one stack; observed=${JSON.stringify(serverDiagnostic(servers))}`,
-  ).toBeTruthy();
-  const run = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  const proposal = {
-    server_id: String(server?.id).trim(),
-    title: "Journey check: owner action on their own server",
-    action: { stack_id: stackID },
-  };
-  const browser = page.context().browser();
-  if (!browser)
-    throw new Error("RIL isolation requires separate browser contexts");
-  const secondContext = await browser.newContext({ baseURL: PRODUCT_BASE });
-  const pending: Array<{
-    gateway: RuntimeGatewaySession;
-    id: string;
-    created: boolean;
-  }> = [];
-  const failures: unknown[] = [];
-  const create = async (
-    session: RuntimeGatewaySession,
-    body: typeof proposal & { tenantId?: string },
-    cleanupSession = session,
-  ) => {
-    const id = randomUUID();
-    // Register before sending: a transport failure can hide a persisted create.
-    const target: (typeof pending)[number] = { gateway: cleanupSession, id, created: false };
-    pending.push(target);
-    const result = await gatewayRequest(session, "/v1/ril/action-cards", {
-      ...body,
-      id,
-    });
-    if (result.status === 201) {
-      target.created = true;
-      const observedID = String(result.body?.data?.id ?? "").trim();
-      if (observedID) target.id = observedID;
-      expect(observedID).toBe(id);
-    }
-    return { ...result, id };
-  };
-  try {
-    const direct = await create(
-      { token: privateToken, apiBase: API_BASE },
-      proposal,
-      gateway,
-    );
-    expect(direct.status, direct.diagnostic).toBe(403);
-    expect(direct.reason).toBe("stage_owner_not_admitted");
-    const anonymous = await create(
-      { ...gateway, token: "" },
-      proposal,
-      gateway,
-    );
-    expect(anonymous.status, anonymous.diagnostic).toBe(401);
-    const foreign = await create(gateway, {
-      ...proposal,
-      tenantId: "org_journey_foreign",
-    });
-    expect(foreign.status, foreign.diagnostic).toBe(403);
-    expect(foreign.reason).toBe("access_denied");
-    const created = await create(gateway, proposal);
-    expect(created.status, created.diagnostic).toBe(201);
-    const cardPath = `/v1/ril/action-cards/${created.id}`;
-    const ownRead = await gatewayRequest(gateway, cardPath);
-    expect(ownRead.status, ownRead.diagnostic).toBe(200);
-    const executed = await gatewayRequest(gateway, `${cardPath}/execute`, {
-      execution_id: `journey-execution-${run}`,
-      trace_id: `journey-trace-${run}`,
-      idempotency_key: `journey-idempotency-${run}`,
-    });
-    expect(executed.status, executed.diagnostic).toBe(409);
-    expect(executed.reason).toBe("approval_required");
-    expect(
-      executed.body?.service,
-      "missing approval stops at Gateway RIL preflight",
-    ).toBe("ril");
-    const secondPage = await secondContext.newPage();
-    const routing = await observePreviewInitialRouting(secondPage);
-    await authenticateRuntimeUser("cloud", secondPage, {
-      ...RUNTIME_AUTH_OPTIONS,
-      fixturePrefix: STAGE_COHORT_FIXTURE,
-    });
-    await routing.assertInitialRequest();
-    const other = await captureGatewayApiSession(secondPage);
-    qualifyStageGatewaySession(other, STAGE_COHORT_FIXTURE);
-    // Both prepared cohort users may propose; execution stays with its assigned owner.
-    const otherStacks = await gatewayRequest(other, "/v1/techstack/stacks");
-    const otherServers = await gatewayRequest(other, "/v1/techstack/servers");
-    expect(otherStacks.status, otherStacks.diagnostic).toBe(200);
-    expect(otherServers.status, otherServers.diagnostic).toBe(200);
-    const otherServer = canonicalRows(otherServers.body, "servers")[0];
-    const otherStack = uiStackIDs(otherStacks.body)[0];
-    if (!otherServer || !otherStack)
-      throw new Error(
-        "The second Stage fixture needs its own server and stack",
-      );
-    const otherCard = await create(other, {
-      ...proposal,
-      server_id: String(otherServer.id),
-      action: { stack_id: otherStack },
-    });
-    expect(otherCard.status, otherCard.diagnostic).toBe(201);
-    const otherPath = `/v1/ril/action-cards/${otherCard.id}`;
-    const otherRead = await gatewayRequest(other, otherPath);
-    expect(otherRead.status, otherRead.diagnostic).toBe(200);
-    expect(otherRead.body?.data?.status).toMatch(/^awaiting_(approval|grant)$/);
-    const upstreamExecute = await gatewayRequest(other, `${otherPath}/execute`, {
-      execution_id: `journey-upstream-execution-${run}`,
-      trace_id: `journey-upstream-trace-${run}`,
-      idempotency_key: `journey-upstream-idempotency-${run}`,
-      approval: {
-        id: `journey-unissued-${run}`,
-        token: `journey-unissued-${run}`,
-        status: "approved",
-      },
-    });
-    expect(upstreamExecute.status, upstreamExecute.diagnostic).toBe(409);
-    expect(
-      upstreamExecute.body?.error?.details?.reason_code,
-      "Techstack's own card-approval check must answer",
-    ).toBe("approval_required");
-    expect(
-      (await gatewayRequest(gateway, otherPath)).status,
-      "owner cannot read other caller's card",
-    ).toBe(404);
-    expect(
-      (await gatewayRequest(other, cardPath)).status,
-      "other caller cannot read owner's card",
-    ).toBe(404);
-    expect((await gatewayRequest(gateway, cardPath)).body?.data).toEqual(
-      ownRead.body?.data,
-    );
-    expect((await gatewayRequest(other, otherPath)).body?.data).toEqual(
-      otherRead.body?.data,
-    );
-  } catch (error) {
-    failures.push(error);
-  } finally {
-    for (const target of pending) {
-      try {
-        const cardPath = `/v1/ril/action-cards/${target.id}`;
-        const found = await gatewayRequest(target.gateway, cardPath);
-        if (found.status === 404) {
-          expect(
-            target.created,
-            "an accepted card must remain visible to its cleanup owner",
-          ).toBe(false);
-          continue;
-        }
-        expect(found.status, found.diagnostic).toBe(200);
-        const denied = await gatewayRequest(
-          target.gateway,
-          `${cardPath}/deny`,
-          {
-            audit_correlation_id: `journey-deny-${run}-${target.id}`,
-          },
-        );
-        expect(denied.status, denied.diagnostic).toBe(200);
-        expect(denied.body?.data?.status).toBe("denied");
-        const persisted = await gatewayRequest(target.gateway, cardPath);
-        expect(persisted.status, persisted.diagnostic).toBe(200);
-        expect(persisted.body?.data?.status).toBe("denied");
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    await secondContext.close().catch((error: unknown) => failures.push(error));
-  }
-  if (failures.length)
-    throw new AggregateError(
-      failures,
-      "RIL journey or proposal cleanup failed",
-    );
-}
-
-function qualifyStageGatewaySession(
-  gateway: RuntimeGatewaySession,
-  prefix: "TEST_ALL_YOU_NEED_USER" | "TEST_RIL_PRO_USER",
-) {
-  expect(gateway.apiBase).toBe("https://api.kombify.io/v1/techstack");
-  const subject = process.env[`${prefix}_ID`]?.trim();
-  if (!subject)
-    throw new Error(`Canonical Stage subject ${prefix} is not configured`);
-  const claims = requireRecord(
-    JSON.parse(
-      Buffer.from(gateway.token.split(".")[1] ?? "", "base64url").toString(
-        "utf8",
-      ),
-    ),
-    "captured public bearer",
-  );
-  expect(claims.sub).toBe(subject);
-  expect(claims.iss).toBe("https://login.kombify.io/");
-  expect(Array.isArray(claims.aud) ? claims.aud : [claims.aud]).toContain(
-    "https://api.kombify.io",
-  );
-  expect(
-    claims.org_id === undefined || claims.org_id === `usr:${subject}`,
-  ).toBe(true);
-  expect(claims.act).toBeUndefined();
-}
-
-async function gatewayRequest(
-  gateway: RuntimeGatewaySession,
-  endpoint: string,
-  body?: unknown,
-) {
-  // RIL keeps its public /v1/ril path; /v1/techstack maps to /api/v1 instead.
-  const response = await fetch(new URL(endpoint, gateway.apiBase), {
-    redirect: "error",
-    method: body === undefined ? "GET" : "POST",
-    headers: {
-      Accept: "application/json",
-      ...(gateway.token ? { Authorization: `Bearer ${gateway.token}` } : {}),
-      "Content-Type": "application/json",
-      "x-kombify-release-channel": "preview",
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  const text = await response.text();
-  let parsed: any;
-  try {
-    parsed = text ? JSON.parse(text) : null;
-  } catch {
-    throw new Error(
-      `${endpoint} returned invalid JSON (HTTP ${response.status})`,
-    );
-  }
-  const reason = String(
-    parsed?.error?.details?.reason_code ??
-      parsed?.reason_code ??
-      parsed?.reason ??
-      parsed?.error?.code ??
-      "",
-  ).trim();
-  test.info().annotations.push({
-    type: "ril-request",
-    description: JSON.stringify({
-      origin: new URL(gateway.apiBase).origin,
-      endpoint,
-      method: body === undefined ? "GET" : "POST",
-      channel: "preview",
-      status: response.status,
-      reason,
-      requestId: response.headers.get("x-request-id"),
-    }),
-  });
-  return {
-    status: response.status,
-    body: parsed,
-    reason,
-    diagnostic: `${endpoint} HTTP ${response.status} reason=${reason || "none"} request_id=${response.headers.get("x-request-id") ?? ""}`,
-  };
 }
 
 async function verifyCloudInventoryCore(
@@ -2069,13 +1398,12 @@ async function verifyDataProfile(
   expected: string,
 ) {
   const gateway = await captureGatewayApiSession(page);
-  if (NIGHTLY) qualifyStageGatewaySession(gateway, STAGE_PROPOSAL_FIXTURE);
   const response = await fetch(`${gateway.apiBase}/data-profile`, {
     redirect: "error",
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${gateway.token}`,
-      ...(NIGHTLY ? { "x-kombify-release-channel": "preview" } : {}),
+      ...(EARLY_ACCESS ? { "x-kombify-release-channel": "early-access" } : {}),
     },
     signal: AbortSignal.timeout(15_000),
   });
@@ -2101,10 +1429,10 @@ async function verifyDataProfile(
     source: "edge",
   });
   test.info().annotations.push({
-    type: "stage-data-profile",
+    type: "data-profile",
     description: JSON.stringify({
       origin: new URL(gateway.apiBase).origin,
-      channel: NIGHTLY ? "preview" : "stable",
+      channel: EARLY_ACCESS ? "early-access" : "stable",
       status: response.status,
       res: body?.data?.res,
       ret: body?.data?.ret,
@@ -2147,7 +1475,7 @@ async function verifyHostInstallRefused(token: string) {
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${token}`,
-        ...(NIGHTLY ? { "x-kombify-release-channel": "preview" } : {}),
+        ...(EARLY_ACCESS ? { "x-kombify-release-channel": "early-access" } : {}),
         ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
       },
       body: method === "POST" ? JSON.stringify({ dependencies: ["__host_install_refusal_probe__"] }) : undefined,
@@ -2174,7 +1502,7 @@ async function verifyMaintenanceCancelRefusedOnce(token: string) {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      ...(NIGHTLY ? { "x-kombify-release-channel": "preview" } : {}),
+      ...(EARLY_ACCESS ? { "x-kombify-release-channel": "early-access" } : {}),
     },
     body: "{}",
     signal: AbortSignal.timeout(15_000),
@@ -2200,7 +1528,7 @@ async function authenticatedJSON(
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
-      ...(NIGHTLY ? { "x-kombify-release-channel": "preview" } : {}),
+      ...(EARLY_ACCESS ? { "x-kombify-release-channel": "early-access" } : {}),
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers ?? {}),
     },

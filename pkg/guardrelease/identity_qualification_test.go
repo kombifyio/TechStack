@@ -55,7 +55,7 @@ func TestQualificationIdentityAdmitsOnlyItsOwnRun(t *testing.T) {
 		"another branch":       {cert: with(func(c *certificate.Summary) { c.SourceRepositoryRef = "refs/heads/attacker" })},
 		"a push trigger":       {cert: with(func(c *certificate.Summary) { c.BuildTrigger = "push" })},
 		"a self-hosted runner": {cert: with(func(c *certificate.Summary) { c.RunnerEnvironment = "self-hosted" })},
-		"a fork":               {cert: with(func(c *certificate.Summary) { c.SourceRepositoryURI = "https://github.com/attacker/kombify-Techstack" })},
+		"a fork":               {cert: with(func(c *certificate.Summary) { c.SourceRepositoryURI = "https://github.com/attacker/kombify-StackKits" })},
 	}
 	for name, tc := range cases {
 		if got := admitted(tc.cert); got != tc.ok {
@@ -65,7 +65,7 @@ func TestQualificationIdentityAdmitsOnlyItsOwnRun(t *testing.T) {
 	for name, bad := range map[string][2]string{
 		"another workflow": {"kombifyio/TechStack/.github/workflows/guard-release.yml@refs/heads/main", commit},
 		"a tag ref":        {"kombifyio/TechStack/.github/workflows/guard-qualification.yml@refs/tags/v1", commit},
-		"a fork":           {"attacker/kombify-Techstack/.github/workflows/guard-qualification.yml@refs/heads/x", commit},
+		"a fork":           {"attacker/kombify-StackKits/.github/workflows/guard-qualification.yml@refs/heads/x", commit},
 		"no ref":           {"kombifyio/TechStack/.github/workflows/guard-qualification.yml", commit},
 		"a short commit":   {workflow, "0123456"},
 		"no commit":        {workflow, ""},

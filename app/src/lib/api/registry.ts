@@ -198,6 +198,7 @@ export interface CanonicalServerUpdates {
       | "rolled_back"
       | "layout_rolled_back"
       | "recovery_needed"
+      | "reinstall_required"
       | "unknown";
   };
   /** Read from the security evidence; a field the evidence does not state is absent. */

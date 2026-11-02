@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/guardrelease"
 )
 
 // Wire states of the security projection.
@@ -264,6 +266,10 @@ var guardUpdateStates = map[string]string{
 	"recovery-needed": "recovery_needed",
 }
 
+// GuardReinstallRequired is the update state of a Guard below the signer move:
+// it can never update itself, only a reinstall in place brings it forward.
+const GuardReinstallRequired = "reinstall_required"
+
 var (
 	pendingSecurityPattern = regexp.MustCompile(`^(\d{1,9}) security updates? pending`)
 	lastRunPattern         = regexp.MustCompile(`last run (\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:\d{2}))`)
@@ -285,6 +291,10 @@ func (p Policy) projectUpdates(posture *Posture, now time.Time) Updates {
 			// Only the privilege-split layout admits nothing but signed releases.
 			out.Guard.Signed = false
 		}
+	}
+	if order, ok := guardrelease.CompareVersions(posture.GuardVersion, guardrelease.SignerMoveVersion); ok && order < 0 {
+		// It pins the retired release signer and refuses every update offered.
+		out.Guard.State = GuardReinstallRequired
 	}
 	evidence := posture.Security.Evidence
 	if evidence == nil || !now.Before(evidence.ExpiresAt) {

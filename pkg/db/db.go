@@ -356,7 +356,7 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 		return fmt.Errorf("failed to reserve migration lock connection within 30s: %w", connErr)
 	}
 	defer func() { _ = lockConn.Close() }()
-	if _, err := lockConn.ExecContext(lockCtx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLockKey); err != nil {
+	if _, err := lockConn.ExecContext(lockCtx, "SELECT pg_catalog.pg_advisory_lock($1)", migrationAdvisoryLockKey); err != nil {
 		// The server may have acquired the session lock even when the client did
 		// not receive the result (timeout/network ambiguity). Never return that
 		// physical session to the pool unless acquisition is known to have failed.
@@ -367,14 +367,14 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 		unlockCtx, cancelUnlock := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancelUnlock()
 		var unlocked bool
-		if err := lockConn.QueryRowContext(unlockCtx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLockKey).Scan(&unlocked); err != nil || !unlocked {
+		if err := lockConn.QueryRowContext(unlockCtx, "SELECT pg_catalog.pg_advisory_unlock($1)", migrationAdvisoryLockKey).Scan(&unlocked); err != nil || !unlocked {
 			discardSQLConnection(lockConn)
 		}
 	}()
 	if _, timeoutErr := lockConn.ExecContext(ctx, `
 		SELECT
-			set_config('lock_timeout', '10s', false),
-			set_config('statement_timeout', '2min', false)
+			pg_catalog.set_config('lock_timeout', '10s', false),
+			pg_catalog.set_config('statement_timeout', '2min', false)
 	`); timeoutErr != nil {
 		// The server may have applied either session setting even when the
 		// response was lost. Do not return an ambiguously configured session to
@@ -387,8 +387,8 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 		defer cancelReset()
 		if _, resetErr := lockConn.ExecContext(resetCtx, `
 			SELECT
-				set_config('lock_timeout', '0', false),
-				set_config('statement_timeout', '0', false)
+				pg_catalog.set_config('lock_timeout', '0', false),
+				pg_catalog.set_config('statement_timeout', '0', false)
 		`); resetErr != nil {
 			discardSQLConnection(lockConn)
 		}
@@ -398,18 +398,22 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 	// 2026-08-12): a stale DSN must never let the boot chain silently rebuild
 	// the schema in the wrong, freshly-emptied database. Both checks are
 	// read-only and run before any DDL below.
-	if err := VerifyExpectedDatabaseIdentity(ctx, lockConn); err != nil {
-		return err
-	}
-	if err := verifyGenesisAllowed(ctx, lockConn); err != nil {
-		return err
+	// Expand establishes and verifies its transaction-local path before these
+	// reads; a connection's inherited path must not select the ledger.
+	if forward == nil || !forward.expandOnly {
+		if err := VerifyExpectedDatabaseIdentity(ctx, lockConn); err != nil {
+			return err
+		}
+		if err := verifyGenesisAllowed(ctx, lockConn); err != nil {
+			return err
+		}
 	}
 	if forward != nil {
 		// MigrateForwardBatch refuses an empty batch before this point.
 		if len(forward.batch) == 0 {
 			return fmt.Errorf("exact forward migration identity required")
 		}
-		return applyForwardBatch(ctx, lockConn, forward.batch, forward.verify)
+		return applyForwardBatch(ctx, lockConn, forward)
 	} else {
 
 		// Self-heal a legacy schema_migrations table left by an older, integer-keyed

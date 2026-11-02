@@ -519,6 +519,17 @@ function guardUpdateHalf(evidence: GuardEvidence): Half {
   const postureState = normalized(posture?.update_state);
   const version = guard?.version ?? posture?.update_version;
 
+  // A Guard below the signer move refuses every update; whatever it reports
+  // about its last attempt, only a reinstall brings it forward.
+  if (normalized(guard?.state) === "reinstall_required") {
+    return {
+      state: "attention",
+      reason: msg("guard.fact.updated.reinstallRequired", {
+        version: version ?? "—",
+      }),
+      next: msg("guard.fact.updated.reinstallRequiredNext"),
+    };
+  }
   // The Guard's own report of its latest update outranks a static status.
   if (UPDATE_PROBLEM_STATES.has(postureState)) {
     return {

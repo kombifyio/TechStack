@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/portinventory"
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/guardlayout"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
@@ -478,8 +480,9 @@ func (h workerRouteHandlers) authenticateRuntimeAgentCredential(e *httpx.Event, 
 	if !authenticated {
 		return authCtx, false
 	}
-	if err := h.requireStageEnrolledLease(e, authCtx.Worker); err != nil {
-		writeStageWorkerAdmissionError(e, err)
+	if authCtx.Worker == nil {
+		refusal := tenantguard.ExecutionRefusal(releasechannel.ErrTenantNotOwned)
+		_ = httpx.Error(e, refusal.Status, refusal.Code, refusal.Message, refusal.Details)
 		return out, false
 	}
 	return authCtx, true

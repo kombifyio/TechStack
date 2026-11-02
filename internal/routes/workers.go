@@ -31,7 +31,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/usernotice"
@@ -759,9 +758,6 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 	if !guardOK {
 		return httpx.BadRequest(e, guardProblem, nil)
 	}
-	if releasechannel.StageRuntimePrepared() && guard == nil {
-		return tenantguard.ExecutionRefusal(releasechannel.ErrTenantNotOwned)
-	}
 	if guard != nil {
 		if h.identityStore == nil {
 			denyGuard(e, guardidentity.CodeIdentityUnavailable, "")
@@ -952,9 +948,6 @@ func (h workerRouteHandlers) repeatGuardRegistration(e *httpx.Event, req workerR
 	if workerErr != nil || worker == nil {
 		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
 	}
-	if err := h.requireStageEnrolledLease(e, worker); err != nil {
-		return true, err
-	}
 	agentToken, tokenErr := h.issueRuntimeAgentToken()
 	if tokenErr != nil || strings.TrimSpace(agentToken) == "" {
 		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create runtime agent credential", nil)
@@ -1028,9 +1021,6 @@ func (h workerRouteHandlers) resolveStorePairingToken(e *httpx.Event, rawToken s
 	if token.OwnerSubjectID == "" {
 		return nil, "", httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Token missing user", nil)
 	}
-	if err := h.requireStagePairingLease(e, token); err != nil {
-		return nil, "", err
-	}
 	return token, parsed.TokenHash, nil
 }
 
@@ -1041,11 +1031,6 @@ func (h workerRouteHandlers) claimStorePairingToken(e *httpx.Event, rawToken str
 	parsed, parseErr := pairingtoken.Parse(rawToken)
 	if parseErr != nil || parsed.Legacy {
 		return nil, "", httpx.Unauthorized(e, "Invalid or expired token")
-	}
-	if releasechannel.StageRuntimePrepared() {
-		if _, _, err := h.resolveStorePairingToken(e, rawToken); err != nil {
-			return nil, "", err
-		}
 	}
 	token, err := h.wst.ClaimPairingToken(e.Request.Context(), parsed.TenantID, parsed.TokenHash, claimedAt)
 	if errors.Is(err, controlplane.ErrNotFound) {

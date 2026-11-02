@@ -15,6 +15,8 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/logger"
+	"github.com/kombifyio/techstack/pkg/orchestrator"
 	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 	"github.com/google/uuid"
@@ -72,7 +74,7 @@ func (h wizardRunHandlers) getUseCaseConfiguration(e *httpx.Event) error {
 	}
 	evidence, err := h.crud.orch.AuthorUseCaseConfiguration(e.Request.Context(), stack.TenantID, stack.OwnerSubjectID, stack.ID, stackkitcommand.UseCaseConfiguration{WorkloadSlug: selected, ModuleRef: selectedModule})
 	if err != nil {
-		return configurationError(e, http.StatusServiceUnavailable, "configuration_native_inspection_unavailable", "The installed native configuration could not be inspected")
+		return nativeConfigurationFailure(e, stack.ID, selected, "inspect", err, "configuration_native_inspection_unavailable", "The installed native configuration could not be inspected")
 	}
 	if !sameConfigurationRelease(catalog.Release.Version, evidence.ReleaseVersion) {
 		return configurationError(e, http.StatusServiceUnavailable, "configuration_catalog_release_mismatch", "Configuration descriptors do not match the pinned compiler")
@@ -188,7 +190,7 @@ func (h wizardRunHandlers) configureUseCase(e *httpx.Event) error {
 			if errors.Is(err, jobs.ErrUseCaseConfigurationBaselineChanged) {
 				return configurationError(e, http.StatusConflict, "configuration_baseline_changed", "The installed configuration changed; review it again")
 			}
-			return configurationError(e, http.StatusServiceUnavailable, "configuration_authoring_unavailable", "The pinned native compiler could not author this configuration")
+			return nativeConfigurationFailure(e, stack.ID, configuration.WorkloadSlug, "author", err, "configuration_authoring_unavailable", "The pinned native compiler could not author this configuration")
 		}
 		if !sameConfigurationRelease(catalog.Release.Version, evidence.ReleaseVersion) {
 			return configurationError(e, http.StatusServiceUnavailable, "configuration_catalog_release_mismatch", "Configuration descriptors do not match the pinned compiler")
@@ -250,6 +252,19 @@ func readUseCaseConfigurationRequest(e *httpx.Event) (stackkitcommand.UseCaseCon
 func sameConfigurationRelease(catalog, pin string) bool {
 	return strings.TrimPrefix(catalog, "v") == strings.TrimPrefix(pin, "v")
 }
+
+// nativeConfigurationFailure logs the cause a node-side configuration read or
+// authoring returned and answers with its typed class. A missing connected
+// runtime binding is named; any other cause keeps the generic reason, and the
+// raw error stays in the server log, never in the response.
+func nativeConfigurationFailure(e *httpx.Event, stackID, workload, stage string, err error, reason, message string) error {
+	logger.Default().Warn("configuration_native_"+stage+"_failed", "stack_id", stackID, "workload", workload, "error", err)
+	if errors.Is(err, orchestrator.ErrStackKitLifecycleUnavailable) {
+		return configurationError(e, http.StatusServiceUnavailable, "configuration_runtime_unavailable", "No connected runtime of this stack serves the node of the selected application")
+	}
+	return configurationError(e, http.StatusServiceUnavailable, reason, message)
+}
+
 func configurationError(e *httpx.Event, status int, reason, message string) error {
 	code := ksapi.ErrCodeUnavailable
 	if status == http.StatusConflict {

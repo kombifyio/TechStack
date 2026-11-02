@@ -17,9 +17,8 @@ import (
 //go:embed sql/kombify_ctx_v1.sql
 var ContextSchemaSQL string
 
-// ContextSchemaVersion is the version of ContextSchemaSQL and of the token
-// format it verifies.
-const ContextSchemaVersion = 1
+// ContextSchemaVersion versions the schema; the signed wire format remains v1.
+const ContextSchemaVersion = 2
 
 // RoleClass classifies a database login role in kombify_ctx.role_class.
 type RoleClass string
@@ -41,6 +40,26 @@ var ErrInvalidRoleClass = errors.New("tenantdb: invalid role class")
 // service. A zero notAfter means the key does not expire; rotate by
 // registering a new key ID and setting notAfter on the old one.
 func RegisterContextKey(ctx context.Context, owner *sql.DB, keyID string, secret []byte, notBefore, notAfter time.Time) error {
+	return registerContextKey(ctx, owner, keyID, secret, notBefore, notAfter, nil)
+}
+
+// RegisterContextKeyForAudiences confines a new issuer to the listed database logins.
+// A key ID cannot later change its secret or audience scope through registration.
+func RegisterContextKeyForAudiences(ctx context.Context, owner *sql.DB, keyID string, secret []byte, notBefore, notAfter time.Time, audiences []string) error {
+	if len(audiences) == 0 {
+		return fmt.Errorf("%w: audience list is empty", ErrInvalidSignerKey)
+	}
+	seen := make(map[string]bool, len(audiences))
+	for _, audience := range audiences {
+		if audience == "" || seen[audience] {
+			return fmt.Errorf("%w: empty or repeated audience", ErrInvalidSignerKey)
+		}
+		seen[audience] = true
+	}
+	return registerContextKey(ctx, owner, keyID, secret, notBefore, notAfter, audiences)
+}
+
+func registerContextKey(ctx context.Context, owner *sql.DB, keyID string, secret []byte, notBefore, notAfter time.Time, audiences []string) error {
 	if _, err := NewContextSigner(keyID, secret); err != nil {
 		return err
 	}
@@ -52,16 +71,17 @@ func RegisterContextKey(ctx context.Context, owner *sql.DB, keyID string, secret
 		expiry = notAfter
 	}
 	res, err := owner.ExecContext(ctx, `
-		INSERT INTO kombify_ctx.keys (key_id, secret, not_before, not_after)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO kombify_ctx.keys (key_id, secret, not_before, not_after, audiences)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (key_id) DO UPDATE
 		SET not_after = EXCLUDED.not_after
-		WHERE kombify_ctx.keys.secret = EXCLUDED.secret`, keyID, secret, notBefore, expiry)
+		WHERE kombify_ctx.keys.secret = EXCLUDED.secret
+		  AND kombify_ctx.keys.audiences IS NOT DISTINCT FROM EXCLUDED.audiences`, keyID, secret, notBefore, expiry, audiences)
 	if err != nil {
 		return fmt.Errorf("tenantdb: register context key %s: %w", keyID, err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return fmt.Errorf("%w: key id %s is already registered with a different secret", ErrInvalidSignerKey, keyID)
+		return fmt.Errorf("%w: key id %s is already registered with a different secret or audience scope", ErrInvalidSignerKey, keyID)
 	}
 	return nil
 }

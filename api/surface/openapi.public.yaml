@@ -4275,7 +4275,19 @@ paths:
       tags: [Tunnel]
       summary: Generate worker install command with tunnel URL
       description: >-
-        Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument.
+        Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument. With mode reinstall-guard it answers the Linux command for a server whose Guard update state is reinstall_required: run as root on that server, it installs the current Guard in place and keeps the enrollment and identity key unchanged. The token then only downloads the Guard and is never redeemed.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                mode:
+                  type: string
+                  enum: [install, reinstall-guard]
+                  default: install
       responses:
         "200":
           description: Install command
@@ -9803,7 +9815,9 @@ components:
               description: True when the Guard's update path admits only signed releases (the privilege-split layout without an unsigned-build opt-in).
             state:
               type: string
-              enum: [current, staged, trial, denied, rolled_back, layout_rolled_back, recovery_needed, unknown]
+              enum: [current, staged, trial, denied, rolled_back, layout_rolled_back, recovery_needed, reinstall_required, unknown]
+              description: >-
+                reinstall_required is a Guard below 0.45.17 that can no longer update itself; createInstallCommand with mode reinstall-guard answers the command that reinstalls it in place.
         os:
           type: object
           description: Read from the security evidence controls; a field the evidence does not state is absent.
@@ -9987,6 +10001,8 @@ components:
         approved_by: {type: string}
         approved_at: {type: string, format: date-time}
         allowed_controls: {type: array, items: {type: string}}
+        policy_id: {type: string, description: "The registered repair policy. Absent while the server never had an approval."}
+        version: {type: integer, format: int64, minimum: 0, description: "The policy version; every change, a withdrawal included, is a new version, and a Guard's local repair evidence names it."}
     GuardPostureReport:
       type: object
       additionalProperties: false

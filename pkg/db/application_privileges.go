@@ -36,6 +36,7 @@ const applicationCapacityPolicyDigest = "managed_runtime_capacity_policy_digest(
 
 var applicationCapabilityFunctions = []string{
 	applicationCapacityPolicyDigest,
+	"techstack_household_inventory_owner(text,text)", "techstack_household_inventory_server(text,text,text)",
 	"techstack_lookup_subject_directory(text)", "techstack_forget_subject_directory(text,text)",
 	"techstack_list_job_execution_reclaim_tenants(text,timestamp with time zone,integer)", "techstack_compact_job_execution_reclaim_tenant(text)",
 	"techstack_list_pending_job_tenants(text,integer)", "techstack_compact_pending_job_tenant(text)",
@@ -52,6 +53,7 @@ var applicationCapabilityFunctions = []string{
 // Internal MAC/decode helpers and keys are not application capabilities.
 var applicationContextFunctions = []string{
 	"kombify_ctx.verified_context()", "kombify_ctx.subject()", "kombify_ctx.org_id()",
+	"kombify_ctx.scopes()", "kombify_ctx.has_scope(text)",
 }
 
 // This is the single application capability selection used both by installation
@@ -432,10 +434,17 @@ func verifyApplicationContextSchema(ctx context.Context, q PrivilegeQuerier, pri
 }
 
 func verifyApplicationContextFunction(ctx context.Context, q PrivilegeQuerier, principal ApplicationPrincipal, oid int64, signature string) error {
-	definer := signature == "kombify_ctx.verified_context()"
+	definer := signature == "kombify_ctx.verified_context()" || signature == "kombify_ctx.scopes()"
 	language, result := "sql", "text"
 	if definer {
-		language, result = "plpgsql", "kombify_ctx.context"
+		language = "plpgsql"
+		result = "kombify_ctx.context"
+		if signature == "kombify_ctx.scopes()" {
+			result = "text[]"
+		}
+	}
+	if signature == "kombify_ctx.has_scope(text)" {
+		result = "boolean"
 	}
 	var safe bool
 	err := q.QueryRowContext(ctx, `SELECT f.prosecdef=$3 AND owner.rolname=$2

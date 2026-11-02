@@ -174,6 +174,28 @@ func provisionFailureOutcome(job *Job, provisionErr *ProvisionError) outcome.Dec
 	return decision
 }
 
+// stackKitLifecycleFailureOutcome keeps the reason a pinned StackKits command
+// reported in its typed actionable error instead of the generic job category.
+// The job is not retried and a lifecycle operation has no retry action, so
+// the guidance never calls a retry safe, whatever StackKits says about it.
+// An upgrade that the kit's CUE policy does not support is refused before
+// StackKits resolves a release or touches the node, so the owner is told so.
+func stackKitLifecycleFailureOutcome(job *Job, failed *StackKitLifecycleFailedError, extra map[string]any) outcome.Decision {
+	extra["stackkit_operation"] = failed.Operation
+	extra["stackkit_reason_code"] = failed.Failure.ReasonCode
+	decision := jobFailedOutcome(job, failed.Failure.ReasonCode, false, extra)
+	if failed.Failure.ReasonCode == StackKitReasonUpgradeKitUnsupported {
+		decision.UserGuidance = &outcome.Guidance{
+			Title: "This StackKit cannot be upgraded in place yet",
+			Body:  "Its upgrade policy does not support an in-place upgrade, so StackKits refused before changing anything. The server keeps running its current release and services.",
+			NextSteps: []outcome.Step{
+				{ID: "keep-current-release", Label: "Keep the current release", Kind: "note"},
+			},
+		}
+	}
+	return decision
+}
+
 func jobAvailableOutcome(job *Job) outcome.Decision {
 	identity := jobOutcomeIdentityOf(job)
 	return outcome.Decision{

@@ -1,7 +1,4 @@
 export const es: Record<string, string> = {
-  "ui.releaseChannel.badge": "Preview",
-  "ui.releaseChannel.hint": "Estás en el canal Preview: los cambios más recientes, sobre tus datos reales.",
-  "ui.releaseChannel.backToStable": "Volver a Stable",
   "ui.clientLocal.bootstrapPassword": "Contraseña de arranque",
   "ui.clientLocal.bootstrapGuidance":
     "Ejecuta {command} en un terminal del host de esta instalación para obtener la contraseña de arranque. Si una contraseña anterior se consumió o caducó, el comando la sustituye y la contraseña anterior deja de funcionar.",

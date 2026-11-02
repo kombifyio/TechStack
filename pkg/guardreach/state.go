@@ -75,9 +75,9 @@ type Row struct {
 	// ConnectTenantID is the tenant id Gateway derives for this owner; empty
 	// when the tenant has no Connect namespace (the server then is not listed).
 	ConnectTenantID string
-	// OwnerRoles is the staff-role subset of the owner's Auth0 roles, captured
-	// when the owner paired the server. Gateway needs it only while the Connect
-	// rollout cohort is staff.
+	// OwnerRoles is the staff-role subset captured when the owner paired the
+	// server. The Connect registration token does not carry it. Gateway admits
+	// the subject from current Auth0 roles.
 	OwnerRoles []string
 	Desired    Desired
 
@@ -218,8 +218,9 @@ func ConnectTenant(tenantID, ownerSubject string) (string, error) {
 	return "", ErrTenantUnmappable
 }
 
-// StaffRoles keeps the owner roles Gateway's staff cohort gate reads and drops
-// everything else, so the row stores no more identity than the gate needs.
+// StaffRoles keeps the staff subset stored on the row and drops everything
+// else. The Connect token does not send this list. Gateway's cohort gate
+// reads the subject's current Auth0 roles.
 func StaffRoles(roles []string) []string {
 	out := make([]string, 0, len(roles))
 	seen := map[string]struct{}{}

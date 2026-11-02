@@ -20,7 +20,11 @@ const API_BASE = requireLiveProductURL(
 const SESSION_COOKIE_NAME =
   process.env.TECHSTACK_E2E_SESSION_COOKIE_NAME ?? "techstack_session";
 const tierClaim = "https://kombify.io/tier";
-const entitlementsClaim = "https://kombify.io/entitlements";
+// The token carries no entitlement list: the Gateway decides on Administration's committed
+// projection and serves the person's own decided list at GET /v1/entitlements/current.
+const GATEWAY_ORIGIN = requireLiveProductURL(
+  process.env.KOMBIFY_API_ORIGIN ?? "https://api.kombify.io",
+);
 const commonEntitlements = [
   "techstack.managed.runtime",
   "techstack.managed.runtime.cloudkit",
@@ -88,33 +92,46 @@ async function clearBrowserAuthState(page: Page) {
 
 function assertFreshCloudClaims(
   claims: Record<string, unknown>,
-  providerID: ManagedProviderID,
   issuedAfterSeconds: number,
-) {
+): "pro" | "ayn" {
   const tier =
     typeof claims[tierClaim] === "string"
       ? managedServerTiers[claims[tierClaim] as string]
       : undefined;
   expect(tier).toBeDefined();
-  const entitlements = claims[entitlementsClaim];
-  expect(Array.isArray(entitlements)).toBe(true);
-  const granted = new Set(
-    Array.isArray(entitlements)
-      ? entitlements.filter(
-          (value): value is string => typeof value === "string",
-        )
-      : [],
-  );
-  for (const entitlement of [
-    ...commonEntitlements,
-    `cloud.runtime.credits.${String(tier)}`,
-    `techstack.managed.runtime.${providerID}`,
-  ]) {
-    expect(granted.has(entitlement)).toBe(true);
-  }
   const issuedAt = claims.iat;
   expect(typeof issuedAt).toBe("number");
   expect(issuedAt as number).toBeGreaterThanOrEqual(issuedAfterSeconds);
+  return tier as "pro" | "ayn";
+}
+
+async function assertManagedEntitlements(
+  token: string,
+  tier: "pro" | "ayn",
+  providerID: ManagedProviderID,
+): Promise<void> {
+  const response = await fetch(`${GATEWAY_ORIGIN}/v1/entitlements/current`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  expect(response.status, "GET /v1/entitlements/current").toBe(200);
+  const body = (await response.json()) as {
+    schema?: unknown;
+    entitlements?: unknown;
+  };
+  expect(body.schema).toBe("kombify.entitlements.current.v1");
+  expect(Array.isArray(body.entitlements)).toBe(true);
+  const granted = new Set(
+    (body.entitlements as unknown[]).filter(
+      (value): value is string => typeof value === "string",
+    ),
+  );
+  for (const entitlement of [
+    ...commonEntitlements,
+    `cloud.runtime.credits.${tier}`,
+    `techstack.managed.runtime.${providerID}`,
+  ]) {
+    expect(granted.has(entitlement), entitlement).toBe(true);
+  }
 }
 
 async function assertAuthenticatedCloudOwner(
@@ -169,13 +186,15 @@ for (const providerID of selectedManagedProviders()) {
     });
     const gateway = await captureGatewayApiSession(page);
     const claims = decodeGatewayTokenClaims(gateway.token);
-    assertFreshCloudClaims(claims, providerID, issuedAfterSeconds);
+    const tier = assertFreshCloudClaims(claims, issuedAfterSeconds);
+    await assertManagedEntitlements(gateway.token, tier, providerID);
     await assertAuthenticatedCloudOwner(gateway.token, claims);
 
     await test.info().attach(`managed-runtime-claims-${providerID}.json`, {
       body: Buffer.from(
         `${JSON.stringify({
           kind: "techstack-managed-runtime-token-claims/v1",
+          entitlement_source: "GET /v1/entitlements/current",
           provider_id: providerID,
           fresh_auth0_token: {
             token_material_omitted: true,
@@ -184,7 +203,7 @@ for (const providerID of selectedManagedProviders()) {
             issued_after_test_start: true,
           },
           claims: {
-            tier: managedServerTiers[String(claims[tierClaim])],
+            tier,
             required_entitlements: [
               ...commonEntitlements,
               `techstack.managed.runtime.${providerID}`,

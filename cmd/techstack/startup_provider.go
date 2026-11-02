@@ -9,7 +9,6 @@ import (
 	"github.com/kombifyio/techstack/internal/executioncustody"
 	"github.com/kombifyio/techstack/internal/notifications"
 	"github.com/kombifyio/techstack/internal/providercontrol"
-	"github.com/kombifyio/techstack/internal/stageowner"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/jobs"
@@ -31,6 +30,13 @@ func init() {
 		orch *orchestrator.Orchestrator,
 		workflowEngine *workflow.Engine,
 	) (providerRuntimeState, error) {
+		// Early Access runs production configuration with no background work
+		// and depends on no other host (D-2026-10-30-04): it opens no Execution
+		// connection and sweeps no wait projection. Stable keeps both.
+		if config.SecondaryChannel() {
+			log.Info("provider_control_inactive", "reason", "early_access_runs_no_background_work")
+			return providerRuntimeState{}, nil
+		}
 		mode, err := advancedIssuerCustodyMode()
 		if err != nil {
 			return providerRuntimeState{}, err
@@ -39,8 +45,7 @@ func init() {
 		if err != nil {
 			return providerRuntimeState{}, err
 		}
-		stageRequired := stageDatabase || config.ReleaseChannel() == "preview" && db.DeclaresStagingDatabaseBinding()
-		if stageRequired && (config.ReleaseChannel() != "preview" || !db.DeclaresStagingDatabaseBinding() || mode != advancedIssuerCustodyRemote) {
+		if stageDatabase {
 			return providerRuntimeState{}, db.ErrStagingRuntimeBinding
 		}
 
@@ -51,18 +56,6 @@ func init() {
 				// Execution process disables it, never the rest of the control plane.
 				log.Warn("provider_control_disabled", "reason", "execution_process_unavailable")
 				return providerRuntimeState{}, nil
-			}
-			if stageRequired {
-				binding, err := db.VerifyStagingApplicationBinding(ctx, database)
-				if err != nil {
-					return providerRuntimeState{}, err
-				}
-				if err := stageowner.PrepareStageRuntime(binding, remote.Metadata().Grant.TenantID); err != nil {
-					return providerRuntimeState{}, err
-				}
-				if err := preparePrivateCandidateRelease(binding, database, remote.Metadata().Grant.TenantID); err != nil {
-					return providerRuntimeState{}, err
-				}
 			}
 			managedDay2.setPower(remote)
 			return providerRuntimeState{runner: &remoteProviderRecovery{orchestrator: orch, remote: remote}, actions: jobs.RuntimeActions{LeaseManager: remote, LeaseDecommissioner: remote, RuntimeTargetResolver: remote}, cleanupReadback: remote, resolution: remote}, nil

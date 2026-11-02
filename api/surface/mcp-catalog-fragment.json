@@ -4,7 +4,7 @@
   "source": {
     "product": "techstack",
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "b4ecf1c027bdea5404ef14342228702eee37ba38e16cf73316eb2a5ae96f7501"
+    "sha256": "52bf4979e4a6794c0206162d98ffb6d2c787e58e23d705d11aa8c9edb9334d6c"
   },
   "tools": [
     {
@@ -1338,10 +1338,19 @@
       "toolName": "create_install_command",
       "alias": "techstack.create_install_command",
       "title": "Create a server install command",
-      "description": "Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument.",
+      "description": "Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument. With mode reinstall-guard it answers the Linux command for a server whose Guard update state is reinstall_required: run as root on that server, it installs the current Guard in place and keeps the enrollment and identity key unchanged. The token then only downloads the Guard and is never redeemed.",
       "inputSchema": {
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "mode": {
+            "default": "install",
+            "enum": [
+              "install",
+              "reinstall-guard"
+            ],
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "annotations": {
@@ -5165,6 +5174,11 @@
       "requiredCapabilities": [
         "techstack.server.maintenance"
       ],
+      "resourceBinding": {
+        "argument": "server_id",
+        "dimension": "techstack.server",
+        "required": true
+      },
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": true
@@ -11523,6 +11537,11 @@
       "requiredCapabilities": [
         "techstack.server.maintenance"
       ],
+      "resourceBinding": {
+        "argument": "server_id",
+        "dimension": "techstack.server",
+        "required": true
+      },
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": true

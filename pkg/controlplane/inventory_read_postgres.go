@@ -15,7 +15,7 @@ func (s *PostgresStore) GetInventoryServer(ctx context.Context, scope InventoryR
 	if !inventoryScopeAllowsServerRead(scope, serverID) {
 		return nil, ErrInvalidInventoryReadScope
 	}
-	return queryOneTenantRow(ctx, s, scope.tenantID, `
+	return queryOneInventoryRow(ctx, s, scope.tenantID, `
 		SELECT `+serverRuntimeColumns+`
 		FROM servers
 		WHERE tenant_id = $1 AND ($2 = '' OR owner_subject_id = $2) AND id = $3
@@ -35,7 +35,7 @@ func (s *PostgresStore) GetInventoryStack(ctx context.Context, scope InventoryRe
 	if stackID == "" || !inventoryScopeAllowsStackRead(scope) {
 		return nil, ErrInvalidInventoryReadScope
 	}
-	return queryOneTenantRow(ctx, s, scope.tenantID, `
+	return queryOneInventoryRow(ctx, s, scope.tenantID, `
 		SELECT id, tenant_id, instance_id, owner_subject_id, homelab_id, stackkit_instance_id, name, description,
 			mode, status, config_json::text, services_json::text,
 			runtime_summary_json::text, drift_status, drift_checked_at,
@@ -300,7 +300,7 @@ func (s *PostgresStore) withTenantInventorySnapshot(ctx context.Context, tenantI
 			_ = tx.Rollback()
 		}
 	}()
-	if err := tenantcontext.ApplyTenant(ctx, tx, tenantID); err != nil {
+	if err := tenantcontext.ApplyInventoryRead(ctx, tx, tenantID); err != nil {
 		return fmt.Errorf("set tenant guc: %w", err)
 	}
 	if err := fn(tx); err != nil {
@@ -314,3 +314,19 @@ func (s *PostgresStore) withTenantInventorySnapshot(ctx context.Context, tenantI
 }
 
 var _ InventoryReadStore = (*PostgresStore)(nil)
+
+func queryOneInventoryRow[T any](ctx context.Context, s *PostgresStore, tenantID, query string, scan func(rowScanner) (*T, error), args ...any) (*T, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(tenantID) == "" {
+		return nil, ErrInvalidInventoryReadScope
+	}
+	var result *T
+	err := s.withTenantInventorySnapshot(ctx, tenantID, func(tx *sql.Tx) error {
+		row, err := scan(tx.QueryRowContext(ctx, query, append([]any{tenantID}, args...)...))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		result = row
+		return err
+	})
+	return result, err
+}

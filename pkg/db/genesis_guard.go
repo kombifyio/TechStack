@@ -91,12 +91,12 @@ func VerifyExpectedDatabaseIdentity(ctx context.Context, querier migrationTableQ
 		return err
 	}
 	var databaseName string
-	if err := querier.QueryRowContext(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
+	if err := querier.QueryRowContext(ctx, "SELECT pg_catalog.current_database()").Scan(&databaseName); err != nil {
 		return fmt.Errorf("failed to load current database identity: %w", err)
 	}
 	systemIdentifier := ""
 	if pin.SystemIdentifier != "" {
-		query := "SELECT system_identifier::text FROM pg_catalog.pg_control_system()"
+		query := "SELECT system_identifier::pg_catalog.text FROM pg_catalog.pg_control_system()"
 		if err := querier.QueryRowContext(
 			ctx,
 			query,

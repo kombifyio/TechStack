@@ -31,6 +31,18 @@ CREATE TABLE IF NOT EXISTS kombify_ctx.keys (
     not_after  timestamptz,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE kombify_ctx.keys ADD COLUMN IF NOT EXISTS audiences text[];
+DO $audience_constraint$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'kombify_ctx.keys'::regclass
+                   AND conname = 'context_key_audiences_nonempty') THEN
+        ALTER TABLE kombify_ctx.keys ADD CONSTRAINT context_key_audiences_nonempty
+            CHECK (audiences IS NULL OR (cardinality(audiences) > 0
+                AND array_position(audiences, NULL) IS NULL
+                AND array_position(audiences, '') IS NULL));
+    END IF;
+END
+$audience_constraint$;
 REVOKE ALL ON TABLE kombify_ctx.keys FROM PUBLIC;
 
 CREATE TABLE IF NOT EXISTS kombify_ctx.role_class (
@@ -115,6 +127,7 @@ DECLARE
     tok     text := current_setting('kombify.ctx_token', true);
     parts   text[];
     key_sec bytea;
+    key_audiences text[];
     sig     bytea;
     payload jsonb;
     now_ts  timestamptz := statement_timestamp();
@@ -143,7 +156,7 @@ BEGIN
         RETURN NULL;
     END IF;
 
-    SELECT k.secret INTO key_sec
+    SELECT k.secret, k.audiences INTO key_sec, key_audiences
     FROM kombify_ctx.keys k
     WHERE k.key_id = parts[2]
       AND k.not_before <= now_ts
@@ -169,7 +182,10 @@ BEGIN
         RETURN NULL;
     END IF;
 
-    IF NOT (payload -> 'aud') @> to_jsonb(ARRAY[session_user::text]) THEN
+    IF NOT (payload -> 'aud') @> to_jsonb(ARRAY[session_user::text])
+       OR (key_audiences IS NOT NULL AND (
+            NOT session_user::text = ANY(key_audiences)
+            OR NOT (payload -> 'aud') <@ to_jsonb(key_audiences))) THEN
         RETURN NULL;
     END IF;
 

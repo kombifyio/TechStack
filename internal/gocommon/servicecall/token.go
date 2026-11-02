@@ -26,6 +26,9 @@ var (
 	ErrLifetimeExceeded      = errors.New("servicecall: token lifetime exceeds maximum")
 	ErrIssuerMismatch        = errors.New("servicecall: iss does not match svc")
 	ErrInvalidRequestBinding = errors.New("servicecall: invalid request binding")
+	// ErrRoleAssertion is returned by IssueToken when on_behalf_of carries any
+	// role list, and by VerifyToken when it carries a non-blank role.
+	ErrRoleAssertion = errors.New("servicecall: on_behalf_of role assertion")
 )
 
 // Fixed header bytes for HS256 JWT. Matches the standard `{"alg":"HS256","typ":"JWT"}`.
@@ -66,6 +69,9 @@ func IssueBoundToken(cfg Config, target string, binding RequestBinding, requestI
 func issueToken(cfg Config, target string, obo *OnBehalfOf, requestID string, binding *RequestBinding) (string, error) {
 	if cfg.SigningKey == nil && cfg.Secret == "" {
 		return "", ErrEmptySecret
+	}
+	if assertedRoles(obo) {
+		return "", ErrRoleAssertion
 	}
 	ttl := cfg.TokenTTL
 	if ttl <= 0 {
@@ -158,7 +164,30 @@ func validateClaims(c *Claims, now time.Time) error {
 	if c.Svc == "" || c.Iss != "kombify-"+c.Svc {
 		return ErrIssuerMismatch
 	}
+	if verifiedRoleAssertion(c.OnBehalfOf) {
+		return ErrRoleAssertion
+	}
 	return nil
+}
+
+// assertedRoles reports any role list on the issuer side. Even blank entries
+// would serialize as on_behalf_of.roles, so only an omitted or empty list passes.
+func assertedRoles(obo *OnBehalfOf) bool {
+	return obo != nil && len(obo.Roles) > 0
+}
+
+// verifiedRoleAssertion reports a non-blank role on the verifier side. Blank
+// entries do not count; an omitted or empty list carries no role assertion.
+func verifiedRoleAssertion(obo *OnBehalfOf) bool {
+	if obo == nil {
+		return false
+	}
+	for _, role := range obo.Roles {
+		if strings.TrimSpace(role) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func signClaims(claims Claims, secret string) (string, error) {

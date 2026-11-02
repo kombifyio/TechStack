@@ -22,7 +22,7 @@ func runContractMigrations(ctx context.Context) error {
 	if err != nil || live < 0 ||
 		os.Getenv(db.EnvAllowDBGenesis) != "false" || db.ReleaseChannel() != "stable" ||
 		os.Getenv("DELIVERY_OPERATION") != "smoke" || os.Getenv("DELIVERY_ARTIFACT") != "database-schema" ||
-		os.Getenv("SOURCE_REPOSITORY") != "kombify-Techstack" || os.Getenv("SOURCE_SHA") != buildRevision ||
+		os.Getenv("SOURCE_REPOSITORY") != "kombify-StackKits" || os.Getenv("SOURCE_SHA") != buildRevision ||
 		!regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(buildRevision) ||
 		os.Getenv("DELIVERY_DATABASE_ADMITTED") != "true" || os.Getenv(db.EnvMigrationDatabaseURL) == "" {
 		return errDatabaseDeliveryAdmission

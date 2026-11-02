@@ -10,10 +10,8 @@ import (
 	"sync"
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
-	"github.com/kombifyio/techstack/internal/stageowner"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/controlplane"
-	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/guardrelease"
 	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
@@ -58,62 +56,6 @@ func ApplicationConnectorReleaseForStack(ctx context.Context, tenant, stack stri
 	return applicationConnectorReleasePin(release, err)
 }
 
-// PrepareStageCandidateRelease is a boot-only adapter after actual Stage DB
-// attestation and the existing immutable Owner assignment. Paths only locate
-// signed bytes. Neither environment values nor downloaded provenance creates
-// Stage custody, selects a tenant or activates background work.
-func PrepareStageCandidateRelease(binding *db.StagingRuntimeBinding, database *sql.DB, tenant string) error {
-	if !binding.Verified() || database == nil || !stageowner.StageRuntimePrepared() || strings.TrimSpace(tenant) == "" {
-		return db.ErrStagingRuntimeBinding
-	}
-	dir := strings.TrimSpace(os.Getenv("TECHSTACK_GUARD_RELEASE_DIR"))
-	bundle := strings.TrimSpace(os.Getenv(stackKitReleaseBundleEnv))
-	if dir == "" || bundle == "" {
-		return nil
-	}
-	read := func(name string, limit int64) ([]byte, error) {
-		file, err := os.Open(filepath.Join(dir, name))
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-		info, err := file.Stat()
-		if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > limit {
-			return nil, fmt.Errorf("Stage Guard evidence is not bounded")
-		}
-		raw := make([]byte, info.Size())
-		_, err = file.ReadAt(raw, 0)
-		return raw, err
-	}
-	raw, err := read("release-manifest.json", guardrelease.MaxManifestBytes)
-	if err != nil {
-		return err
-	}
-	sig, err := read("release-manifest.sigstore.json", guardrelease.MaxBundleBytes)
-	if err != nil {
-		return err
-	}
-	verifier, err := guardrelease.NewVerifier(guardrelease.Options{})
-	if err != nil {
-		return err
-	}
-	manifest, err := verifier.VerifyManifest(raw, sig)
-	if err != nil {
-		return err
-	}
-	if manifest.StackKits == nil || manifest.StackKits.Candidate == nil {
-		return nil
-	}
-	source := &stageCandidateRelease{tenant: tenant, database: database, rawManifest: raw, signature: sig, bundle: bundle, candidate: *manifest.StackKits.Candidate}
-	stageCandidate.Lock()
-	defer stageCandidate.Unlock()
-	if stageCandidate.source != nil {
-		return fmt.Errorf("Stage candidate source is already prepared")
-	}
-	stageCandidate.source = source
-	return nil
-}
-
 // StageCandidateForStack resolves the CURRENT canonical DB row in the verified
 // Stage pool. The same actual owner/tenant policy gates requests and jobs; a
 // stack locator cannot create an assignment or an execution grant.
@@ -137,15 +79,15 @@ func stageCandidateSourceForStack(ctx context.Context, tenant, stackID string) (
 	if source == nil {
 		return nil, false, nil
 	}
-	if tenant != source.tenant || !stageowner.StageOwnerActive() || !releasechannel.OwnsTenant(tenant) || stackID == "" {
-		return nil, true, stageowner.ErrStageOwnerNotAdmitted
+	if tenant != source.tenant || !releasechannel.OwnsTenant(tenant) || stackID == "" {
+		return nil, true, releasechannel.ErrTenantNotOwned
 	}
 	stack, err := controlplane.NewPostgresStore(source.database).GetStack(ctx, tenant, stackID)
 	if err != nil {
 		return nil, true, err
 	}
 	if stack == nil || stack.ID != stackID || stack.TenantID != tenant || stack.DeletedAt != nil || !releasechannel.OwnsSubject(stack.OwnerSubjectID) {
-		return nil, true, stageowner.ErrStageOwnerNotAdmitted
+		return nil, true, releasechannel.ErrTenantNotOwned
 	}
 	return source, true, nil
 }
@@ -189,14 +131,14 @@ func TargetStackKitReleaseForWorker(ctx context.Context, tenant, workerID string
 		return configuredTargetStackKitRelease()
 	}
 	if tenant != source.tenant {
-		return nil, stageowner.ErrStageOwnerNotAdmitted
+		return nil, releasechannel.ErrTenantNotOwned
 	}
 	worker, err := controlplane.NewPostgresStore(source.database).GetWorker(ctx, tenant, workerID)
 	if err != nil {
 		return nil, err
 	}
 	if worker == nil || worker.TenantID != tenant || !releasechannel.OwnsSubject(worker.OwnerSubjectID) {
-		return nil, stageowner.ErrStageOwnerNotAdmitted
+		return nil, releasechannel.ErrTenantNotOwned
 	}
 	return TargetStackKitReleaseForStack(ctx, tenant, worker.StackID)
 }

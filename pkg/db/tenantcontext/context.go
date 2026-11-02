@@ -56,3 +56,40 @@ func applyIdentityScope(ctx context.Context, tx tenantdb.TxQuerier, setting, sco
 	_, err = tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", setting, expected)
 	return err
 }
+
+// ApplyInventoryRead preserves the verified member identity. A delegated owner
+// comes only from the database-verified edge scopes, in a read-only transaction.
+// Generic command transactions continue to require the actor's own tenant.
+func ApplyInventoryRead(ctx context.Context, tx tenantdb.TxQuerier, tenantID string) error {
+	token := tenantdb.ContextTokenFromContext(ctx)
+	if token == "" {
+		return ApplyTenant(ctx, tx, tenantID)
+	}
+	verified, err := tenantdb.ApplyContextToken(ctx, tx, token)
+	if err != nil {
+		return err
+	}
+	id := identity.FromContext(ctx)
+	if id != nil && (id.UserID != verified.Subject || id.OrgID != verified.OrgID) {
+		return tenantdb.ErrContextMismatch
+	}
+	if tenantID != verified.OrgID {
+		if id == nil {
+			return tenantdb.ErrContextMismatch
+		}
+		owner, personal := strings.CutPrefix(tenantID, "usr:")
+		if !personal || owner == "" {
+			return tenantdb.ErrContextMismatch
+		}
+		var allowed bool
+		if err := tx.QueryRowContext(ctx, `SELECT current_setting('transaction_read_only') = 'on'
+     AND public.techstack_household_inventory_owner($1,$2)`, tenantID, owner).Scan(&allowed); err != nil {
+			return err
+		}
+		if !allowed {
+			return tenantdb.ErrContextMismatch
+		}
+	}
+	_, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID)
+	return err
+}

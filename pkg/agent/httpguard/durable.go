@@ -58,6 +58,8 @@ type ReconcileOutcome struct {
 // ReconcileHint is the non-secret subset of a command a reconciliation needs.
 // Candidate specs, capabilities and credentials are never recorded. Connector
 // hints retain only the closed source/node correlation metadata of the operation.
+// Household hints retain the member's username, the projection action and the
+// app grant; email and display name are never recorded.
 type ReconcileHint struct {
 	WorkingDirectory         string                      `json:"working_directory,omitempty"`
 	SpecPath                 string                      `json:"spec_path,omitempty"`
@@ -70,6 +72,10 @@ type ReconcileHint struct {
 	LocalSiteRef             string                      `json:"local_site_ref,omitempty"`
 	LocalNodeRef             string                      `json:"local_node_ref,omitempty"`
 	LocalExecutionChannelRef string                      `json:"local_execution_channel_ref,omitempty"`
+	HouseholdUsername        string                      `json:"household_username,omitempty"`
+	HouseholdAction          string                      `json:"household_action,omitempty"`
+	HouseholdAppsSet         bool                        `json:"household_apps_set,omitempty"`
+	HouseholdApps            []string                    `json:"household_apps,omitempty"`
 }
 
 // ProcessRecord identifies a started executor process group.
@@ -497,6 +503,8 @@ func (d *durableOps) intentFor(command *agentpb.StackKitCommand, binding guardbi
 		WorkingDirectory: command.WorkingDirectory, SpecPath: command.SpecPath, Release: command.Release,
 		Offline: command.Offline, StackkitInstanceID: command.StackkitInstanceId, ExpectedPlanHash: command.ExpectedPlanHash,
 		ConnectorRequest: command.ApplicationConnectorRequestJson, ConnectorOperationID: command.ApplicationOperationId, LocalSiteRef: command.LocalSiteRef, LocalNodeRef: command.LocalNodeRef, LocalExecutionChannelRef: command.LocalExecutionChannelRef,
+		HouseholdUsername: command.HouseholdUsername, HouseholdAction: command.HouseholdProjectionAction,
+		HouseholdAppsSet: command.HouseholdAppsSet, HouseholdApps: command.HouseholdApps,
 	})
 	return journal.Intent{
 		CommandID: command.GetCommandId(), TenantID: binding.TenantID, WorkerID: binding.WorkerID,

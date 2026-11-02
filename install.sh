@@ -27,6 +27,7 @@ MIN_SUPPORTED_VERSION="${MIN_SUPPORTED_VERSION:-0.6.10}"
 
 NO_INSTALL="${TECHSTACK_NO_INSTALL:-0}"
 STAGE_ONLY="${TECHSTACK_STAGE_ONLY:-0}"
+REINSTALL_GUARD="0"
 AS_SERVICE="${TECHSTACK_AS_SERVICE:-}"
 if [ "${TECHSTACK_REGISTRATION_ONLY:-0}" = "1" ]; then
     AS_SERVICE="0"
@@ -162,6 +163,8 @@ usage() {
     echo "  --no-install      Skip binary installation (registration only)"
     echo "  --service         Install and enable SystemD service (Linux only)"
     echo "  --stage-only      Stage the verified server runtime only; no enrollment or service changes"
+    echo "  --reinstall-guard Reinstall the Guard of this enrolled server in place (root; keeps its enrollment)"
+    echo "                    TECHSTACK_GUARD_RELEASE_SIGNER=<certificate identity> also requires its cosign signature"
     echo ""
     echo "A KOMBI_SERVER/KOMBI_TOKEN worker one-liner installs the persistent Guard by default."
     echo "For an already enrolled worker, also set KOMBI_RUNTIME_AGENT_ID and KOMBI_TENANT_ID."
@@ -177,6 +180,8 @@ parse_args() {
                 AS_SERVICE="1"; shift 1 ;;
             --stage-only)
                 STAGE_ONLY="1"; shift 1 ;;
+            --reinstall-guard)
+                REINSTALL_GUARD="1"; shift 1 ;;
             -h|--help)
                 usage; exit 0 ;;
             *)
@@ -783,6 +788,13 @@ install_binary_from_control_plane() {
         trap - 0 1 2 15
         exit 1
     fi
+    # A caller's own check (the reinstall's release signature) runs before the
+    # binary is executed for the first time.
+    if [ -n "${CONTROL_PLANE_BINARY_VERIFY:-}" ] && ! "$CONTROL_PLANE_BINARY_VERIFY" "$BINARY_TMP"; then
+        cleanup_control_plane_download
+        trap - 0 1 2 15
+        exit 1
+    fi
 
     chmod 0755 "$BINARY_TMP"
     if ! "$BINARY_TMP" version >/dev/null 2>&1; then
@@ -792,14 +804,17 @@ install_binary_from_control_plane() {
         exit 1
     fi
 
-    echo "${CYAN}Installing the verified deployed binary to ${INSTALL_DIR}...${NC}"
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "$BINARY_TMP" "$INSTALL_DIR/$BINARY_NAME"
+    # A reinstall stages the binary beside the installed one instead, so its
+    # swap is one rename within the same directory.
+    _cp_dest=${CONTROL_PLANE_BINARY_DEST:-$INSTALL_DIR/$BINARY_NAME}
+    echo "${CYAN}Installing the verified deployed binary to ${_cp_dest}...${NC}"
+    if [ -w "${_cp_dest%/*}" ]; then
+        mv "$BINARY_TMP" "$_cp_dest"
     else
         echo "${YELLOW}Elevated permissions required for installation${NC}"
-        sudo mv "$BINARY_TMP" "$INSTALL_DIR/$BINARY_NAME"
+        sudo mv "$BINARY_TMP" "$_cp_dest"
     fi
-    chmod 0755 "$INSTALL_DIR/$BINARY_NAME" 2>/dev/null || sudo chmod 0755 "$INSTALL_DIR/$BINARY_NAME"
+    chmod 0755 "$_cp_dest" 2>/dev/null || sudo chmod 0755 "$_cp_dest"
     cleanup_control_plane_download
     trap - 0 1 2 15
 
@@ -1255,6 +1270,246 @@ install_existing_runtime_agent_service() {
     echo "  Logs:   sudo journalctl -u techstack-agent -f"
 }
 
+# The Guard reinstall (--reinstall-guard) brings the Guard of an enrolled server
+# forward in place. A Guard released before the signer move (0.45.17) pins the
+# retired release signer and refuses every update the control plane serves, so
+# it cannot update itself. KOMBI_TOKEN is a download capability that is never
+# redeemed: the enrollment and the identity key stay byte for byte as they are,
+# and a Guard that does not come back up gets its previous binary back.
+GUARD_SIGNER_MOVE_VERSION="0.45.17"
+GUARD_RELEASE_ISSUER="https://token.actions.githubusercontent.com"
+GUARD_ENROLLMENT_FILE="/etc/techstack/agent-enrollment.json"
+GUARD_IDENTITY_KEY="/var/lib/techstack/guard/identity.key"
+GUARD_SERVICE="techstack-agent.service"
+GUARD_REINSTALL_DROPIN="/run/systemd/system/techstack-agent.service.d/zz-kombify-reinstall.conf"
+
+# guard_binary_version prints the X.Y.Z a Guard executable reports.
+guard_binary_version() {
+    "$1" version 2>/dev/null | sed -n 's/.*v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1
+}
+
+# url_origin prints the scheme://host[:port] of a URL.
+url_origin() {
+    printf '%s\n' "$1" | sed -n 's|^\(https\{0,1\}://[^/?#]*\).*|\1|p' | head -n 1
+}
+
+# verify_guard_signature checks the staged Guard against its release's Sigstore
+# bundle when TECHSTACK_GUARD_RELEASE_SIGNER names the release workflow identity
+# (the certificate SAN). The SHA-256 the control plane names is always checked;
+# this also proves the release workflow signed exactly these bytes, and once a
+# signer is named it fails closed.
+verify_guard_signature() {
+    _binary=$1
+    if [ -z "${TECHSTACK_GUARD_RELEASE_SIGNER:-}" ]; then
+        echo "${YELLOW}No release signer named: the Guard is verified by the SHA-256 its control plane names.${NC}"
+        return 0
+    fi
+    if ! command -v cosign >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+        echo "${RED}Checking the release signer needs cosign and python3 on this server; nothing was changed.${NC}" >&2
+        return 1
+    fi
+    _sig_dir=$(mktemp -d)
+    printf 'Authorization: Bearer %s\n' "$KOMBI_TOKEN" > "$_sig_dir/authorization"
+    chmod 0600 "$_sig_dir/authorization"
+    _sig_code=$(server_curl -sS --request POST --connect-timeout 5 --max-time 60 \
+        -H "@$_sig_dir/authorization" -o "$_sig_dir/evidence.json" -w '%{http_code}' \
+        "${SERVER}/api/v1/agent/release-evidence/${OS}/$(canonical_arch "$ARCH")" 2>/dev/null) || _sig_code=000
+    rm -f "$_sig_dir/authorization"
+    if [ "$_sig_code" != 200 ] || ! python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); d = d.get("data", d); json.dump(d["artifact_bundle"], open(sys.argv[2], "w"))' \
+        "$_sig_dir/evidence.json" "$_sig_dir/bundle.json" 2>/dev/null; then
+        rm -rf "$_sig_dir"
+        echo "${RED}The control plane sent no release signature (HTTP ${_sig_code}); nothing was changed.${NC}" >&2
+        return 1
+    fi
+    if ! cosign verify-blob --bundle "$_sig_dir/bundle.json" \
+        --certificate-identity "$TECHSTACK_GUARD_RELEASE_SIGNER" \
+        --certificate-oidc-issuer "$GUARD_RELEASE_ISSUER" "$_binary" >/dev/null 2>&1; then
+        rm -rf "$_sig_dir"
+        echo "${RED}cosign (2.4 or later) could not verify the Guard against ${TECHSTACK_GUARD_RELEASE_SIGNER}; nothing was changed.${NC}" >&2
+        return 1
+    fi
+    rm -rf "$_sig_dir"
+    echo "${GREEN}✓ cosign verified the Guard against ${TECHSTACK_GUARD_RELEASE_SIGNER}.${NC}"
+}
+
+# guard_restarted restarts the Guard and reports whether it still runs as the
+# same process after a settling time, so a Guard that crashes and is restarted
+# by systemd does not count as up. The Guard's own move to the privilege-split
+# layout also replaces its process, so it is held back for this check.
+guard_restarted() {
+    install -d -m 0755 "${GUARD_REINSTALL_DROPIN%/*}"
+    printf '[Service]\nEnvironment=TECHSTACK_GUARD_AUTO_MIGRATE=0\n' > "$GUARD_REINSTALL_DROPIN"
+    systemctl daemon-reload || return 1
+    systemctl restart "$GUARD_SERVICE" || return 1
+    _pid=$(systemctl show -p MainPID --value "$GUARD_SERVICE")
+    if [ -z "$_pid" ] || [ "$_pid" = 0 ]; then
+        return 1
+    fi
+    sleep "${TECHSTACK_REINSTALL_SETTLE_SECONDS:-20}"
+    systemctl is-active --quiet "$GUARD_SERVICE" || return 1
+    [ "$(systemctl show -p MainPID --value "$GUARD_SERVICE")" = "$_pid" ]
+}
+
+# release_layout_hold lets the Guard move to the privilege-split layout again
+# from its next start on.
+release_layout_hold() {
+    rm -f "$GUARD_REINSTALL_DROPIN"
+    rmdir "${GUARD_REINSTALL_DROPIN%/*}" 2>/dev/null || true
+    systemctl daemon-reload || true
+}
+
+# restore_file puts a saved file back with one rename.
+restore_file() {
+    cp -p "$1" "$2.restore" && mv -f "$2.restore" "$2"
+}
+
+# reinstall_rollback runs on every exit between the swap and the proof: it puts
+# the saved Guard, its operations copy, enrollment and identity key back and
+# restarts it, so the server is as it was before the reinstall.
+reinstall_rollback() {
+    trap - 0 1 2 15
+    echo "${RED}Restoring Guard ${_old_version:-as it was}.${NC}" >&2
+    _restored=1
+    restore_file "$_backup/${BINARY_NAME}" "$GUARD_BINARY" || _restored=0
+    if [ "$_has_ops" = 1 ]; then
+        restore_file "$_backup/${OPERATIONS_BINARY_NAME}" "$OPERATIONS_PATH" || _restored=0
+    fi
+    if ! cmp -s "$_backup/agent-enrollment.json" "$GUARD_ENROLLMENT_FILE"; then
+        restore_file "$_backup/agent-enrollment.json" "$GUARD_ENROLLMENT_FILE" || _restored=0
+    fi
+    if [ "$_has_key" = 1 ] && ! cmp -s "$_backup/identity.key" "$GUARD_IDENTITY_KEY"; then
+        restore_file "$_backup/identity.key" "$GUARD_IDENTITY_KEY" || _restored=0
+    fi
+    release_layout_hold
+    systemctl restart "$GUARD_SERVICE" || true
+    sleep 5
+    if [ "$_restored" = 1 ] && systemctl is-active --quiet "$GUARD_SERVICE"; then
+        rm -f "$_backup/agent-enrollment.json" "$_backup/identity.key"
+        echo "${YELLOW}Guard ${_old_version:-as it was} runs again; the server is as it was before.${NC}" >&2
+    else
+        echo "${RED}Guard ${_old_version:-as it was} did not come back; its saved files are in ${_backup}.${NC}" >&2
+    fi
+    echo "GUARD_REINSTALL result=rolled_back from=${_old_version:-unknown} to=${_new_version:-unknown} backup=${_backup}"
+}
+
+reinstall_guard() {
+    if [ "$(id -u)" != 0 ]; then
+        echo "${RED}Run the Guard reinstall as root (the command from Techstack uses sudo).${NC}" >&2
+        exit 1
+    fi
+    detect_platform
+    if [ "$OS" != linux ] || ! command -v systemctl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1; then
+        echo "${RED}The Guard reinstall needs a Linux server with systemd and sha256sum.${NC}" >&2
+        exit 1
+    fi
+    if [ -z "${KOMBI_SERVER:-}" ] || [ -z "${KOMBI_TOKEN:-}" ]; then
+        echo "${RED}KOMBI_SERVER and KOMBI_TOKEN are required: copy the reinstall command from Techstack.${NC}" >&2
+        exit 1
+    fi
+    SERVER=${KOMBI_SERVER%/}
+    validate_control_plane_url "$SERVER" || exit 1
+    GUARD_BINARY="${INSTALL_DIR%/}/${BINARY_NAME}"
+    OPERATIONS_PATH="${OPERATIONS_DIR%/}/${OPERATIONS_BINARY_NAME}"
+    if [ ! -s "$GUARD_ENROLLMENT_FILE" ] || [ ! -x "$GUARD_BINARY" ] || ! systemctl cat "$GUARD_SERVICE" >/dev/null 2>&1; then
+        echo "${RED}This server has no enrolled Guard to reinstall; add it with the install command instead.${NC}" >&2
+        exit 1
+    fi
+    _unit_binary=$(systemctl show -p ExecStart --value "$GUARD_SERVICE" | sed -n 's/.*path=\([^ ;]*\).*/\1/p' | head -n 1)
+    if [ "$_unit_binary" != "$GUARD_BINARY" ]; then
+        echo "${RED}The Guard service runs ${_unit_binary:-an unknown binary}, not ${GUARD_BINARY}; set INSTALL_DIR to its directory.${NC}" >&2
+        exit 1
+    fi
+    _enrolled_origin=$(url_origin "$(sed -n 's/.*"heartbeat_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$GUARD_ENROLLMENT_FILE" | head -n 1)")
+    if [ "$_enrolled_origin" != "$(url_origin "$SERVER")" ]; then
+        echo "${RED}This Guard is enrolled with ${_enrolled_origin:-another control plane}, not ${SERVER}; copy the reinstall command from that Techstack.${NC}" >&2
+        exit 1
+    fi
+    _old_version=$(guard_binary_version "$GUARD_BINARY")
+    _old_sha=$(sha256sum "$GUARD_BINARY" | awk '{print tolower($1)}')
+
+    _staged="${INSTALL_DIR%/}/.${BINARY_NAME}.reinstall"
+    rm -f "$_staged"
+    CONTROL_PLANE_BINARY_DEST=$_staged
+    CONTROL_PLANE_BINARY_VERIFY=verify_guard_signature
+    if ! install_binary_from_control_plane; then
+        rm -f "$_staged"
+        echo "${RED}The control plane at ${SERVER} served no Guard binary; nothing was changed.${NC}" >&2
+        exit 1
+    fi
+    CONTROL_PLANE_BINARY_DEST=""
+    CONTROL_PLANE_BINARY_VERIFY=""
+    trap 'rm -f "$_staged"' 0
+    trap 'rm -f "$_staged"; exit 1' 1 2 15
+    _new_sha=$(sha256sum "$_staged" | awk '{print tolower($1)}')
+    _new_version=$(guard_binary_version "$_staged")
+    if [ -z "$_new_version" ] || version_lt "$_new_version" "$GUARD_SIGNER_MOVE_VERSION"; then
+        echo "${RED}The control plane serves Guard ${_new_version:-of an unknown version}, which predates ${GUARD_SIGNER_MOVE_VERSION}; nothing was changed.${NC}" >&2
+        exit 1
+    fi
+    if [ -n "$_old_version" ] && version_lt "$_new_version" "$_old_version"; then
+        echo "${RED}The control plane serves Guard ${_new_version}, older than the installed ${_old_version}; nothing was changed.${NC}" >&2
+        exit 1
+    fi
+    if [ "$_new_sha" = "$_old_sha" ]; then
+        echo "${GREEN}✓ Guard ${_new_version} is already installed; nothing to reinstall.${NC}"
+        echo "GUARD_REINSTALL result=current version=${_new_version} sha256=${_new_sha}"
+        return 0
+    fi
+
+    # Saved only now, so a refused download leaves no copy of the secrets behind.
+    _backup="/var/backups/kombify/guard-reinstall-$(date -u +%Y%m%dT%H%M%SZ)"
+    install -d -m 0700 /var/backups/kombify "$_backup"
+    cp -p "$GUARD_BINARY" "$_backup/${BINARY_NAME}"
+    cp -p "$GUARD_ENROLLMENT_FILE" "$_backup/agent-enrollment.json"
+    _has_key=0
+    if [ -e "$GUARD_IDENTITY_KEY" ]; then
+        cp -p "$GUARD_IDENTITY_KEY" "$_backup/identity.key"
+        _has_key=1
+    fi
+    _has_ops=0
+    if [ -e "$OPERATIONS_PATH" ]; then
+        cp -p "$OPERATIONS_PATH" "$_backup/${OPERATIONS_BINARY_NAME}"
+        _has_ops=1
+    fi
+    echo "${GREEN}✓ Saved Guard ${_old_version:-of an unknown version}, its enrollment and identity key in ${_backup}.${NC}"
+
+    # From the swap until the proof, every exit restores the saved Guard. One
+    # rename within the directory swaps the binary; the running Guard keeps the
+    # old file until the restart.
+    trap 'rm -f "$_staged"; reinstall_rollback' 0
+    trap 'rm -f "$_staged"; reinstall_rollback; exit 1' 1 2 15
+    mv -f "$_staged" "$GUARD_BINARY"
+    if [ "$_has_ops" = 1 ]; then
+        install -m 0755 "$GUARD_BINARY" "${OPERATIONS_PATH}.reinstall"
+        mv -f "${OPERATIONS_PATH}.reinstall" "$OPERATIONS_PATH"
+    fi
+    echo "${CYAN}Restarting the Guard...${NC}"
+    if ! guard_restarted; then
+        echo "${RED}Guard ${_new_version} did not stay running.${NC}" >&2
+        exit 1
+    fi
+    if ! cmp -s "$_backup/agent-enrollment.json" "$GUARD_ENROLLMENT_FILE"; then
+        echo "${RED}The Guard enrollment changed during the reinstall.${NC}" >&2
+        exit 1
+    fi
+    _key_state=absent
+    if [ "$_has_key" = 1 ]; then
+        if ! cmp -s "$_backup/identity.key" "$GUARD_IDENTITY_KEY"; then
+            echo "${RED}The Guard identity key changed during the reinstall.${NC}" >&2
+            exit 1
+        fi
+        _key_state=unchanged
+    fi
+    trap - 0 1 2 15
+    # Proven unchanged, the secret copies are redundant; the old binary stays.
+    rm -f "$_backup/agent-enrollment.json" "$_backup/identity.key"
+    # The Guard may now move to the privilege-split layout on its own.
+    release_layout_hold
+    systemctl restart "$GUARD_SERVICE" || true
+    echo "${GREEN}✓ Guard ${_new_version} is running with its enrollment and identity key unchanged.${NC}"
+    echo "GUARD_REINSTALL result=reinstalled from=${_old_version:-unknown} to=${_new_version} sha256=${_new_sha} enrollment=unchanged identity_key=${_key_state} backup=${_backup}"
+}
+
 # Main installation flow
 main() {
     echo "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -1264,6 +1519,10 @@ main() {
     echo ""
 
     parse_args "$@"
+    if [ "$REINSTALL_GUARD" = 1 ]; then
+        reinstall_guard
+        return 0
+    fi
     if [ "$STAGE_ONLY" = 1 ]; then
         detect_platform
         get_latest_version

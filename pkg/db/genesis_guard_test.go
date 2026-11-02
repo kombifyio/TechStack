@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	currentDatabaseQueryPattern = `SELECT current_database\(\)`
-	controlSystemQueryPattern   = `SELECT system_identifier::text FROM pg_catalog\.pg_control_system\(\)`
+	currentDatabaseQueryPattern = `SELECT pg_catalog\.current_database\(\)`
+	controlSystemQueryPattern   = `SELECT system_identifier::pg_catalog\.text FROM pg_catalog\.pg_control_system\(\)`
 	ledgerPresenceQueryPattern  = `SELECT pg_catalog\.to_regclass\(\s+pg_catalog\.format\('%I\.schema_migrations', pg_catalog\.current_schema\(\)\)\s+\) IS NOT NULL`
 	ledgerCountQueryPattern     = `SELECT COUNT\(\*\) FROM schema_migrations`
 )

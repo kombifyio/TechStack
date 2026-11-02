@@ -14,15 +14,14 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
+	providerexecutor "github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 )
 
@@ -129,7 +128,7 @@ func (m *Manager) PreflightCreateOrBindLease(
 	if err := m.admission.PreflightProvision(ctx, normalized.admission); err != nil {
 		return err
 	}
-	return releasechannel.AdmitStageMutation(ctx, normalized.providerID)
+	return nil
 }
 
 // CreateOrBindLease atomically admits a native lease/server/operation intent.
@@ -145,9 +144,6 @@ func (m *Manager) CreateOrBindLease(
 	normalized, err := normalizeManagedLeaseRequest(req)
 	if err != nil {
 		return nil, err
-	}
-	if !releasechannel.AdmitsJobExecution(normalized.admission.TenantID) {
-		return nil, releasechannel.ErrTenantNotOwned
 	}
 	// NativeAdmission owns the provision activation gate after its durable
 	// replay lookup. Rechecking the gate here would make an already committed

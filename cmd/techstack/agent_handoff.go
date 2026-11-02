@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -51,21 +52,22 @@ type handoffArchive struct {
 // directory, destroys the remaining identity state and the telemetry spool,
 // overwrites and removes the journal, and records a receipt the next pairing
 // presents. It runs as root on a decommissioned Guard whose service is stopped.
-func runAgentHandoff(args []string, stdout io.Writer) error {
+func runAgentHandoff(ctx context.Context, args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("techstack agent handoff", flag.ContinueOnError)
 	server := flags.String("server", "", "control-plane base URL that confirms the handoff before anything is removed")
-	confirmationFile := flags.String("confirmation-file", "", "file holding the prior owner's handoff confirmation (deleted after use)")
+	confirmationFile := flags.String("confirmation-file", "", "file holding the prior owner's handoff confirmation (deleted after use; - reads it from stdin)")
 	exportFile := flags.String("export-file", "", "export: new file outside the Guard state directory that receives the prior tenant's payloads")
 	quarantineDir := flags.String("quarantine-dir", "", "quarantine: root-only directory outside the Guard state directory (default: <state-dir>-quarantine)")
 	stateDir := flags.String("state-dir", "", "Guard state directory (env "+guardStateDirEnv+")")
 	enrollmentFile := flags.String("enrollment-file", defaultEnrollmentFile, "enrollment file of the prior binding, destroyed by the handoff")
+	archiveFD := flags.Int("archive-fd", 0, "internal: descriptor of the new archive file root created for the daemon-user child of a privilege-split Guard")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*confirmationFile) == "" || strings.TrimSpace(*server) == "" {
 		return errors.New("--server and --confirmation-file are required")
 	}
-	token, err := readSecretFile(*confirmationFile)
+	token, err := readSecretInput(*confirmationFile)
 	if err != nil {
 		return fmt.Errorf("read the handoff confirmation: %w", err)
 	}
@@ -75,6 +77,29 @@ func runAgentHandoff(args []string, stdout io.Writer) error {
 		return err
 	}
 	dir := resolveGuardStateDir(*stateDir)
+	target, err := handoffArchiveTarget(confirmation, dir, *exportFile, *quarantineDir)
+	if err != nil {
+		return err
+	}
+	// On the privilege-split layout only the daemon user may open the custody,
+	// so root hands the handoff to a child running as that user. The
+	// confirmation file stays root's and goes once the child completed.
+	if handled, err := handoffAsCustodyOwner(ctx, flags, dir, *enrollmentFile, target, token, stdout); handled {
+		if err == nil {
+			removeSecretInput(*confirmationFile)
+		}
+		return err
+	}
+	create := target.create
+	if *archiveFD != 0 {
+		// The child admits the file root handed it before it touches custody.
+		inherited, err := inheritedHandoffArchive(*archiveFD, target.path())
+		if err != nil {
+			return err
+		}
+		defer inherited.Close()
+		create = func() (*os.File, error) { return inherited, nil }
+	}
 	manager, err := hostidentity.Open(dir)
 	if err != nil {
 		return err
@@ -84,10 +109,6 @@ func runAgentHandoff(args []string, stdout io.Writer) error {
 	// confirmed binding; the handoff ends it with the rest of the prior state.
 	if manager.Record().State == hostidentity.StateBound {
 		return errors.New("this Guard is bound; the handoff runs only after the server was detached or retired")
-	}
-	write, target, err := handoffArchiveTarget(confirmation, dir, *exportFile, *quarantineDir)
-	if err != nil {
-		return err
 	}
 	// Nothing is removed under a confirmation the control plane does not hold
 	// for this server: the check proves this server's host key, which the
@@ -126,12 +147,16 @@ func runAgentHandoff(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := write(archive); err != nil {
+	file, err := create()
+	if err != nil {
+		return fmt.Errorf("write the handoff archive: %w", err)
+	}
+	if err := writeSynced(file, archive); err != nil {
 		return fmt.Errorf("write the handoff archive: %w", err)
 	}
 	removed, err := store.HandOff(confirmation.TenantID)
 	if err != nil {
-		return fmt.Errorf("the archive %s is complete, but removing the payloads from the Guard state failed: %w", target, err)
+		return fmt.Errorf("the archive %s is complete, but removing the payloads from the Guard state failed: %w", target.path(), err)
 	}
 	if err := root.RemoveAll("telemetry-spool"); err != nil {
 		return fmt.Errorf("remove the telemetry spool: %w", err)
@@ -150,19 +175,44 @@ func runAgentHandoff(args []string, stdout io.Writer) error {
 	if err := storeHandoffReceipt(root, receipt); err != nil {
 		return fmt.Errorf("record the handoff receipt: %w", err)
 	}
-	_ = os.Remove(*confirmationFile)
+	removeSecretInput(*confirmationFile)
 	_, _ = fmt.Fprintf(stdout, "GUARD_TENANT_HANDOFF_OK handoff_id=%s disposition=%s entries=%d archive=%s archive_sha256=%s\n",
-		receipt.HandoffID, receipt.Disposition, receipt.Entries, target, receipt.ArchiveDigest)
+		receipt.HandoffID, receipt.Disposition, receipt.Entries, target.path(), receipt.ArchiveDigest)
 	return nil
 }
 
-// handoffArchiveTarget returns the writer of the archive for the confirmed
-// disposition. The archive never lands in the Guard state directory: the next
-// binding's Guard must not be able to reach it.
-func handoffArchiveTarget(c guardbinding.HandoffConfirmation, stateDir, exportFile, quarantineDir string) (func([]byte) error, string, error) {
+// handoffTarget is where the archive of the confirmed disposition goes: a new
+// export file, or a file named after the handoff in the quarantine directory.
+type handoffTarget struct {
+	dir, name  string
+	quarantine bool
+}
+
+func (t handoffTarget) path() string { return filepath.Join(t.dir, t.name) }
+
+// create makes the archive as a new owner-only file of the calling user.
+func (t handoffTarget) create() (*os.File, error) {
+	if !t.quarantine {
+		// #nosec G304 -- the operator names a new file; O_EXCL never follows or replaces an existing one.
+		return os.OpenFile(t.path(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	}
+	// privatefs admits only a non-symlink directory of the calling user that no
+	// one else can write to; the archive in it is owner-only.
+	quarantine, err := privatefs.Open(t.dir)
+	if err != nil {
+		return nil, err
+	}
+	defer quarantine.Close()
+	return privatefs.OpenFile(quarantine, t.name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+}
+
+// handoffArchiveTarget resolves the archive for the confirmed disposition. The
+// archive never lands in the Guard state directory: the next binding's Guard
+// must not be able to reach it.
+func handoffArchiveTarget(c guardbinding.HandoffConfirmation, stateDir, exportFile, quarantineDir string) (handoffTarget, error) {
 	state, err := filepath.Abs(stateDir)
 	if err != nil {
-		return nil, "", err
+		return handoffTarget{}, err
 	}
 	outside := func(path string) (string, error) {
 		absolute, err := filepath.Abs(path)
@@ -177,51 +227,39 @@ func handoffArchiveTarget(c guardbinding.HandoffConfirmation, stateDir, exportFi
 	switch c.Disposition {
 	case guardbinding.HandoffExport:
 		if strings.TrimSpace(exportFile) == "" {
-			return nil, "", errors.New("the prior owner confirmed an export: --export-file is required")
+			return handoffTarget{}, errors.New("the prior owner confirmed an export: --export-file is required")
 		}
 		path, err := outside(exportFile)
 		if err != nil {
-			return nil, "", err
+			return handoffTarget{}, err
 		}
-		return func(data []byte) error {
-			// #nosec G304 -- the operator names a new file; O_EXCL never follows or replaces an existing one.
-			file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-			if err != nil {
-				return err
-			}
-			return writeSynced(file, data)
-		}, path, nil
+		return handoffTarget{dir: filepath.Dir(path), name: filepath.Base(path)}, nil
 	default:
 		if strings.TrimSpace(quarantineDir) == "" {
 			quarantineDir = state + "-quarantine"
 		}
 		path, err := outside(quarantineDir)
 		if err != nil {
-			return nil, "", err
+			return handoffTarget{}, err
 		}
 		name := c.HandoffID + ".json"
-		return func(data []byte) error {
-			// privatefs admits only a root-owned, owner-only, non-symlink directory.
-			quarantine, err := privatefs.Open(path)
-			if err != nil {
-				return err
-			}
-			defer quarantine.Close()
-			file, err := privatefs.OpenFile(quarantine, name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-			if err != nil {
-				return err
-			}
-			return writeSynced(file, data)
-		}, filepath.Join(path, name), nil
+		if name != filepath.Base(name) {
+			return handoffTarget{}, errors.New("the handoff confirmation names an invalid handoff")
+		}
+		return handoffTarget{dir: path, name: name, quarantine: true}, nil
 	}
 }
 
+// writeSynced writes the complete archive durably. A failed write empties the
+// file again, so no partial copy of the payloads remains, and an empty archive
+// root created for a daemon-user child is removed.
 func writeSynced(file *os.File, data []byte) error {
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
+	_, err := file.Write(data)
+	if err == nil {
+		err = file.Sync()
 	}
-	if err := file.Sync(); err != nil {
+	if err != nil {
+		_ = file.Truncate(0)
 		_ = file.Close()
 		return err
 	}

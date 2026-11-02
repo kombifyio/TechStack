@@ -1706,7 +1706,7 @@
     {
       "name": "create_install_command",
       "title": "Create a server install command",
-      "description": "Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument.",
+      "description": "Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument. With mode reinstall-guard it answers the Linux command for a server whose Guard update state is reinstall_required: run as root on that server, it installs the current Guard in place and keeps the enrollment and identity key unchanged. The token then only downloads the Guard and is never redeemed.",
       "requiredCapability": "techstack.inventory.write",
       "operationId": "createInstallCommand",
       "http": {
@@ -1715,7 +1715,16 @@
       },
       "inputSchema": {
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "mode": {
+            "default": "install",
+            "enum": [
+              "install",
+              "reinstall-guard"
+            ],
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "outputSchema": {
@@ -9834,6 +9843,7 @@
                     "type": "boolean"
                   },
                   "state": {
+                    "description": "reinstall_required is a Guard below 0.45.17 that can no longer update itself; createInstallCommand with mode reinstall-guard answers the command that reinstalls it in place.",
                     "enum": [
                       "current",
                       "staged",
@@ -9842,6 +9852,7 @@
                       "rolled_back",
                       "layout_rolled_back",
                       "recovery_needed",
+                      "reinstall_required",
                       "unknown"
                     ],
                     "type": "string"
@@ -10165,8 +10176,18 @@
             "format": "date-time",
             "type": "string"
           },
+          "policy_id": {
+            "description": "The registered repair policy. Absent while the server never had an approval.",
+            "type": "string"
+          },
           "server_id": {
             "type": "string"
+          },
+          "version": {
+            "description": "The policy version; every change, a withdrawal included, is a new version, and a Guard's local repair evidence names it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [

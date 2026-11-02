@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/systemdb"
@@ -24,7 +25,20 @@ type PendingProjection struct {
 	ProjectionRequest
 	SpaceID, HouseholdName string
 	AttemptedAt            time.Time
+	// Homelab is a homelab member (workspace D-2026-11-01-05): a Pocket ID
+	// account on the owner's node only, with no Auth0 account. ContactEmail is
+	// the address the owner entered for it, empty when none.
+	Homelab      bool
+	ContactEmail string
 }
+
+// HomelabMemberSubjectPrefix marks Cloud's id of a homelab member.
+const HomelabMemberSubjectPrefix = "hlm_"
+
+// homelabMemberEmailDomain is the reserved, never deliverable domain (RFC 2606)
+// of the Pocket ID address of a homelab member the owner entered none for. The
+// node's identity contract needs an address; nothing is ever sent to it.
+const homelabMemberEmailDomain = "homelab.invalid"
 
 func NewSystemReducer(ctx context.Context, database *sql.DB) (*SystemReducer, error) {
 	if database == nil {
@@ -56,8 +70,11 @@ func (r *SystemReducer) Pending(ctx context.Context) ([]PendingProjection, error
   UPDATE household_node_projections p SET last_attempt_at=now(),next_attempt_at=now()+interval '5 minutes'
   FROM due WHERE p.owner_subject=due.owner_subject AND p.subject=due.subject RETURNING p.*
  ) SELECT p.space_id,p.owner_subject,p.subject,p.revision,p.desired_action,
-  COALESCE(to_json(p.node_apps)::text,'null'),COALESCE(u.email,''),COALESCE(u.name,''),COALESCE(s.name,''),p.last_attempt_at
-  FROM claimed p LEFT JOIN users u ON u.auth_subject=p.subject LEFT JOIN spaces s ON s.id=p.space_id`)
+  COALESCE(to_json(p.node_apps)::text,'null'),COALESCE(u.email,''),COALESCE(u.name,hm.j->>'display_name',''),COALESCE(s.name,''),p.last_attempt_at,
+  COALESCE(hm.j->>'contact_email','')
+  FROM claimed p LEFT JOIN users u ON u.auth_subject=p.subject LEFT JOIN spaces s ON s.id=p.space_id
+  LEFT JOIN LATERAL (SELECT to_jsonb(m) AS j FROM space_members m WHERE m.space_id=p.space_id AND m.subject=p.subject
+   AND p.subject LIKE 'hlm\_%' ORDER BY m.id DESC LIMIT 1) hm ON true`)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +83,17 @@ func (r *SystemReducer) Pending(ctx context.Context) ([]PendingProjection, error
 	for rows.Next() {
 		var p PendingProjection
 		var raw string
-		if err := rows.Scan(&p.SpaceID, &p.OwnerSubject, &p.Member.Subject, &p.Revision, &p.Action, &raw, &p.Member.Email, &p.Member.DisplayName, &p.HouseholdName, &p.AttemptedAt); err != nil {
+		if err := rows.Scan(&p.SpaceID, &p.OwnerSubject, &p.Member.Subject, &p.Revision, &p.Action, &raw, &p.Member.Email, &p.Member.DisplayName, &p.HouseholdName, &p.AttemptedAt, &p.ContactEmail); err != nil {
 			return nil, err
+		}
+		// A homelab member has no account row: the owner's entries name it.
+		// The row is read as JSON so the worker also runs before Cloud 000303.
+		if strings.HasPrefix(p.Member.Subject, HomelabMemberSubjectPrefix) {
+			p.Homelab = true
+			p.Member.Email = p.ContactEmail
+			if p.Member.Email == "" {
+				p.Member.Email = p.Member.Subject + "@" + homelabMemberEmailDomain
+			}
 		}
 		if raw != "null" {
 			var catalog []string
@@ -209,16 +235,22 @@ func (r *SystemReducer) sweepLegacyRemoval(ctx context.Context, service *Service
  ), households AS (
   SELECT s.id FROM spaces s, claimed c WHERE s.deleted_at IS NULL AND (s.created_by=c.owner_subject OR EXISTS(
    SELECT 1 FROM space_members o WHERE o.space_id=s.id AND o.subject=c.owner_subject AND o.role='owner' AND o.removed_at IS NULL))
- ) SELECT c.owner_subject,c.subject,c.revision,COALESCE(u.email,''),c.last_attempt_at,
+ ) SELECT c.owner_subject,c.subject,c.revision,COALESCE(u.email,hm.j->>'contact_email',''),c.last_attempt_at,
   EXISTS(SELECT 1 FROM space_members m WHERE m.space_id IN(SELECT id FROM households) AND m.subject=c.subject AND m.removed_at IS NULL),
   to_json(ARRAY(SELECT DISTINCT lower(v.email) FROM users v WHERE v.email IS NOT NULL AND (v.auth_subject=c.owner_subject OR v.auth_subject IN(
    SELECT m.subject FROM space_members m WHERE m.space_id IN(SELECT id FROM households) AND m.removed_at IS NULL))))::text
-  FROM claimed c LEFT JOIN users u ON u.auth_subject=c.subject`).Scan(&req.OwnerSubject, &req.Subject, &req.Revision, &req.Email, &claimedAt, &req.StillMember, &rawEmails)
+  FROM claimed c LEFT JOIN users u ON u.auth_subject=c.subject
+  LEFT JOIN LATERAL (SELECT to_jsonb(m) AS j FROM space_members m WHERE m.subject=c.subject
+   AND c.subject LIKE 'hlm\_%' ORDER BY m.id DESC LIMIT 1) hm ON true`).Scan(&req.OwnerSubject, &req.Subject, &req.Revision, &req.Email, &claimedAt, &req.StillMember, &rawEmails)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	// A homelab member's node account carries the entered or the reserved address.
+	if strings.HasPrefix(req.Subject, HomelabMemberSubjectPrefix) && req.Email == "" {
+		req.Email = req.Subject + "@" + homelabMemberEmailDomain
 	}
 	var emails []string
 	if err := json.Unmarshal([]byte(rawEmails), &emails); err != nil {

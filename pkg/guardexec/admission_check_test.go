@@ -183,6 +183,10 @@ func (b *pinBoundaryBackend) UpdateCommit(context.Context, CommitParams) (Commit
 func (b *pinBoundaryBackend) HostSecurityVerify(context.Context) (Observation, error) {
 	return Observation{}, nil
 }
+func (b *pinBoundaryBackend) HouseholdList(context.Context) (Observation, error) {
+	return Observation{}, nil
+}
+
 func (b *pinBoundaryBackend) BackupStatus(context.Context) (Observation, error) {
 	return Observation{}, nil
 }

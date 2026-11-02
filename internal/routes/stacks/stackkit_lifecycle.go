@@ -203,6 +203,13 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 	if operation := strings.ToLower(strings.TrimSpace(input.Operation)); operation == jobs.StackKitLifecycleApply && len(input.CandidateSpecJSON) > 0 {
 		input.Operation = jobs.StackKitLifecycleAdvancedChangeSet
 	}
+	if strings.ToLower(strings.TrimSpace(input.Operation)) == jobs.StackKitLifecycleAdvancedChangeSet && len(input.CandidateSpecJSON) > 0 {
+		candidate, err := jobs.TerramateGenerationCandidate(input.CandidateSpecJSON)
+		if err != nil {
+			return httpx.BadRequest(e, "candidate_spec must be a StackSpec object")
+		}
+		input.CandidateSpecJSON = candidate
+	}
 	if strings.ToLower(strings.TrimSpace(input.Operation)) == jobs.StackKitLifecycleBackupRestoreActivate {
 		if len(e.Request.Header.Values("Idempotency-Key")) != 1 {
 			return httpx.BadRequest(e, "Exactly one bounded Idempotency-Key is required for restore activation")

@@ -2,11 +2,11 @@
   "configured": true,
   "deliverability_known": true,
   "release": {
-    "tag": "v0.54.18",
-    "version": "0.54.18",
-    "sourceSha": "fdbdd2185ecfdae1c9de3851f4cefd271ebbd3d9",
-    "publicSourceSha": "3cd4010c90313567aa9e91cf43c9f981d8b01dac",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.54.18"
+    "tag": "v0.55.10",
+    "version": "0.55.10",
+    "sourceSha": "6eaa174ea5ed818416d095a8e1cbf0515c2a9b67",
+    "publicSourceSha": "ecd38c26ff4c15b88b8cde563bbbe854e7e18323",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.55.10"
   },
   "use_cases": [
     {
@@ -6642,7 +6642,13 @@
         },
         {
           "configuration": {
-            "settings": [],
+            "settings": [
+              {
+                "key": "release",
+                "type": "string",
+                "label": "Release"
+              }
+            ],
             "secretRefs": [
               "admin-token"
             ]

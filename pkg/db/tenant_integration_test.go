@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/tenantdb"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -323,5 +325,166 @@ func TestStageBackupPendingPageSkipsExpiredAndAdvances(t *testing.T) {
 	}
 	if _, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT backup_purpose_denial"); err != nil {
 		t.Fatal("backup purpose rollback failed")
+	}
+}
+
+// Hostile SQL/GUCs cannot be submitted through the product API. This auth
+// boundary probe receives only the Stage application login and bounded signed
+// contexts from the development issuer, never migration or signing custody.
+func TestStageHouseholdInventoryReadDelegation(t *testing.T) {
+	if os.Getenv("TECHSTACK_TEST_HOUSEHOLD_CONTEXT") != "1" {
+		t.Skip("Stage household boundary probe not selected")
+	}
+	database := openTestDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	if _, err := VerifyStagingApplicationBinding(ctx, database.DB); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRuntimeRolePosture(ctx, database.DB, RuntimeRoleHosted); err != nil {
+		t.Fatal(err)
+	}
+	owner := "auth0|jrz6y-stage-owner"
+	member := "auth0|jrz6y-stage-member"
+	tenant := "usr:" + owner
+	tokenContext := func(subject, name string) context.Context {
+		token := os.Getenv(name)
+		if token == "" {
+			t.Fatalf("missing bounded context %s", name)
+		}
+		return tenantdb.NewContextWithToken(identity.NewContext(ctx, &identity.Identity{UserID: subject, OrgID: "usr:" + subject}), token)
+	}
+	ownerCtx := tokenContext(owner, "JOURNEY_OWNER_CONTEXT")
+	collectionCtx := tokenContext(member, "JOURNEY_COLLECTION_CONTEXT")
+	exactCtx := tokenContext(member, "JOURNEY_SERVER_CONTEXT")
+	ungrantedCtx := tokenContext(member, "JOURNEY_UNGRANTED_CONTEXT")
+	store := controlplane.NewPostgresStore(database.DB)
+	if _, err := store.EnsureTenant(ownerCtx, controlplane.Tenant{ID: tenant, Kind: "saas"}); err != nil {
+		t.Fatal(err)
+	}
+	// The application intentionally cannot delete tenant anchors. This dedicated
+	// synthetic anchor is cleaned by the Stage operator after the probe.
+
+	scope, err := controlplane.NewOwnerInventoryReadScope(tenant, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"one", "two"} {
+		stackID, serverID := "jrz6y_stage_stack_"+suffix, "jrz6y_stage_server_"+suffix
+		if _, err := store.CreateStack(ownerCtx, controlplane.CreateStackRequest{ID: stackID, TenantID: tenant, OwnerSubjectID: owner, Name: stackID}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			cleanupCtx := tenantdb.NewContextWithToken(identity.NewContext(context.Background(), &identity.Identity{UserID: owner, OrgID: tenant}), os.Getenv("JOURNEY_OWNER_CONTEXT"))
+			if err := tenantdb.WithContextTx(cleanupCtx, database.DB, func(tx *sql.Tx) error {
+				if err := tenantcontext.ApplyTenant(cleanupCtx, tx, tenant); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(cleanupCtx, `DELETE FROM services WHERE tenant_id=$1 AND server_id=$2`, tenant, serverID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(cleanupCtx, `DELETE FROM servers WHERE tenant_id=$1 AND id=$2`, tenant, serverID); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(cleanupCtx, `DELETE FROM stacks WHERE tenant_id=$1 AND id=$2`, tenant, stackID)
+				return err
+			}); err != nil {
+				t.Error("synthetic fixture cleanup", err)
+			}
+		})
+		if _, err := store.UpsertServerRuntime(ownerCtx, controlplane.ServerRuntime{ID: serverID, TenantID: tenant, OwnerSubjectID: owner, StackID: stackID, Name: serverID}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpsertServiceRuntime(ownerCtx, controlplane.ServiceRuntime{ID: "jrz6y_stage_service_" + suffix, TenantID: tenant, StackID: stackID, ServerID: serverID, ServiceKey: "test", ServiceInstance: suffix, Name: "Household Stage boundary"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, err := store.ListInventoryServers(collectionCtx, scope, controlplane.InventoryPageRequest{})
+	if err != nil || len(listed.Servers) != 2 {
+		t.Fatalf("owner collection = %d rows, %v", len(listed.Servers), err)
+	}
+	services, err := store.ListInventoryServices(collectionCtx, scope, "", controlplane.InventoryPageRequest{})
+	if err != nil || len(services.Services) != 2 {
+		t.Fatalf("owner service collection = %d, %v", len(services.Services), err)
+	}
+	services, err = store.ListInventoryServices(exactCtx, scope, "jrz6y_stage_server_one", controlplane.InventoryPageRequest{})
+	if err != nil || len(services.Services) != 1 {
+		t.Fatalf("exact server services = %d, %v", len(services.Services), err)
+	}
+	server, err := store.GetInventoryServer(exactCtx, scope, "jrz6y_stage_server_one")
+	if err != nil || server.ID != "jrz6y_stage_server_one" {
+		t.Fatalf("exact server read: %v", err)
+	}
+	if _, err := store.GetInventoryStack(exactCtx, scope, "jrz6y_stage_stack_one"); err != nil {
+		t.Fatal("dependent stack read", err)
+	}
+	if _, err := store.GetInventoryServer(exactCtx, scope, "jrz6y_stage_server_two"); !errors.Is(err, controlplane.ErrNotFound) {
+		t.Fatalf("other server: %v", err)
+	}
+	if _, err := store.GetInventoryStack(exactCtx, scope, "jrz6y_stage_stack_two"); !errors.Is(err, controlplane.ErrNotFound) {
+		t.Fatalf("other stack: %v", err)
+	}
+	if _, err := store.ListInventoryServers(ungrantedCtx, scope, controlplane.InventoryPageRequest{}); !errors.Is(err, tenantdb.ErrContextMismatch) {
+		t.Fatalf("ungranted owner selection: %v", err)
+	}
+	err = tenantdb.WithContextTx(ungrantedCtx, database.DB, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ungrantedCtx, `SELECT set_config('app.tenant_id',$1,true)`, tenant); err != nil {
+			return err
+		}
+		var rows int
+		if err := tx.QueryRowContext(ungrantedCtx, `SELECT count(*) FROM servers WHERE tenant_id=$1`, tenant).Scan(&rows); err != nil {
+			return err
+		}
+		if rows != 0 {
+			return fmt.Errorf("ungranted GUC exposed %d rows", rows)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Even chosen GUCs cannot turn a signed exact-server read into other rows or DML.
+	err = tenantdb.WithContextTx(exactCtx, database.DB, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(exactCtx, `SELECT set_config('app.tenant_id',$1,true)`, tenant); err != nil {
+			return err
+		}
+		var rows int
+		if err := tx.QueryRowContext(exactCtx, `SELECT count(*) FROM servers WHERE tenant_id=$1`, tenant).Scan(&rows); err != nil {
+			return err
+		}
+		if rows != 1 {
+			return fmt.Errorf("exact token exposed %d servers", rows)
+		}
+		for _, sqlText := range []string{`UPDATE servers SET name=name WHERE tenant_id=$1`, `DELETE FROM servers WHERE tenant_id=$1`} {
+			result, err := tx.ExecContext(exactCtx, sqlText, tenant)
+			if err != nil {
+				return err
+			}
+			changed, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if changed != 0 {
+				return fmt.Errorf("delegated read admitted DML")
+			}
+		}
+		if _, err := tx.ExecContext(exactCtx, "SAVEPOINT refused_insert"); err != nil {
+			return err
+		}
+		_, insertErr := tx.ExecContext(exactCtx, `INSERT INTO stacks(id,tenant_id,owner_subject_id,name,mode,status) VALUES('jrz6y_forbidden_stack',$1,$2,'Forbidden','easy','draft')`, tenant, owner)
+		var denied *pgconn.PgError
+		if !errors.As(insertErr, &denied) || denied.Code != "42501" {
+			return fmt.Errorf("delegated INSERT was not refused by RLS: %v", insertErr)
+		}
+		if _, err := tx.ExecContext(exactCtx, "ROLLBACK TO SAVEPOINT refused_insert"); err != nil {
+			return err
+		}
+		if err := tenantcontext.ApplyTenant(exactCtx, tx, tenant); !errors.Is(err, tenantdb.ErrContextMismatch) {
+			return fmt.Errorf("command context accepted delegated tenant: %v", err)
+		}
+		return errors.New("rollback boundary probe")
+	})
+	if err == nil || err.Error() != "rollback boundary probe" {
+		t.Fatal(err)
 	}
 }

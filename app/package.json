@@ -22,9 +22,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@kombify/notifications": "npm:@kombiverselabs/cloud-notifications@0.3.137",
-    "@kombiverselabs/execution-contracts": "0.14.11",
-    "@kombiverselabs/speechkit-voiceagent-client": "0.77.16",
+    "@kombify/notifications": "npm:@kombiverselabs/cloud-notifications@0.4.5",
+    "@kombiverselabs/execution-contracts": "0.15.2",
+    "@kombiverselabs/speechkit-voiceagent-client": "0.77.19",
     "@playwright/test": "^1.64.0",
     "@sveltejs/adapter-static": "4.0.0",
     "@sveltejs/kit": "3.0.1",
@@ -48,7 +48,7 @@
   "dependencies": {
     "@auth0/auth0-spa-js": "^2.28.2",
     "@kombiverselabs/design": "0.11.5",
-    "@kombiverselabs/embed": "0.14.11",
+    "@kombiverselabs/embed": "0.15.2",
     "@kombiverselabs/onboarding-core": "0.11.5",
     "@kombiverselabs/ui": "0.11.5",
     "@lucide/svelte": "1.53.0",

@@ -1,7 +1,4 @@
 export const zhHans: Record<string, string> = {
-  "ui.releaseChannel.badge": "Preview",
-  "ui.releaseChannel.hint": "你正在使用 Preview 渠道：最新的更改，使用你的真实数据。",
-  "ui.releaseChannel.backToStable": "返回 Stable",
   "ui.clientLocal.bootstrapPassword": "初始化密码",
   "ui.clientLocal.bootstrapGuidance":
     "在此安装的主机终端上运行 {command}，获取初始化密码。如果以前的密码已被使用或已过期，该命令会替换它，旧密码将不再有效。",

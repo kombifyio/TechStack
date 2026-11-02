@@ -106,8 +106,8 @@ func ensureRuntimeOwner(ctx context.Context, adminDSN string, port uint32) (stri
 	return dsn, nil
 }
 
-// migrationSystemRolesSQL creates the NOLOGIN system roles that migrations 168
-// and 173 adopt but the NOCREATEROLE runtime owner cannot create, with the
+// migrationSystemRolesSQL creates the NOLOGIN system roles that migrations 168,
+// 173 and 178 adopt but the NOCREATEROLE runtime owner cannot create, with the
 // exact posture those migrations require. A managed instance has them before
 // its migrations run; here the bootstrap superuser prepares them on every
 // start, so a fresh store and one created before 168 both migrate. An existing
@@ -116,7 +116,7 @@ const migrationSystemRolesSQL = `DO $techstack_local_system_roles$
 DECLARE
     system_role text;
 BEGIN
-    FOREACH system_role IN ARRAY ARRAY['techstack_household_worker','techstack_platform_projection_system'] LOOP
+    FOREACH system_role IN ARRAY ARRAY['techstack_household_worker','techstack_platform_projection_system','techstack_application','techstack_backup_worker'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = system_role) THEN
             EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION', system_role);
         END IF;

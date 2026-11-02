@@ -131,6 +131,17 @@ func (e guardExecution) postureObserver() postureagent.Observer {
 	return unobservable{}
 }
 
+// householdObserver selects who reads the household identities for the
+// reconciliation of an interrupted household mutation: the privileged executor
+// in the split layout, the in-process runtime on a root Guard, and nobody
+// otherwise, which keeps such an outcome escalated.
+func (e guardExecution) householdObserver() householdObserver {
+	if observer, ok := e.postureObserver().(householdObserver); ok {
+		return observer
+	}
+	return nil
+}
+
 // signedUpdates reports whether this Guard's update path admits only signed
 // releases: the split layout and a Linux root Guard, unless the host opted into
 // unsigned local builds.

@@ -11,22 +11,21 @@ import (
 const EnvReleaseChannel = "TECHSTACK_RELEASE_CHANNEL"
 
 // ReleaseChannel is shared by database startup, HTTP admission and runtime
-// lifecycle: "preview", "early-access" or, by default, "stable".
+// lifecycle: "early-access" or, by default, "stable". The retired value
+// "preview" is read as Early Access, never as stable: a leftover setting must
+// not start shared work (platform-uv4ut).
 func ReleaseChannel() string {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvReleaseChannel))) {
-	case "preview":
-		return "preview"
-	case "early-access":
+	case "early-access", "preview":
 		return "early-access"
 	}
 	return "stable"
 }
 
-// SecondaryChannel reports a deployment beside stable: the Stage execution
-// companion ("preview") or Early Access. Early Access is served by the edge under the same links to the
-// people who opted in (CI-CD-PLATFORM-STANDARD §4.6 "Channel model"). Both
-// serve signed-in people over HTTP only; shared, homelab, machine and
-// migration work stays on stable.
+// SecondaryChannel reports a deployment beside stable: Early Access, served by
+// the edge under the same links to the people who opted in
+// (CI-CD-PLATFORM-STANDARD §4.6 "Channel model"). It serves signed-in people
+// over HTTP only; shared, homelab, machine and migration work stays on stable.
 func SecondaryChannel() bool { return ReleaseChannel() != "stable" }
 
 // RunsSharedWork reports whether this deployment runs the work that is

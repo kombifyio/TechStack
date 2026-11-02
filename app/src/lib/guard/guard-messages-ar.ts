@@ -167,6 +167,10 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.fact.updated.guardInProgress": "يجري تثبيت تحديث لـ Guard.",
   "guard.fact.updated.guardUnknown": "لا يُبلَّغ عن إصدار Guard وتوقيعه.",
   "guard.fact.updated.guardUnsigned": "مكوّن Guard المثبَّت غير موقَّع.",
+  "guard.fact.updated.reinstallRequired":
+    "لم يعد بإمكان Guard {version} تحديث نفسه.",
+  "guard.fact.updated.reinstallRequiredNext":
+    "أعد تثبيت Guard على هذا الخادم. يبقى متصلًا.",
   "guard.fact.updated.osOk":
     "لا تحديثات أمنية معلّقة ولا حاجة إلى إعادة تشغيل.",
   "guard.fact.updated.osPending":
@@ -395,6 +399,15 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
     "شغّل أمر الإقران هذا على الخادم. يعيد إقران الخادم ويثبّت مفتاح الربط.",
   "guard.repair.copy": "نسخ",
   "guard.repair.copied": "تم النسخ",
+  "guard.reinstall.title": "إعادة تثبيت Guard",
+  "guard.reinstall.body":
+    "شغّل الأمر بصلاحيات root على هذا الخادم. تحصل على Guard الحالي، ويحتفظ الخادم باتصاله وإعداداته.",
+  "guard.reinstall.action": "إنشاء الأمر",
+  "guard.reinstall.preparing": "جارٍ التحضير…",
+  "guard.reinstall.failed": "تعذّر إنشاء الأمر. حاول مرة أخرى.",
+  "guard.reinstall.expires": "صالح حتى {at}.",
+  "guard.reinstall.copy": "نسخ",
+  "guard.reinstall.copied": "تم النسخ",
   "guard.repair.unavailable": "تعذّر إعداد أمر إقران.",
   "guard.repair.failed": "تعذّر إعداد أمر الإقران.",
 

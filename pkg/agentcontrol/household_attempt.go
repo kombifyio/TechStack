@@ -121,7 +121,7 @@ func (s *HouseholdCommandSender) SendStackKitCommandForTenant(ctx context.Contex
 		if e == nil {
 			switch state {
 			case "completed", "failed":
-				if !(state == "failed" && strings.HasPrefix(failure.String, cancelledBeforeDispatchPrefix)) {
+				if !(state == "failed" && settledWithoutResult(failure.String)) {
 					old := &agentpb.StackKitCommand{}
 					result := &agentpb.StackKitResult{}
 					if protojson.Unmarshal(priorRaw, old) != nil || protojson.Unmarshal(raw, result) != nil || stackkitcommand.ValidateResult(result, old) != nil {
@@ -153,6 +153,14 @@ func (s *HouseholdCommandSender) SendStackKitCommandForTenant(ctx context.Contex
 		return nil, err
 	}
 	return s.Hub.SendStackKitCommandForTenant(ctx, tenant, agent, command)
+}
+
+// settledWithoutResult names the failed states that end with no result to
+// validate: withdrawn before dispatch, or an outcome_unknown the Guard (or an
+// operator) resolved through nextCommandState or the operator path. Both are
+// known outcomes, so they release the attempt instead of fencing it forever.
+func settledWithoutResult(failure string) bool {
+	return strings.HasPrefix(failure, cancelledBeforeDispatchPrefix) || strings.HasPrefix(failure, "outcome_resolved_")
 }
 
 // Runs inside the Hub's ORIGINAL enqueue transaction, not a second command

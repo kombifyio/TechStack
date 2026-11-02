@@ -421,7 +421,7 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 	}
 	enableGuardDurableOperations(custodyRoot, client, stackKitReconciler{executor: currentStackKitCommandExecutor{
 		runtime: stackKitExecutor, cfg: stackKitRuntimeConfig, ready: runtimeReady.Load,
-	}}, log)
+	}, household: execution.householdObserver()}, log)
 	log.Info("agent_mode_starting", "transport", httpsScheme, "agent_id", enrollment.RuntimeAgentID)
 	if err := client.Run(execCtx); err != nil {
 		return err

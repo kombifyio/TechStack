@@ -32,14 +32,6 @@ if [[ "${1:-}" == "/app/techstack" && ( "${2:-}" == "execution-serve" || "${2:-}
 fi
 case "${1:-}" in
   execution-serve|backup-worker)
-    if [[ "${TECHSTACK_RELEASE_CHANNEL:-}" == "preview" ]]; then
-      if [[ -z "${TECHSTACK_DATABASE_CA_PEM:-}" ]]; then
-        echo "[unified] ERROR: PREVIEW_STAGING_CA_REQUIRED" >&2
-        exit 1
-      fi
-      umask 077
-      printf '%s\n' "$TECHSTACK_DATABASE_CA_PEM" > /data/techstack-stg-ca.pem
-    fi
     exec /app/techstack "$@"
     ;;
 esac
@@ -62,17 +54,6 @@ esac
 if [[ -z "${DATABASE_URL:-}" ]]; then
   echo "[unified] ERROR: DATABASE_URL is required (control-plane Postgres). PocketBase control-plane fallback removed." >&2
   exit 1
-fi
-
-# The image's retained CA belongs to production. Preview's governed runtime
-# projection contains only the pinned public Stage CA and names this exact file.
-if [[ "${TECHSTACK_RELEASE_CHANNEL:-}" == "preview" ]]; then
-  if [[ -z "${TECHSTACK_DATABASE_CA_PEM:-}" ]]; then
-    echo "[unified] ERROR: PREVIEW_STAGING_CA_REQUIRED" >&2
-    exit 1
-  fi
-  umask 077
-  printf '%s\n' "$TECHSTACK_DATABASE_CA_PEM" > /data/techstack-stg-ca.pem
 fi
 
 # The Go runtime sizes its heap against what it believes the machine has and

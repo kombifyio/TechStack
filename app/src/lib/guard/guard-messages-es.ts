@@ -188,6 +188,10 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
     "No se informan la versión ni la firma de Guard.",
   "guard.fact.updated.guardUnsigned":
     "El artefacto de Guard instalado no está firmado.",
+  "guard.fact.updated.reinstallRequired":
+    "Guard {version} ya no puede actualizarse por sí mismo.",
+  "guard.fact.updated.reinstallRequiredNext":
+    "Reinstala Guard en este servidor. Sigue conectado.",
   "guard.fact.updated.osOk":
     "Sin actualizaciones de seguridad pendientes y sin reinicio necesario.",
   "guard.fact.updated.osPending":
@@ -432,7 +436,17 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
     "Ejecuta este comando de emparejamiento en el servidor. Vuelve a emparejar el servidor y fija la clave de vinculación.",
   "guard.repair.copy": "Copiar",
   "guard.repair.copied": "Copiado",
-  "guard.repair.unavailable": "No se pudo preparar un comando de emparejamiento.",
+  "guard.reinstall.title": "Reinstalar Guard",
+  "guard.reinstall.body":
+    "Ejecuta el comando como root en este servidor. Obtienes el Guard actual; el servidor conserva su conexión y su configuración.",
+  "guard.reinstall.action": "Obtener comando",
+  "guard.reinstall.preparing": "Preparando…",
+  "guard.reinstall.failed": "No se pudo crear el comando. Inténtalo de nuevo.",
+  "guard.reinstall.expires": "Válido hasta {at}.",
+  "guard.reinstall.copy": "Copiar",
+  "guard.reinstall.copied": "Copiado",
+  "guard.repair.unavailable":
+    "No se pudo preparar un comando de emparejamiento.",
   "guard.repair.failed": "No se pudo preparar el comando de emparejamiento.",
 
   "guard.ladder.title": "Preparación del emparejamiento",

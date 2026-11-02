@@ -13,6 +13,9 @@
 //   verify    the StackKit verification passed
 //   backup    the native restore drill took its backup snapshot
 //   restore   the native restore drill restored and verified it
+// The Advanced restore drill names the snapshot it took (snapshot_anchor_id)
+// and the restore it verified (restore_result_id); an older drill named the
+// backup and restore operations instead. Either pair is the proof.
 // A phase without its proof is "failed", never "passed".
 // The lifecycle evidence (upgrade, bounded retry, port claims) is carried
 // unchanged for scripts/paid-journey-receipt.mjs, which maps the complete
@@ -25,15 +28,39 @@ export const MANAGED_EVIDENCE_SCOPE = "managed-provider-lifecycle";
 
 type Json = Record<string, unknown>;
 
+/** The kit's upgrade policy as its StackKits release declares it. */
+export interface ManagedUpgradePolicy {
+  kit: string;
+  support: string;
+  release: string;
+  source_ref: string;
+  source_url: string;
+}
+
 /** Upgrade, bounded retry and port claims observed on the converged node. */
 export interface ManagedLifecycleEvidence {
+  // "upgraded": the upgrade and the following verification succeeded.
+  // "refused_by_policy": the kit declares no upgrade support; the owner got
+  // the StackKits refusal, the node kept its inventory and services, and the
+  // following verification succeeded.
   upgrade?: {
+    policy: ManagedUpgradePolicy;
+    outcome: "upgraded" | "refused_by_policy";
     job_id: string;
     status: string;
     success: boolean;
     release: { version: string; archive_sha256: string };
     verify_job_id: string;
     verify_success: boolean;
+    stackkit_reason_code?: string;
+    reason_code?: string;
+    outcome_reason_code?: string;
+    guidance_title?: string;
+    inventory_revision_before?: number;
+    inventory_revision_after?: number;
+    inventory_observed_after_refusal?: string;
+    services?: number;
+    services_unchanged?: boolean;
   };
   bounded_retry?: {
     http_status: number;
@@ -44,6 +71,14 @@ export interface ManagedLifecycleEvidence {
     new_jobs: string[];
     lease_id: string;
     enrollment_status: string;
+    // The rollout the retry named, read back: the stack's deploy job.
+    source_job?: {
+      id: string;
+      type: string;
+      state: string;
+      stack_id: string;
+      lease_id: string;
+    };
   };
   port_claims?: {
     server_id: string;
@@ -92,14 +127,20 @@ export function managedLifecycleReceipt(input: ManagedLifecycleReceiptInput) {
   const lifecycle = record(result.runtime_lifecycle);
   const restore = record(record(result.runtime_proof).restore);
   const drillVerified = restore.status === "verified";
+  const backupOperationId = nonblank(restore.backup_operation_id)
+    ? restore.backup_operation_id
+    : digest(restore.snapshot_anchor_id);
+  const restoreOperationId = nonblank(restore.restore_operation_id)
+    ? restore.restore_operation_id
+    : digest(restore.restore_result_id);
   const checks: Array<[string, boolean]> = [
     ["install", proof.target_bootstrap === "ready"],
     ["init", lifecyclePhaseCompleted(lifecycle, "prepare_apply")],
     ["generate", lifecyclePhaseCompleted(lifecycle, "generate")],
     ["apply", proof.rollout_result === "applied"],
     ["verify", proof.verification_result === "verified"],
-    ["backup", drillVerified && nonblank(restore.backup_operation_id)],
-    ["restore", drillVerified && nonblank(restore.restore_operation_id)],
+    ["backup", drillVerified && nonblank(backupOperationId)],
+    ["restore", drillVerified && nonblank(restoreOperationId)],
   ];
   const phases = checks.map(([name, passed]) => ({
     name,
@@ -183,8 +224,8 @@ export function managedLifecycleReceipt(input: ManagedLifecycleReceiptInput) {
     stackId: input.stackId,
     leaseId: input.leaseId,
     provisionJobId: input.job?.id,
-    backupOperationId: restore.backup_operation_id,
-    restoreOperationId: restore.restore_operation_id,
+    backupOperationId,
+    restoreOperationId,
     destroyJobId: input.destroyJobId,
     day2: input.day2,
     lifecycle: input.lifecycle,
@@ -200,4 +241,10 @@ export function managedLifecycleReceipt(input: ManagedLifecycleReceiptInput) {
 
 function nonblank(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function digest(value: unknown): string | undefined {
+  return typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value)
+    ? value
+    : undefined;
 }

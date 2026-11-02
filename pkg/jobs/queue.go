@@ -772,7 +772,12 @@ func (q *Queue) handleJobExecutionError(ctx context.Context, job *Job, err error
 		// machine-readable reason instead of the generic job category.
 		reasonCode, extra["stackkit_operation"] = advancedReason, advancedOperation
 	}
-	q.recordJobOutcome(job, jobFailedOutcome(job, reasonCode, false, extra))
+	decision := jobFailedOutcome(job, reasonCode, false, extra)
+	var lifecycleFailed *StackKitLifecycleFailedError
+	if errors.As(err, &lifecycleFailed) {
+		decision, reason = stackKitLifecycleFailureOutcome(job, lifecycleFailed, extra), lifecycleFailed.Error()
+	}
+	q.recordJobOutcome(job, decision)
 	q.failJob(job, reason)
 }
 
@@ -1352,9 +1357,7 @@ func queueAdmitsJob(job *Job) bool {
 	if job == nil {
 		return false
 	}
-	job.mu.RLock()
-	defer job.mu.RUnlock()
-	return releasechannel.AdmitsJobExecution(firstJobString(job.Payload, job.Result, "tenant_id"))
+	return true
 }
 
 // Get returns a job by ID.

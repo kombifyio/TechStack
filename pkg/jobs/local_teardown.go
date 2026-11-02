@@ -47,6 +47,11 @@ type LocalStackKitTeardownAuthority struct {
 	ResolvedPlanHash     string                                 `json:"resolved_plan_hash,omitempty"`
 	AppliedRequestDigest string                                 `json:"applied_request_digest"`
 	Servers              []LocalStackKitTeardownServerAuthority `json:"servers"`
+	// SpecPath is the StackSpec the rollout applied (the bound spec after an
+	// address bind). Removal resolves that same document, or the node would
+	// compare its plan with another intent (binding_mismatch at resolvedPlan).
+	// Empty in an authority recorded before this field keeps the default.
+	SpecPath string `json:"spec_path,omitempty"`
 }
 
 type LocalStackKitTeardownServerAuthority struct {
@@ -362,7 +367,7 @@ func removeLocalStackKitWorkloadsWithRelease(ctx context.Context, cfg *Provision
 				StackID: authority.TechstackID, StackKitInstanceID: authority.StackKitInstanceID,
 				TenantID: authority.TenantID, OwnerID: authority.OwnerID, AgentID: server.AgentID,
 				Operation: StackKitLifecycleRemove, OwnerApproved: true, StackKit: authority.StackKit,
-				NodeRef: workload.NodeRef, WorkloadRef: workload.WorkloadRef,
+				NodeRef: workload.NodeRef, WorkloadRef: workload.WorkloadRef, SpecPath: authority.SpecPath,
 			})
 			if err != nil {
 				return err
@@ -377,7 +382,8 @@ func removeLocalStackKitWorkloadsWithRelease(ctx context.Context, cfg *Provision
 				return fmt.Errorf("typed StackKits remove dispatch failed: %w", err)
 			}
 			if result == nil || !result.Success {
-				return recordLocalStackKitRemovalFailure(job, command.CommandId, server, workload, result)
+				diagnosis := inspectLocalRemovalBinding(ctx, cfg.StackKitCommander, request, release, command.CommandId, authority.PlanHash, result)
+				return recordLocalStackKitRemovalFailure(job, command.CommandId, server, workload, result, diagnosis)
 			}
 			normalized, err := normalizeStackKitLifecycleResult(request, result)
 			if err != nil {
@@ -525,22 +531,27 @@ const localRemovalStderrBriefBound = 256
 // recordLocalStackKitRemovalFailure stores the exit code and the bounded,
 // redacted stderr of a failed node-side remove on the destroy job and returns
 // the error that names them. Redaction runs on the whole text before it is
-// cut, so a secret straddling the cut is never half shown.
-func recordLocalStackKitRemovalFailure(job *Job, commandID string, server LocalStackKitTeardownServerAuthority, workload LocalStackKitTeardownWorkloadAuthority, result *agentpb.StackKitResult) error {
+// cut, so a secret straddling the cut is never half shown. A binding-mismatch
+// refusal also carries the node's current PLAN binding (diagnosis).
+func recordLocalStackKitRemovalFailure(job *Job, commandID string, server LocalStackKitTeardownServerAuthority, workload LocalStackKitTeardownWorkloadAuthority, result *agentpb.StackKitResult, diagnosis map[string]interface{}) error {
 	exitCode, stderr := int32(-1), ""
 	if result != nil {
 		exitCode, stderr = result.ExitCode, boundedRedactedNodeStderr(result.Stderr, localRemovalStderrBound)
 	}
+	failure := map[string]interface{}{
+		"workload_ref": workload.WorkloadRef,
+		"node_ref":     workload.NodeRef,
+		"server_id":    server.ServerID,
+		"command_id":   commandID,
+		"exit_code":    exitCode,
+		"stderr":       stderr,
+		"result_seen":  result != nil,
+	}
+	if diagnosis != nil {
+		failure[localRemovalCurrentPlanField] = diagnosis
+	}
 	job.mutateResult(func(jobResult map[string]interface{}) {
-		jobResult[LocalStackKitRemovalFailureResultField] = map[string]interface{}{
-			"workload_ref": workload.WorkloadRef,
-			"node_ref":     workload.NodeRef,
-			"server_id":    server.ServerID,
-			"command_id":   commandID,
-			"exit_code":    exitCode,
-			"stderr":       stderr,
-			"result_seen":  result != nil,
-		}
+		jobResult[LocalStackKitRemovalFailureResultField] = failure
 	})
 	message := fmt.Sprintf("StackKits remove failed for workload %q (exit code %d)", workload.WorkloadRef, exitCode)
 	if brief := boundedRedactedNodeStderr(stderr, localRemovalStderrBriefBound); brief != "" {

@@ -12,7 +12,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 )
@@ -69,8 +68,8 @@ func OpenSystemWorkerFromEnv(ctx context.Context, inExecution bool) (*SystemRunt
 	if (inExecution && mode != "execution") || (!inExecution && mode != "standalone") {
 		return nil, errors.New("household worker requires its explicit private process profile")
 	}
-	if config.ReleaseChannel() != "stable" && (!inExecution || config.ReleaseChannel() != "preview" || !releasechannel.StageRuntimePrepared()) {
-		return nil, errors.New("Preview household work requires the existing prepared private Execution owner")
+	if config.ReleaseChannel() != "stable" {
+		return nil, errors.New("household work runs only on Stable")
 	}
 	if os.Getenv(db.EnvDatabaseMigrationMode) != "verify" || os.Getenv(db.EnvAllowDBGenesis) != "false" || os.Getenv(db.EnvMigrationDatabaseURL) != "" || "" != "" {
 		return nil, errors.New("household worker requires finite verify-only custody")
@@ -99,12 +98,14 @@ func OpenSystemWorkerFromEnv(ctx context.Context, inExecution bool) (*SystemRunt
 	if err := verifyHouseholdPrivileges(ctx, cloud, true); err != nil {
 		return refuse(refusedAt("cloud-privileges", err, true))
 	}
+	// Reuse the canonical embedded migration ledger verifier at the worker's
+	// own floor, before its grants are asserted; never apply SQL.
+	pin, pinned, err := db.ExpectedDatabaseIdentityFromEnv()
+	if err != nil || !pinned || (&db.DB{DB: tech}).VerifyMigrationsAtFloor(ctx, pin, db.HouseholdWorkerSchemaFloor) != nil {
+		return refuse(&StartupRefusal{Stage: "techstack-migrations", Reason: "household Techstack migration verification failed"})
+	}
 	if err := verifyHouseholdPrivileges(ctx, tech, false); err != nil {
 		return refuse(refusedAt("techstack-privileges", err, true))
-	}
-	// Reuse the canonical embedded migration ledger verifier; never apply SQL.
-	if err := (&db.DB{DB: tech}).VerifyMigrations(ctx); err != nil {
-		return refuse(&StartupRefusal{Stage: "techstack-migrations", Reason: "household Techstack migration verification failed"})
 	}
 	relay, err := agentcontrol.NewHouseholdRelayClient(os.Getenv("TECHSTACK_HOUSEHOLD_RELAY_ORIGIN"), os.Getenv("TECHSTACK_HOUSEHOLD_RELAY_SIGNING_KEY"))
 	if err != nil {
@@ -137,14 +138,11 @@ func openHouseholdDatabase(ctx context.Context, dsnEnv, pinEnv, database, role s
 	if !ok || name != database || len(system) < 10 {
 		return nil, errors.New("household database physical identity required")
 	}
-	// A Stage DSN must never execute under a Stable-labelled private process.
+	// The Local test database must never execute under a household process.
 	stageHost := "kombify-stg-pg-8146d168.pgv20v39ze9j4j3d3dwbj6p979.c0.eu-central-1.aws.pg.clickhouse.cloud"
 	stage := system == "7699436836349883199" || cfg.Host == stageHost
-	if stage && (config.ReleaseChannel() != "preview" || !releasechannel.StageRuntimePrepared()) {
-		return nil, errors.New("Stage household database requires the prepared private Execution owner")
-	}
-	if config.ReleaseChannel() == "preview" && (system != "7699436836349883199" || cfg.Host != stageHost) {
-		return nil, errors.New("Stage household process refuses other database custody")
+	if stage {
+		return nil, errors.New("household database refuses the Local test database")
 	}
 	cfg.RuntimeParams["statement_timeout"] = "10000"
 	pool := stdlib.OpenDB(*cfg)

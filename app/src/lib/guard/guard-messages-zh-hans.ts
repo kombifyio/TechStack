@@ -154,6 +154,9 @@ export const guardMessagesZhHans: Record<
   "guard.fact.updated.guardInProgress": "正在安装 Guard 更新。",
   "guard.fact.updated.guardUnknown": "未报告 Guard 的版本和签名。",
   "guard.fact.updated.guardUnsigned": "已安装的 Guard 构件未签名。",
+  "guard.fact.updated.reinstallRequired": "Guard {version} 已无法自行更新。",
+  "guard.fact.updated.reinstallRequiredNext":
+    "在此服务器上重新安装 Guard。它会保持连接。",
   "guard.fact.updated.osOk": "没有待安装的安全更新,也无需重启。",
   "guard.fact.updated.osPending": "待安装的操作系统安全更新:{count}。",
   "guard.fact.updated.osPendingNext": "请安装待处理的安全更新。",
@@ -367,6 +370,15 @@ export const guardMessagesZhHans: Record<
     "在服务器上运行此配对命令。它会再次配对服务器并固定绑定密钥。",
   "guard.repair.copy": "复制",
   "guard.repair.copied": "已复制",
+  "guard.reinstall.title": "重新安装 Guard",
+  "guard.reinstall.body":
+    "在此服务器上以 root 身份运行该命令。你将获得当前的 Guard，服务器会保留其连接和设置。",
+  "guard.reinstall.action": "获取命令",
+  "guard.reinstall.preparing": "正在准备…",
+  "guard.reinstall.failed": "无法创建命令。请重试。",
+  "guard.reinstall.expires": "有效期至 {at}。",
+  "guard.reinstall.copy": "复制",
+  "guard.reinstall.copied": "已复制",
   "guard.repair.unavailable": "无法准备配对命令。",
   "guard.repair.failed": "配对命令无法准备。",
 

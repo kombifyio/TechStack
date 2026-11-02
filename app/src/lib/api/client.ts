@@ -588,7 +588,7 @@ export async function fetchApi<T>(
     // the shared Gateway. An empty bootstrap must never select Stable.
     const bootstrap = await loadClientBootstrap();
     gatewayUrl = gatewayUrlFor(endpoint, method);
-    if (gatewayUrl && !["stable", "preview", "early-access"].includes(bootstrap.releaseChannel)) {
+    if (gatewayUrl && !["stable", "early-access"].includes(bootstrap.releaseChannel)) {
       throw new ApiRequestError(tr("ui.client.networkError"), {
         status: 503, code: "gateway_channel_unavailable", url: gatewayUrl, method,
       });
@@ -610,9 +610,6 @@ export async function fetchApi<T>(
   );
   for (const [key, value] of Object.entries(authHeader)) {
     if (!headers.has(key)) headers.set(key, value);
-  }
-  if (gatewayUrl && getClientBootstrap().releaseChannel === "preview") {
-    headers.set("x-kombify-release-channel", "preview");
   }
   const authorizationHeader = headers.get("Authorization") ?? "";
   const hasBearerAuth = authorizationHeader.startsWith("Bearer ");

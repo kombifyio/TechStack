@@ -190,6 +190,10 @@ export const guardMessages = {
       "The Guard version and signature are not reported.",
     "guard.fact.updated.guardUnsigned":
       "The installed Guard artifact is not signed.",
+    "guard.fact.updated.reinstallRequired":
+      "Guard {version} can no longer update itself.",
+    "guard.fact.updated.reinstallRequiredNext":
+      "Reinstall the Guard on this server. It stays connected.",
     "guard.fact.updated.osOk":
       "No pending security updates and no reboot required.",
     "guard.fact.updated.osPending":
@@ -429,6 +433,15 @@ export const guardMessages = {
       "Run this pairing command on the server. It pairs the server again and pins the binding key.",
     "guard.repair.copy": "Copy",
     "guard.repair.copied": "Copied",
+    "guard.reinstall.title": "Reinstall the Guard",
+    "guard.reinstall.body":
+      "Run the command as root on this server. You get the current Guard; the server keeps its connection and settings.",
+    "guard.reinstall.action": "Get command",
+    "guard.reinstall.preparing": "Preparing…",
+    "guard.reinstall.failed": "The command could not be created. Try again.",
+    "guard.reinstall.expires": "Valid until {at}.",
+    "guard.reinstall.copy": "Copy",
+    "guard.reinstall.copied": "Copied",
     "guard.repair.unavailable": "A pairing command could not be prepared.",
     "guard.repair.failed": "The pairing command could not be prepared.",
 
@@ -636,6 +649,10 @@ export const guardMessages = {
       "Guard-Version und Signatur werden nicht gemeldet.",
     "guard.fact.updated.guardUnsigned":
       "Das installierte Guard-Artefakt ist nicht signiert.",
+    "guard.fact.updated.reinstallRequired":
+      "Guard {version} kann sich nicht mehr selbst aktualisieren.",
+    "guard.fact.updated.reinstallRequiredNext":
+      "Installiere den Guard auf diesem Server neu. Er bleibt verbunden.",
     "guard.fact.updated.osOk":
       "Keine ausstehenden Sicherheitsupdates und kein Neustart nötig.",
     "guard.fact.updated.osPending":
@@ -888,8 +905,20 @@ export const guardMessages = {
       "Führe diesen Kopplungsbefehl auf dem Server aus. Er koppelt den Server erneut und verankert den Bindungsschlüssel.",
     "guard.repair.copy": "Kopieren",
     "guard.repair.copied": "Kopiert",
-    "guard.repair.unavailable": "Ein Kopplungsbefehl konnte nicht vorbereitet werden.",
-    "guard.repair.failed": "Der Kopplungsbefehl konnte nicht vorbereitet werden.",
+    "guard.reinstall.title": "Guard neu installieren",
+    "guard.reinstall.body":
+      "Führe den Befehl als root auf diesem Server aus. Du bekommst den aktuellen Guard; der Server behält Verbindung und Einstellungen.",
+    "guard.reinstall.action": "Befehl erzeugen",
+    "guard.reinstall.preparing": "Wird vorbereitet…",
+    "guard.reinstall.failed":
+      "Der Befehl konnte nicht erzeugt werden. Versuche es erneut.",
+    "guard.reinstall.expires": "Gültig bis {at}.",
+    "guard.reinstall.copy": "Kopieren",
+    "guard.reinstall.copied": "Kopiert",
+    "guard.repair.unavailable":
+      "Ein Kopplungsbefehl konnte nicht vorbereitet werden.",
+    "guard.repair.failed":
+      "Der Kopplungsbefehl konnte nicht vorbereitet werden.",
 
     "guard.ladder.title": "Kopplungsbereitschaft",
     "guard.ladder.intro":

@@ -12,6 +12,14 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 )
 
+func TestSchemaExpandAuthorityRejectsMalformedRequest(t *testing.T) {
+	t.Setenv("TECHSTACK_SCHEMA_AUTH_BODY", `{"schema":"techstack.schema-expand-company.v1"}`)
+	t.Setenv("TECHSTACK_SCHEMA_AUTH_TOKEN", "forged.token.value")
+	if _, err := verifySchemaExpandAuthority(context.Background()); !errors.Is(err, errDatabaseDeliveryAdmission) {
+		t.Fatalf("unreviewed producer: got %v, want admission denial", err)
+	}
+}
+
 func TestRotatingOIDCCodeExchangerRetriesNextSecretAfterInvalidClient(t *testing.T) {
 	var receivedSecrets []string
 	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
