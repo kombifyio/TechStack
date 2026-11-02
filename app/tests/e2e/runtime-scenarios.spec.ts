@@ -21,6 +21,11 @@ import {
   type ManagedDay2Evidence,
 } from "./managed-day2-evidence";
 import {
+  kombifyMeRegistrationEvidence,
+  kombifyMeReleaseEvidence,
+  type ManagedKombifyMeEvidence,
+} from "./managed-kombify-me-evidence";
+import {
   managedLifecycleReceipt,
   type ManagedLifecycleEvidence,
   type ManagedUpgradePolicy,
@@ -3196,6 +3201,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       let laneStartedAt = "";
       let day2Evidence: ManagedDay2Evidence | undefined;
       let lifecycleEvidence: ManagedLifecycleEvidence | undefined;
+      let kombifyMeEvidence: ManagedKombifyMeEvidence | undefined;
       // The owner's managed footprint before the create; the cleanup ledger
       // compares against it when the create returned no stack.
       let baselineFootprint: { stack_ids: string[]; server_ids: string[] } | undefined;
@@ -3204,6 +3210,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       const attemptId = randomUUID();
       test.afterEach(async () => {
         test.setTimeout(MANAGED_RUNTIME_BUDGETS.cleanupMs);
+        const cleanupStartedAt = Date.now();
         logRuntimeE2E("phase started", {
           phase: "cleanup",
           budget_ms: MANAGED_RUNTIME_BUDGETS.cleanupMs,
@@ -3297,6 +3304,19 @@ test.describe.serial("Runtime E2E scenarios", () => {
             // A failed destroy or readback still produces an honest failed
             // receipt for the same attempt. Never lose cleanup evidence by
             // throwing before the artifact is written.
+            // After the completed destroy, the owner's scoped kombify.me read
+            // shows whether any of the stack's addresses remain (no orphan).
+            const api = managedApi;
+            if (kombifyMeEvidence?.registered && cleanupJob) {
+              kombifyMeEvidence.released = await kombifyMeReleaseEvidence({
+                bearer: api,
+                apiUrl: (apiPath) => runtimeApiUrl(api.apiBase, apiPath),
+                stackId,
+                destroyJob: cleanupJob,
+                // Leave a minute of the cleanup budget for the receipt and ledger.
+                deadline: cleanupStartedAt + MANAGED_RUNTIME_BUDGETS.cleanupMs - 60_000,
+              });
+            }
             const receipt = managedLifecycleReceipt({
               attemptId,
               stackId,
@@ -3313,6 +3333,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
                 typeof cleanupJob?.id === "string" ? cleanupJob.id : undefined,
               day2: day2Evidence,
               lifecycle: lifecycleEvidence,
+              kombifyMe: kombifyMeEvidence,
               cleanupReadback: cleanupReadback as
                 Record<string, unknown> | undefined,
               cleanupReadbackVerified,
@@ -3637,6 +3658,18 @@ test.describe.serial("Runtime E2E scenarios", () => {
             provisionFailure ??
             new Error("Managed provision job ended without a result")
           );
+        }
+        // The rollout registered the stack's kombify.me addresses: the owner's
+        // scoped read shows them bound to this stack and one answers HTTPS
+        // 200. Recorded for the receipt, never thrown.
+        if (lifecycleRecord(job.result).address_mode === "kombify-me") {
+          managedObservationPhase("kombify-me", MANAGED_KOMBIFY_ME_BUDGET_MS);
+          kombifyMeEvidence = await kombifyMeRegistrationEvidence({
+            bearer: session,
+            apiUrl: (apiPath) => runtimeApiUrl(session.apiBase, apiPath),
+            stackId: stack.stack_id,
+          });
+          await attachJson("kombify-cloud-kombify-me.json", kombifyMeEvidence);
         }
         if (REQUIRE_NATIVE_HOST_PREP) {
           await test.step("native host preparation is observed for the fresh Foundation", async () => {
@@ -5150,6 +5183,9 @@ async function waitForManagedDay2Enrollment(
 // Stop and start each wait up to 12 minutes for provider convergence; the
 // reconnect and SSH steps are bounded by the product's own timeouts.
 const MANAGED_DAY2_BUDGET_MS = 1_800_000;
+
+// The scoped address read plus up to three minutes for a fresh host to answer.
+const MANAGED_KOMBIFY_ME_BUDGET_MS = 5 * 60_000;
 
 // Upgrade, bounded retry and port claims on the converged managed node
 // (paid-beta B4/B5, scripts/paid-journey-receipt.mjs). Each part is written
