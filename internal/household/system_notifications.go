@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,14 +31,20 @@ func NewActivationDelivery(origin, privateKey string) (ActivationDelivery, error
 	cfg := servicecall.Config{ServiceName: "household-worker", SigningKeyID: kid, SigningKey: key, Scope: "notifications:dispatch", TokenTTL: time.Minute}
 	client := &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	endpoint := strings.TrimRight(origin, "/") + "/v1/notifications/dispatch"
-	return func(ctx context.Context, p PendingProjection, result ProjectionResult) error {
+	return func(ctx context.Context, p PendingProjection, result ProjectionResult) (ActivationOutcome, error) {
 		link, err := url.Parse(result.ActivationURL)
 		if err != nil || link.Scheme != "https" || link.Host == "" || link.User != nil || result.ExpiresAt == nil || !result.ExpiresAt.After(time.Now()) {
-			return errors.New("household activation is unavailable or expired")
+			return ActivationOutcome{}, errors.New("household activation is unavailable or expired")
 		}
 		sum := sha256.Sum256([]byte(result.ActivationURL))
 		digest := hex.EncodeToString(sum[:16])
-		delivered, ownerDelivered := false, false
+		// The link holder reads it in their Feed: the member, or for a homelab
+		// member the owner who passes it on. Its e-mail is reported, not required.
+		feedKey, mailKey := "in_app", "email"
+		if p.Homelab {
+			feedKey, mailKey = "owner:in_app", "owner:email"
+		}
+		feedConfirmed, mailSent := false, false
 		for _, target := range activationTargets(p, result) {
 			channel := target.channel
 			payload := map[string]any{"topic_slug": "household.invite", "channel": channel, "recipient": target.recipient, "payload": map[string]any{},
@@ -45,25 +52,26 @@ func NewActivationDelivery(origin, privateKey string) (ActivationDelivery, error
 				"idempotency_key": "hh-activation:" + digest + ":" + target.key, "message": target.message}
 			body, err := json.Marshal(payload)
 			if err != nil {
-				return errors.New("household notification encoding failed")
+				return ActivationOutcome{}, errors.New("household notification encoding failed")
 			}
 			// Notifications' existing finite dispatch contract accepts service JWTs;
 			// unlike the internal relay, its receiver has no bound-request contract.
 			token, err := servicecall.IssueToken(cfg, "notifications", nil, "")
 			if err != nil {
 				clear(body)
-				return errors.New("household notification signing failed")
+				return ActivationOutcome{}, errors.New("household notification signing failed")
 			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 			if err != nil {
 				clear(body)
-				return errors.New("household notification request failed")
+				return ActivationOutcome{}, errors.New("household notification request failed")
 			}
 			req.Header.Set(servicecall.HeaderServiceAuth, token)
 			req.Header.Set("Content-Type", "application/json")
 			response, err := client.Do(req)
 			clear(body)
 			if err != nil {
+				log.Printf("household activation dispatch link=%s target=%s channel=%s result=unreachable", digest[:12], target.key, channel)
 				continue
 			}
 			raw, readErr := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
@@ -72,8 +80,10 @@ func NewActivationDelivery(origin, privateKey string) (ActivationDelivery, error
 				DispatchID string `json:"dispatch_id"`
 				FeedItemID string `json:"feed_item_id"`
 				Status     string `json:"status"`
+				Error      string `json:"error"`
 			}
-			valid := readErr == nil && len(raw) <= 64<<10 && response.StatusCode >= 200 && response.StatusCode < 300 && json.Unmarshal(raw, &receipt) == nil && strings.TrimSpace(receipt.DispatchID) != ""
+			decoded := readErr == nil && len(raw) <= 64<<10 && json.Unmarshal(raw, &receipt) == nil
+			valid := decoded && response.StatusCode >= 200 && response.StatusCode < 300 && strings.TrimSpace(receipt.DispatchID) != ""
 			clear(raw)
 			confirmed := valid && channel == "email" && receipt.Status == "sent"
 			if valid && channel == "in_app" && strings.TrimSpace(receipt.FeedItemID) != "" {
@@ -82,15 +92,34 @@ func NewActivationDelivery(origin, privateKey string) (ActivationDelivery, error
 					confirmed = true
 				}
 			}
-			delivered = delivered || confirmed
-			ownerDelivered = ownerDelivered || (confirmed && strings.HasPrefix(target.key, "owner:"))
+			// Per-channel outcome without the link: the engine's status or refusal code.
+			log.Printf("household activation dispatch link=%s target=%s channel=%s http=%d status=%s code=%s confirmed=%t",
+				digest[:12], target.key, channel, response.StatusCode, boundedCode(receipt.Status), boundedCode(receipt.Error), confirmed)
+			feedConfirmed = feedConfirmed || (confirmed && target.key == feedKey)
+			mailSent = mailSent || (confirmed && target.key == mailKey)
 		}
-		// A homelab member's link is handed over by the owner; the owner must have it.
-		if !delivered || (p.Homelab && !ownerDelivered) {
-			return errors.New("household activation delivery unconfirmed")
+		if !feedConfirmed {
+			return ActivationOutcome{}, errors.New("household activation Feed delivery unconfirmed")
 		}
-		return nil
+		return ActivationOutcome{MailSent: mailSent}, nil
 	}, nil
+}
+
+// boundedCode keeps an engine status or error code loggable and short.
+func boundedCode(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	for _, r := range value {
+		if !(r == '_' || r == '-' || r == '.' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return "unparsed"
+		}
+	}
+	if len(value) > 64 {
+		return value[:64]
+	}
+	return value
 }
 
 type activationTarget struct {

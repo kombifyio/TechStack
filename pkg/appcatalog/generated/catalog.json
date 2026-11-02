@@ -4,14 +4,14 @@
     {
       "id": "coolify",
       "repository": "https://github.com/coollabsio/coolify",
-      "commit": "b3ec26c3b1771654cae4b4ebc06d14a164bd8824",
+      "commit": "972ab7f6f45b5cc6c2efdff207738a4e23d23756",
       "license": "Apache-2.0",
       "path": "templates/compose"
     },
     {
       "id": "dokploy",
       "repository": "https://github.com/Dokploy/templates",
-      "commit": "e44418a2fc926db93a14335eb7ae9df527ac86aa",
+      "commit": "1b3c254f89a60ae86679404c0fcbe4745ce487d5",
       "license": "MIT",
       "path": "blueprints"
     }
@@ -4967,7 +4967,7 @@
       "id": "junctio",
       "name": "Junctio",
       "category": "ai",
-      "homepage": "https://junctio.pages.dev",
+      "homepage": "https://junctio.org",
       "source_repo": "k2so-dev/junctio",
       "web_port": 3000,
       "web_scheme": "http",
@@ -5863,6 +5863,22 @@
       ]
     },
     {
+      "id": "maintenant",
+      "name": "Maintenant",
+      "category": "monitoring",
+      "homepage": "https://maintenant.dev",
+      "source_repo": "kolapsis/maintenant",
+      "web_port": 8080,
+      "web_scheme": "http",
+      "images": [
+        "nginxinc/nginx-unprivileged"
+      ],
+      "icon": "",
+      "sources": [
+        "dokploy"
+      ]
+    },
+    {
       "id": "marimo",
       "name": "Marimo",
       "category": "dev",
@@ -6034,6 +6050,22 @@
       "web_scheme": "http",
       "images": [
         "tomhorrorza/mc-controller"
+      ],
+      "icon": "",
+      "sources": [
+        "dokploy"
+      ]
+    },
+    {
+      "id": "mcpspan",
+      "name": "Mcpspan",
+      "category": "monitoring",
+      "homepage": "https://mcpspan.com",
+      "source_repo": "mcpspan/mcpspan",
+      "web_port": 6270,
+      "web_scheme": "http",
+      "images": [
+        "mcpspan/core-dashboard"
       ],
       "icon": "",
       "sources": [
@@ -7467,6 +7499,22 @@
       ]
     },
     {
+      "id": "opentodo",
+      "name": "OpenTodo",
+      "category": "productivity",
+      "homepage": "https://open-todo.app",
+      "source_repo": "pixari/opentodo",
+      "web_port": 8080,
+      "web_scheme": "http",
+      "images": [
+        "pixari/opentodo"
+      ],
+      "icon": "",
+      "sources": [
+        "dokploy"
+      ]
+    },
+    {
       "id": "openwa",
       "name": "OpenWA",
       "category": "communication",
@@ -7973,7 +8021,7 @@
       "web_scheme": "http",
       "images": [
         "linuxserver/phpmyadmin",
-        "phpmyadmin/phpmyadmin"
+        "phpmyadmin"
       ],
       "icon": "phpmyadmin",
       "sources": [
@@ -8202,11 +8250,11 @@
       "name": "Ponos",
       "category": "ai",
       "homepage": "https://the-ponos.app/",
-      "source_repo": "salvadorcardona/ponos",
+      "source_repo": "hermez-agency/ponos",
       "web_port": 8787,
       "web_scheme": "http",
       "images": [
-        "salvadorcardona/ponos"
+        "hermez-agency/ponos"
       ],
       "icon": "",
       "sources": [
@@ -8258,6 +8306,20 @@
       "images": [
         "analogic/poste.io"
       ],
+      "icon": "",
+      "sources": [
+        "dokploy"
+      ]
+    },
+    {
+      "id": "postgres-extensor",
+      "name": "PostgreSQL with 80+ Extensions",
+      "category": "database",
+      "homepage": "https://github.com/ruxwez/postgres",
+      "source_repo": "ruxwez/postgres",
+      "web_port": 0,
+      "web_scheme": "",
+      "images": [],
       "icon": "",
       "sources": [
         "dokploy"
@@ -8390,6 +8452,22 @@
       "icon": "privatebin",
       "sources": [
         "coolify",
+        "dokploy"
+      ]
+    },
+    {
+      "id": "privatepaste",
+      "name": "PrivatePaste",
+      "category": "productivity",
+      "homepage": "https://github.com/dynamicsninja/privatepaste",
+      "source_repo": "dynamicsninja/privatepaste",
+      "web_port": 8080,
+      "web_scheme": "http",
+      "images": [
+        "dynamicsninja/privatepaste"
+      ],
+      "icon": "",
+      "sources": [
         "dokploy"
       ]
     },
@@ -8789,6 +8867,22 @@
       "web_scheme": "http",
       "images": [
         "anukulpandey/reef-chain-node"
+      ],
+      "icon": "",
+      "sources": [
+        "dokploy"
+      ]
+    },
+    {
+      "id": "reelsaw",
+      "name": "Reelsaw",
+      "category": "media",
+      "homepage": "https://reelsaw.com",
+      "source_repo": "osbytes/reelsaw",
+      "web_port": 3000,
+      "web_scheme": "http",
+      "images": [
+        "osbytes/reelsaw"
       ],
       "icon": "",
       "sources": [
@@ -10490,6 +10584,22 @@
         "seriousm4x/upsnap"
       ],
       "icon": "upsnap",
+      "sources": [
+        "dokploy"
+      ]
+    },
+    {
+      "id": "uptime-kotlin",
+      "name": "Uptime Kotlin",
+      "category": "monitoring",
+      "homepage": "https://uptime-kotlin.com/",
+      "source_repo": "theomeunier/uptime-kotlin",
+      "web_port": 8080,
+      "web_scheme": "http",
+      "images": [
+        "theomeunier/uptime-kotlin"
+      ],
+      "icon": "",
       "sources": [
         "dokploy"
       ]

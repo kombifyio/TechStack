@@ -4,7 +4,7 @@
     {
       "id": "nuclei-templates",
       "repository": "https://github.com/projectdiscovery/nuclei-templates",
-      "commit": "5cfe87d58464ab47a871d0be3d2844bf51e6eda5",
+      "commit": "eddca9090fdc52959015729e8018d82b6f42e5c0",
       "license": "MIT",
       "path": "http/technologies, http/exposed-panels"
     }
@@ -7751,6 +7751,31 @@
           ],
           "condition": "or",
           "case_insensitive": true
+        },
+        {
+          "type": "status",
+          "status": [
+            200
+          ]
+        }
+      ]
+    },
+    {
+      "app": "pocket-id",
+      "template": "pocket-id-panel",
+      "paths": [
+        "/login"
+      ],
+      "condition": "and",
+      "matchers": [
+        {
+          "type": "word",
+          "part": "body",
+          "values": [
+            "href=\"/api/application-images/favicon\"",
+            "mode-watcher-mode"
+          ],
+          "condition": "and"
         },
         {
           "type": "status",
