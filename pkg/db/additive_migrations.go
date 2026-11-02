@@ -38,9 +38,8 @@ var (
 	createPolicyPattern   = regexp.MustCompile(`^create policy ` + identifierPart + ` on (` + qualifiedName + `)(?: |$)`)
 	alterTablePattern     = regexp.MustCompile(`^alter table (?:if exists )?(?:only )?(` + qualifiedName + `) (.+)$`)
 	addColumnPattern      = regexp.MustCompile(`^add column (?:if not exists )?` + identifierPart + ` (.+)$`)
-	grantPattern          = regexp.MustCompile(`^grant [a-z, ()_]+ on `)
-	setLocalPattern       = regexp.MustCompile(`^set local (?:lock_timeout|statement_timeout|search_path) `)
-	searchPathPattern     = regexp.MustCompile(`^select pg_catalog\.set_config\('search_path', .+, true\)$`)
+	grantPattern          = regexp.MustCompile(`^grant (?:select|insert|update|delete)(?:, ?(?:select|insert|update|delete))* on (?:table )?(` + qualifiedName + `) to techstack_application$`)
+	setLocalPattern       = regexp.MustCompile(`^set local (?:lock_timeout|statement_timeout) `)
 	constantDefault       = regexp.MustCompile(`^(?:null|true|false|-?[0-9]+(?:\.[0-9]+)?|'(?:[^']|'')*')(?:::` + qualifiedName + `(?:\[\])?)?$`)
 	refusedColumnTerms    = regexp.MustCompile(`\b(?:unique|primary key|check|generated|collate)\b`)
 )
@@ -69,11 +68,14 @@ func ValidateAdditiveMigrationSQL(body string) error {
 
 func validateAdditiveStatement(statement string, created map[string]bool) error {
 	switch {
-	case setLocalPattern.MatchString(statement), searchPathPattern.MatchString(statement),
+	case setLocalPattern.MatchString(statement),
 		createSequencePattern.MatchString(statement), createSchemaPattern.MatchString(statement),
-		createEnumPattern.MatchString(statement), grantPattern.MatchString(statement),
+		createEnumPattern.MatchString(statement),
 		strings.HasPrefix(statement, "comment on "):
 		return nil
+	}
+	if match := grantPattern.FindStringSubmatch(statement); match != nil {
+		return requireCreated(created, match[1])
 	}
 	// No IF NOT EXISTS: a same-named existing table must fail the migration
 	// instead of unlocking indexes and policies on it below.
@@ -133,13 +135,15 @@ func validateAddColumns(actions string) error {
 }
 
 func relationName(name string) string {
-	name = strings.ReplaceAll(name, `"`, "")
-	return strings.TrimPrefix(name, "public.")
+	// Do not conflate quoted, qualified, or differently cased names. A false
+	// negative is safer than treating an existing relation as newly created.
+	return name
 }
 
 // splitMigrationStatements removes comments, refuses dollar quoting (function
 // bodies and DO blocks are never additive) and returns lower-cased statements
-// with collapsed whitespace. String literals keep their case and semicolons.
+// with collapsed whitespace. String literals and quoted identifiers retain
+// their original case and semicolons.
 func splitMigrationStatements(body string) ([]string, error) {
 	var statements []string
 	var current strings.Builder
@@ -180,6 +184,25 @@ func splitMigrationStatements(body string) ([]string, error) {
 			}
 			if end >= len(body) {
 				return nil, errors.New("unterminated string literal")
+			}
+			current.WriteString(body[i : end+1])
+			i = end
+		case c == '"':
+			end := i + 1
+			for ; end < len(body); end++ {
+				if body[end] == '"' {
+					if end+1 < len(body) && body[end+1] == '"' {
+						end++
+						continue
+					}
+					break
+				}
+			}
+			if end >= len(body) {
+				return nil, errors.New("unterminated quoted identifier")
+			}
+			if strings.ContainsAny(body[i:end+1], " \t\r\n") {
+				return nil, errors.New("whitespace in quoted identifiers is not allowed in an additive migration")
 			}
 			current.WriteString(body[i : end+1])
 			i = end

@@ -11,7 +11,7 @@ import (
 // the Guard release mirrors it to private R2 under this digest; serving any
 // partial, stale, or locally substituted shell fragment fails closed until the
 // contract digest is deliberately updated with the installer.
-const LinuxInstallerSHA256 = "b01de5161697936c6ca0d865342dda9ab78ea368fe392876be2691566dc4bace"
+const LinuxInstallerSHA256 = "d7d7b193d9cdde0f1271a66a30c17b16d1cc134432f19d1eb6467530548cd6de"
 
 // NormalizeLinuxInstaller returns the CRLF-to-LF normalized installer and its
 // SHA-256, the form both the pin and the R2 object use.

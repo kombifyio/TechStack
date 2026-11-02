@@ -31,10 +31,11 @@ type Backend interface {
 	ProbeFile(ctx context.Context, path string) ([]byte, error)
 	UpdateStage(ctx context.Context, params StageParams) (StageResult, error)
 	UpdateCommit(ctx context.Context, params CommitParams) (CommitResult, error)
-	// HostSecurityVerify and BackupStatus are fixed, read-only StackKits
-	// observations; neither takes input from the request.
+	// HostSecurityVerify, BackupStatus and HouseholdList are fixed, read-only
+	// StackKits observations; none takes input from the request.
 	HostSecurityVerify(ctx context.Context) (Observation, error)
 	BackupStatus(ctx context.Context) (Observation, error)
+	HouseholdList(ctx context.Context) (Observation, error)
 	Status(ctx context.Context, syncOperations bool) Status
 	// DenyMutations is true when a failed update left no admissible fallback:
 	// every mutating request is then refused until an operator recovers the host.
@@ -236,6 +237,12 @@ func (s *Server) dispatch(ctx context.Context, request Request, out *frameWriter
 			return deny(CodeInvalidRequest, "backup.status takes no parameters")
 		}
 		observation, err := s.Backend.BackupStatus(ctx)
+		return resultOrFailure(out, observation, err)
+	case OpHouseholdList:
+		if len(request.Params) > 0 {
+			return deny(CodeInvalidRequest, "household.list takes no parameters")
+		}
+		observation, err := s.Backend.HouseholdList(ctx)
 		return resultOrFailure(out, observation, err)
 	case OpUpdateStage:
 		var params StageParams

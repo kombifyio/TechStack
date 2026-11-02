@@ -44,8 +44,9 @@ const (
 // kombify-gateway): EdDSA under the process Ed25519 service key when one is
 // configured, otherwise HS256 with the Techstack-only Connect secret, never the
 // shared service-auth secret: the exact scope of the operation, the owner as
-// on_behalf_of, a lifetime under 60 seconds, a random one-use jti and a
-// request_binding over the exact method, request target and body bytes sent.
+// on_behalf_of with no roles, a lifetime under 60 seconds, a random one-use
+// jti and a request_binding over the exact method, request target and body
+// bytes sent. Gateway reads the subject's current Auth0 roles.
 type Gateway struct {
 	base   string
 	secret string
@@ -163,8 +164,11 @@ type nodeBody struct {
 	RevokedNow bool `json:"revoked_now"`
 }
 
-func (g *Gateway) obo(owner, connectTenant string, roles []string) *servicecall.OnBehalfOf {
-	return &servicecall.OnBehalfOf{Sub: owner, OrgID: connectTenant, Roles: roles}
+// obo is the owner on a Connect registration token. Roles stay off the token:
+// Gateway reads the subject's current Auth0 roles, and a whitespace-only list
+// must not be issued either.
+func (g *Gateway) obo(owner, connectTenant string, _ []string) *servicecall.OnBehalfOf {
+	return &servicecall.OnBehalfOf{Sub: owner, OrgID: connectTenant}
 }
 
 // PutNode upserts the techstack-node of one server. Gateway verifies the host

@@ -22,7 +22,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/originca"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
@@ -396,9 +395,6 @@ func (o *Orchestrator) provisionConfig(actions jobs.RuntimeActions) *jobs.Provis
 func (o *Orchestrator) claimDurableJobExecution(ctx context.Context, claim jobs.ExecutionClaim) error {
 	if !o.ownsJobType(claim.JobType) {
 		return jobs.ErrExecutionClaimFenced
-	}
-	if !releasechannel.AdmitsJobExecution(claim.TenantID) {
-		return releasechannel.ErrTenantNotOwned
 	}
 	if o.jobStore == nil || strings.TrimSpace(claim.TenantID) == "" {
 		return nil
@@ -857,9 +853,6 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 	if stackErr != nil {
 		return "", fmt.Errorf("stack not found: %w", stackErr)
 	}
-	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
-		return "", releasechannel.ErrTenantNotOwned
-	}
 
 	canonicalSpec, providerErr := canonicalizeProvisionProviderIdentity(spec, stack.config)
 	if providerErr != nil {
@@ -1004,9 +997,6 @@ func (o *Orchestrator) deployStackWithOptionsLocked(ctx context.Context, stackID
 	stack, stackErr := o.findStackForJob(ctx, stackID, opts)
 	if stackErr != nil {
 		return "", fmt.Errorf("stack not found: %w", stackErr)
-	}
-	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
-		return "", releasechannel.ErrTenantNotOwned
 	}
 	idempotency, idempotencyErr := newDeployIdempotency(stack, opts.IdempotencyKey)
 	if idempotencyErr != nil {
@@ -1925,9 +1915,6 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 	if err != nil {
 		return "", fmt.Errorf("stack not found: %w", err)
 	}
-	if !releasechannel.AdmitsJobExecution(stack.tenantID) {
-		return "", releasechannel.ErrTenantNotOwned
-	}
 	managedRuntimeDecommissionRequired, err := o.managedRuntimeDecommissionRequired(ctx, stack)
 	if err != nil {
 		return "", fmt.Errorf("classify managed runtime before destroy: %w", err)
@@ -1999,6 +1986,7 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 				)
 				switch {
 				case authorityErr == nil:
+					authority.SpecPath = stackKitRolloutBinding(stack).SpecPath
 					destroyResult[jobs.LocalStackKitTeardownAuthorityResultField] = authority
 				case errors.Is(authorityErr, jobs.ErrLocalTeardownNoAppliedWorkloads):
 					// Nothing was applied, so there is no workload to remove on a node;

@@ -60,6 +60,9 @@ func (o *Orchestrator) prepareWizardUseCaseChange(ctx context.Context, tenantID,
 	if err != nil {
 		return nil, err
 	}
+	if raw, err = jobs.TerramateGenerationCandidate(raw); err != nil {
+		return nil, err
+	}
 	o.mu.RLock()
 	issuer := o.cfg.AdvancedIssuer
 	o.mu.RUnlock()

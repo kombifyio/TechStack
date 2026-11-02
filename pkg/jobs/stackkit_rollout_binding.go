@@ -73,10 +73,17 @@ func DecodeStackKitRolloutBinding(value interface{}) (StackKitRolloutBinding, bo
 }
 
 // ApplyStackKitRolloutDefaults fills what an operator request omitted from
-// the stack's recorded rollout: the kit whose local execution binding the node
-// owns, and the StackSpec the rollout applied. Explicit request values win. A
-// stack with no recorded rollout keeps the CLI default spec path.
+// the stack's recorded rollout: the node workspace every managed rollout
+// applies in, the kit whose local execution binding the node owns, and the
+// StackSpec the rollout applied. Explicit request values win. A stack with no
+// recorded rollout keeps the CLI default spec path. Requests that skip
+// NormalizeStackKitLifecycleRequest (the native use-case inspection and its
+// candidates) get their workspace only here (uoe2: an empty one failed every
+// inspection with "StackKit working_directory is required").
 func ApplyStackKitRolloutDefaults(request StackKitLifecycleRequest, binding StackKitRolloutBinding, fallbackKit string) StackKitLifecycleRequest {
+	if strings.TrimSpace(request.WorkingDirectory) == "" {
+		request.WorkingDirectory = defaultStackKitNodeWorkspace
+	}
 	if strings.TrimSpace(request.StackKit) == "" {
 		request.StackKit = firstNonEmpty(binding.StackKit, NormalizeStackKitRef(fallbackKit))
 	}

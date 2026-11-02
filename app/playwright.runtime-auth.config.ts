@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { earlyAccessUse } from "./tests/helpers/early-access-use";
 
 // A failed test would attach an ARIA snapshot of the page to the report, and
 // that snapshot prints input values, passwords included.
@@ -47,6 +48,7 @@ export default defineConfig({
     "embedded-sso-session.spec.ts",
     "runtime-dashboard-load.spec.ts",
     "runtime-offline-destroy.spec.ts",
+    "runtime-b3-cleanup-readback.spec.ts",
   ],
   timeout: 300_000,
   expect: {
@@ -63,6 +65,7 @@ export default defineConfig({
   outputDir: `${outputDir}/auth-smoke-results`,
   use: {
     baseURL,
+    ...earlyAccessUse(),
     // Auth smoke flows handle short-lived browser sessions. Assertions are
     // evidence; automatic browser recordings must not retain their contents.
     trace: "off",

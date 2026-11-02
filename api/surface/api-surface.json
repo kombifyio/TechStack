@@ -3,7 +3,7 @@
   "product": "techstack",
   "source": {
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "b4ecf1c027bdea5404ef14342228702eee37ba38e16cf73316eb2a5ae96f7501"
+    "sha256": "52bf4979e4a6794c0206162d98ffb6d2c787e58e23d705d11aa8c9edb9334d6c"
   },
   "envelope": "data",
   "cli": {
@@ -16898,6 +16898,7 @@
                         "type": "boolean"
                       },
                       "state": {
+                        "description": "reinstall_required is a Guard below 0.45.17 that can no longer update itself; createInstallCommand with mode reinstall-guard answers the command that reinstalls it in place.",
                         "enum": [
                           "current",
                           "staged",
@@ -16906,6 +16907,7 @@
                           "rolled_back",
                           "layout_rolled_back",
                           "recovery_needed",
+                          "reinstall_required",
                           "unknown"
                         ],
                         "type": "string"
@@ -17874,6 +17876,7 @@
                       "type": "boolean"
                     },
                     "state": {
+                      "description": "reinstall_required is a Guard below 0.45.17 that can no longer update itself; createInstallCommand with mode reinstall-guard answers the command that reinstalls it in place.",
                       "enum": [
                         "current",
                         "staged",
@@ -17882,6 +17885,7 @@
                         "rolled_back",
                         "layout_rolled_back",
                         "recovery_needed",
+                        "reinstall_required",
                         "unknown"
                       ],
                       "type": "string"
@@ -18234,6 +18238,11 @@
           "destructiveHint": false,
           "idempotentHint": true,
           "openWorldHint": true
+        },
+        "resourceBinding": {
+          "argument": "server_id",
+          "dimension": "techstack.server",
+          "required": true
         }
       }
     },
@@ -19472,6 +19481,11 @@
           "destructiveHint": false,
           "idempotentHint": true,
           "openWorldHint": false
+        },
+        "resourceBinding": {
+          "argument": "server_id",
+          "dimension": "techstack.server",
+          "required": true
         }
       }
     },
@@ -20299,8 +20313,18 @@
               "format": "date-time",
               "type": "string"
             },
+            "policy_id": {
+              "description": "The registered repair policy. Absent while the server never had an approval.",
+              "type": "string"
+            },
             "server_id": {
               "type": "string"
+            },
+            "version": {
+              "description": "The policy version; every change, a withdrawal included, is a new version, and a Guard's local repair evidence names it.",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -20435,8 +20459,18 @@
               "format": "date-time",
               "type": "string"
             },
+            "policy_id": {
+              "description": "The registered repair policy. Absent while the server never had an approval.",
+              "type": "string"
+            },
             "server_id": {
               "type": "string"
+            },
+            "version": {
+              "description": "The policy version; every change, a withdrawal included, is a new version, and a Guard's local repair evidence names it.",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -28619,11 +28653,30 @@
       "method": "POST",
       "path": "/api/v1/tunnel/install-command",
       "summary": "Generate worker install command with tunnel URL",
-      "description": "Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument.",
+      "description": "Answers the Linux (and, outside the LAN bridge, Windows) command that installs and enrolls a new server through the current registry URL. Techstack mints the one-time pairing token the command carries (15 minutes) and answers its id and expiry; the token is never an argument. With mode reinstall-guard it answers the Linux command for a server whose Guard update state is reinstall_required: run as root on that server, it installs the current Guard in place and keeps the enrollment and identity key unchanged. The token then only downloads the Guard and is never redeemed.",
       "tags": [
         "Tunnel"
       ],
       "mutating": true,
+      "arguments": [
+        {
+          "name": "mode",
+          "in": "body",
+          "wireName": "mode",
+          "schema": {
+            "default": "install",
+            "enum": [
+              "install",
+              "reinstall-guard"
+            ],
+            "type": "string"
+          }
+        }
+      ],
+      "body": {
+        "contentType": "application/json",
+        "mode": "properties"
+      },
       "output": {
         "contentType": "application/json",
         "envelope": "data",

@@ -3,6 +3,7 @@ package guardexec
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -70,6 +71,25 @@ func (o *Observer) BackupStatus(ctx context.Context) (Observation, error) {
 		Args:    []string{"--no-log", "--chdir", workspace, "--spec", "stack-spec.yaml", "backup", "status", "--json"},
 		Timeout: 3 * time.Minute,
 	})
+}
+
+// HouseholdList observes the household identities of the node workspace. It
+// reads the identity provider through the pinned CLI and changes nothing; the
+// reconciliation of an interrupted household mutation is judged from it.
+func (o *Observer) HouseholdList(ctx context.Context) (Observation, error) {
+	workspace := agentpkg.HostSecurityWorkspace()
+	if workspace == "" {
+		return Observation{Reason: ReasonWorkspaceUnavailable}, nil
+	}
+	observation, err := o.observe(ctx, agentpkg.ReadOnlyRun{
+		Dir:     workspace,
+		Args:    []string{"--no-log", "--chdir", workspace, "--spec", "stack-spec.yaml", "user", "list", "--json"},
+		Timeout: time.Minute,
+	})
+	if observation.Supported {
+		observation.Workspace = filepath.Clean(workspace)
+	}
+	return observation, err
 }
 
 func (o *Observer) observe(ctx context.Context, run agentpkg.ReadOnlyRun) (Observation, error) {

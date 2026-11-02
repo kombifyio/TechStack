@@ -1,7 +1,4 @@
 export const ar: Record<string, string> = {
-  "ui.releaseChannel.badge": "Preview",
-  "ui.releaseChannel.hint": "أنت على قناة Preview: أحدث التغييرات على بياناتك الفعلية.",
-  "ui.releaseChannel.backToStable": "العودة إلى Stable",
   "ui.clientLocal.bootstrapPassword": "كلمة مرور التهيئة",
   "ui.clientLocal.bootstrapGuidance":
     "شغّل {command} في طرفية على مضيف هذا التثبيت للحصول على كلمة مرور التهيئة. إذا استُخدمت كلمة مرور سابقة أو انتهت صلاحيتها، يستبدلها الأمر وتتوقف كلمة المرور القديمة عن العمل.",

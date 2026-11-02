@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	migrationLockQueryPattern    = `SELECT pg_advisory_lock\(\$1\)`
-	migrationUnlockQueryPattern  = `SELECT pg_advisory_unlock\(\$1\)`
-	migrationTimeoutQueryPattern = `SELECT\s+set_config\('lock_timeout', '10s', false\),\s+set_config\('statement_timeout', '2min', false\)`
-	migrationResetQueryPattern   = `SELECT\s+set_config\('lock_timeout', '0', false\),\s+set_config\('statement_timeout', '0', false\)`
+	migrationLockQueryPattern    = `SELECT pg_catalog\.pg_advisory_lock\(\$1\)`
+	migrationUnlockQueryPattern  = `SELECT pg_catalog\.pg_advisory_unlock\(\$1\)`
+	migrationTimeoutQueryPattern = `SELECT\s+pg_catalog\.set_config\('lock_timeout', '10s', false\),\s+pg_catalog\.set_config\('statement_timeout', '2min', false\)`
+	migrationResetQueryPattern   = `SELECT\s+pg_catalog\.set_config\('lock_timeout', '0', false\),\s+pg_catalog\.set_config\('statement_timeout', '0', false\)`
 	legacyTrackerQueryPattern    = `DO \$\$\s+BEGIN\s+IF EXISTS`
 	requiredTableQueryPattern    = `SELECT EXISTS \(\s+SELECT 1\s+FROM`
 )

@@ -171,7 +171,7 @@ func TestV2CloudUserUpsertPersistsOnlyResolvedOrgTenant(t *testing.T) {
 		Subject: "auth0|user-1",
 		Email:   "user-1@kombify.io",
 	}
-	if err := v2CloudUserUpsert(store, true)(context.Background(), claims, "org_acme", "primary"); err != nil {
+	if err := v2CloudUserUpsert(store, true, nil)(context.Background(), claims, "org_acme", "primary"); err != nil {
 		t.Fatalf("v2CloudUserUpsert() error = %v", err)
 	}
 	sawResolvedTenant := false

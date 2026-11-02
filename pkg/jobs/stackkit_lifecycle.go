@@ -1101,6 +1101,9 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 		}
 		if !result.Success {
 			job.replaceResult(normalized)
+			if failure := typedStackKitFailureFromResult(result); failure.ReasonCode != "" {
+				return NewPermanentError(&StackKitLifecycleFailedError{Operation: string(req.Operation), Failure: failure})
+			}
 			return NewPermanentError(fmt.Errorf("StackKits %s failed with exit code %d", req.Operation, result.ExitCode))
 		}
 		if req.Operation == StackKitLifecycleAdvancedTrustImport {
@@ -1649,7 +1652,6 @@ func stackKitLifecycleTimeout(operation agentpb.StackKitOperation) int32 {
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_UPGRADE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_REMOVE:
@@ -1662,7 +1664,12 @@ func stackKitLifecycleTimeout(operation agentpb.StackKitOperation) int32 {
 		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
 		// The managed restore drill's per-step budget.
 		return int32(stackKitBackupCommandTimeout / time.Second)
-	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY,
+	// A public upgrade bounds its target (data staging, Generate, Apply,
+	// Verify) at 15 minutes and its automatic rollback at another 10, like an
+	// Advanced mutation. The 12-minute write budget killed an upgrade mid-Apply
+	// and left the node's lifecycle journal claimed (window m04-20261101-b3u).
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_UPGRADE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE:
 		return int32(stackKitAdvancedMutationCommandTimeout / time.Second)
 	default:

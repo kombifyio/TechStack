@@ -371,19 +371,28 @@ func advancedGenerationCandidate(candidate []byte, release stackkitrelease.Relea
 	if len(candidate) == 0 {
 		return nil, fmt.Errorf("managed rollout requires the candidate StackSpec for its Terramate generation")
 	}
+	return TerramateGenerationCandidate(candidate)
+}
+
+// TerramateGenerationCandidate sets generation.target terramate on a candidate
+// StackSpec. A node generates the Terramate target from its first managed
+// rollout and StackKits admits an Advanced change set only for that target,
+// while the stored desired setup keeps the kit's default target. Every Day-2
+// candidate (wizard extend, owner apply with a candidate) passes through here.
+func TerramateGenerationCandidate(candidate []byte) ([]byte, error) {
 	var document map[string]interface{}
 	if decodeErr := json.Unmarshal(candidate, &document); decodeErr != nil {
-		return nil, fmt.Errorf("decode managed rollout candidate: %w", decodeErr)
+		return nil, fmt.Errorf("decode Advanced candidate: %w", decodeErr)
 	}
 	generation := mapFromInterface(document["generation"])
 	if generation == nil {
 		generation = map[string]interface{}{}
 	}
-	generation["target"] = "terramate"
+	generation["target"] = advancedGenerationTarget
 	document["generation"] = generation
 	encoded, err := json.Marshal(document)
 	if err != nil {
-		return nil, fmt.Errorf("encode managed rollout candidate: %w", err)
+		return nil, fmt.Errorf("encode Advanced candidate: %w", err)
 	}
 	return encoded, nil
 }

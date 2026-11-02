@@ -57,9 +57,11 @@ type OnBehalfOf struct {
 	OrgID string `json:"org_id,omitempty"`
 	Email string `json:"email,omitempty"`
 	// EmailVerified carries the issuer's email_verified assertion; absent means false.
-	EmailVerified bool     `json:"email_verified,omitempty"`
-	Tier          string   `json:"tier,omitempty"`
-	Roles         []string `json:"roles,omitempty"`
+	EmailVerified bool   `json:"email_verified,omitempty"`
+	Tier          string `json:"tier,omitempty"`
+	// Roles stays so a historical token still decodes. IssueToken refuses a
+	// non-empty list. Verifiers still accept one until the verifier wave.
+	Roles []string `json:"roles,omitempty"`
 }
 
 // Claims are the JWT claims carried in a service-call token.

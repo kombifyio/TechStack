@@ -30,7 +30,6 @@ var providerErrorKinds = []struct {
 	{"power-in-progress", monthlyruntime.ErrPowerTransitionInProgress},
 	{"node-channel-unavailable", monthlyruntime.ErrNodeChannelUnavailable},
 	{"tenant-not-owned", releasechannel.ErrTenantNotOwned},
-	{"stage-owner-not-admitted", releasechannel.ErrStageOwnerNotAdmitted},
 	{"runtime-forbidden", monthlyruntime.ErrForbidden},
 	{"enrollment-pending", monthlyruntime.ErrEnrollmentPending},
 	{"execution-authority-inactive", monthlyruntime.ErrExecutionAuthorityInactive},

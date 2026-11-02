@@ -1,7 +1,4 @@
 export const hi: Record<string, string> = {
-  "ui.releaseChannel.badge": "Preview",
-  "ui.releaseChannel.hint": "आप Preview चैनल पर हैं: सबसे नए बदलाव, आपके वास्तविक डेटा पर।",
-  "ui.releaseChannel.backToStable": "Stable पर वापस जाएँ",
   "ui.clientLocal.bootstrapPassword": "प्रारंभिक पासवर्ड",
   "ui.clientLocal.bootstrapGuidance":
     "प्रारंभिक पासवर्ड पाने के लिए इस इंस्टॉलेशन के होस्ट पर टर्मिनल में {command} चलाएँ। अगर पिछला पासवर्ड इस्तेमाल हो चुका है या उसकी अवधि समाप्त हो गई है, तो कमांड उसे बदल देती है और पुराना पासवर्ड काम नहीं करता।",

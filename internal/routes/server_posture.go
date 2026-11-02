@@ -335,8 +335,15 @@ func autoRepairResponse(serverID string, policy *guardposture.AutoRepairPolicy, 
 	}
 	allowed := append([]string(nil), guardposture.AutoRepairSafeControls...)
 	sort.Strings(allowed)
-	return map[string]any{
+	response := map[string]any{
 		"server_id": serverID, "enabled": policy.Enabled, "active": policy.Active(now), "controls": controls,
 		"expires_at": policy.ExpiresAt, "approved_by": policy.ApprovedBy, "approved_at": policy.ApprovedAt, "allowed_controls": allowed,
+		"version": policy.Version,
 	}
+	// The registered policy version a Guard's local repair evidence must name;
+	// a server that never had an approval has none.
+	if policy.PolicyID != "" {
+		response["policy_id"] = policy.PolicyID
+	}
+	return response
 }

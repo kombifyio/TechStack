@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "public_repository": "kombifyio/TechStack",
-  "source_commit": "7c6fb0fb654e2278953736834edf45d8d7e49fcb",
-  "candidate_digest": "462e7220c7f0f5b86701dd7b9a8c5d99bcbe308536e5f639b686ca23ba4d1779",
-  "candidate_file_count": 2528,
+  "source_commit": "e058cf59954927377fbb2554e8dc0a87454a6b55",
+  "candidate_digest": "bdb6d4c206752ff827a2a2a6aadccac22a93e46f578a6ac4d09fa9bcea2cabd4",
+  "candidate_file_count": 2553,
   "digest_scope": "sha256 over every exported file except this receipt, in code-unit path order, as path NUL content NUL",
   "projected_go_sources": [
     {
       "destination": "internal/gocommon",
-      "version": "v0.8.8",
-      "sum": "h1:hc4C4Cl1bneoJq+Z7wK2puZCvnqXJb8iMtxER8E9r38=",
-      "commit": "f5f50f4d5bab0892ce3bcba575d5a43c1f723a37",
+      "version": "v0.8.10",
+      "sum": "h1:pBjiO178Eh9rSj7JCw9kQfazqUdFuqH3SrGERd+5wM0=",
+      "commit": "4ff38740659597b60d2af1584d4009ae362b80ad",
       "packages": [
         "apisurface",
         "apisurface/cli",
@@ -32,6 +32,7 @@
         "internal/httpsecurity",
         "internal/semverlite",
         "mcporiginauth",
+        "migrationclass",
         "nativeclient/interactiveauth",
         "nativeclient/profile",
         "observability",
@@ -50,17 +51,17 @@
   "vendored_npm_packages": [
     {
       "name": "@kombiverselabs/ai-sdk",
-      "version": "0.14.11",
-      "integrity": "sha512-Mi5ENheQ5jRfXcX2J+qOmVVdEL1dQYlA+zUkYlfP6cbmp1V6jS3vzOh16bXUQICXQ8ug2kLv7cdP8OJBRvm82Q==",
+      "version": "0.15.0",
+      "integrity": "sha512-J06uVFPWdrEqlTsRyO01JvIvHaWKp/RrANO06UMGl66DWpPLxvp3N5OwbTeWUNUgbObZgl3ItHppKfRbrIE5Pw==",
       "license": "MIT",
-      "path": "app/third_party/npm/ai-sdk-0.14.11.tgz"
+      "path": "app/third_party/npm/ai-sdk-0.15.0.tgz"
     },
     {
       "name": "@kombiverselabs/cloud-notifications",
-      "version": "0.3.137",
-      "integrity": "sha512-j4VJBpVrtImhdF7BtWjrlqg8bD2Fj9Lx79U7VPn1wANkOb6dUIG3O9rs2K5XekD9KL/2wQVumhwAmK50c0TKJw==",
+      "version": "0.4.4",
+      "integrity": "sha512-62kTGnZbE/VSyLa9iO2tE2RG0tLnMpSNZw9qno5GXz1Wdq2hVAJFbiIB3isF96/xXDLe9CdMlqjAgWfxegSrhA==",
       "license": "MIT",
-      "path": "app/third_party/npm/cloud-notifications-0.3.137.tgz"
+      "path": "app/third_party/npm/cloud-notifications-0.4.4.tgz"
     },
     {
       "name": "@kombiverselabs/design",
@@ -71,17 +72,17 @@
     },
     {
       "name": "@kombiverselabs/embed",
-      "version": "0.14.11",
-      "integrity": "sha512-25OxRmwO4bETIm8ewZQ7zQ3cASqj9kxhG5VqTwO76Hf7jR41XJ3jkVxVNnOJdFbPUI1OpUP6USTFWjUQ/DAS2A==",
+      "version": "0.15.0",
+      "integrity": "sha512-KC9XjSC1Fdr+aX0tMtrllsXO8LmPvraNVYrt7phA9PtjiPtjyZvyJ4ktE/cKq+M2NyNhPbkJd+SXu84LChVE2Q==",
       "license": "MIT",
-      "path": "app/third_party/npm/embed-0.14.11.tgz"
+      "path": "app/third_party/npm/embed-0.15.0.tgz"
     },
     {
       "name": "@kombiverselabs/execution-contracts",
-      "version": "0.14.11",
-      "integrity": "sha512-G34oex8IIL7YPJa44m6M2SLv3fJR7bEkAsHMd+elCZDsSA4JUnjGsAfrq3baW9dfSdWKFIfhVZJo6zWihfuT1w==",
+      "version": "0.15.0",
+      "integrity": "sha512-yFkT3tO7jpRb0xHTindE6hh0sdswk2iqHkwWqROEg7kppZvEkFCE37O4nRzJe8oqV4TDF1x5Fr938UPFdCa27g==",
       "license": "MIT",
-      "path": "app/third_party/npm/execution-contracts-0.14.11.tgz"
+      "path": "app/third_party/npm/execution-contracts-0.15.0.tgz"
     },
     {
       "name": "@kombiverselabs/onboarding-core",
@@ -92,10 +93,10 @@
     },
     {
       "name": "@kombiverselabs/speechkit-voiceagent-client",
-      "version": "0.77.16",
-      "integrity": "sha512-+cJ0PnU1bJLOUbsjXOFw5FP2/FO/Ptqa0S9uIEAax25nRSVOC0nVOZ2Dgxu3ngOIXB9m6PyjnD+db1CQ5Nwbag==",
+      "version": "0.77.19",
+      "integrity": "sha512-r+/2/ej/4Er9Fm0MPavZLFjIBMgLfcR1rbN1P7LZ/GSMqP0EQ4kw3Jn/QNV+sqlhbDYti6Yv8kKvMcEn0BguOA==",
       "license": "Apache-2.0",
-      "path": "app/third_party/npm/speechkit-voiceagent-client-0.77.16.tgz"
+      "path": "app/third_party/npm/speechkit-voiceagent-client-0.77.19.tgz"
     },
     {
       "name": "@kombiverselabs/ui",

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/db/tenantcontext"
 )
 
 // RecordGuardPorts persists one monotone, complete-or-explicitly-partial Guard
@@ -107,7 +109,9 @@ func (a *PostgresAuthority) ReadCurrent(ctx context.Context, request InventoryRe
 		return Inventory{}, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", request.TenantID); err != nil {
+	// The household read path (platform-jrz6y) binds the verified member context and
+	// the signed owner scopes here as well; token-less callers keep the tenant GUC.
+	if err = tenantcontext.ApplyInventoryRead(ctx, tx, request.TenantID); err != nil {
 		return Inventory{}, err
 	}
 

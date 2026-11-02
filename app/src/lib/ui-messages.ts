@@ -2,10 +2,6 @@
 // routes. Merged into the main dictionary by i18n.ts.
 export const uiMessages = {
   en: {
-    "ui.releaseChannel.badge": "Preview",
-    "ui.releaseChannel.hint":
-      "You are on the Preview channel: the newest changes, on your live data.",
-    "ui.releaseChannel.backToStable": "Back to Stable",
     "setupReplay.restart": "Repeat setup",
     "setupReplay.title": "Your current connection",
     "setupReplay.body":
@@ -188,10 +184,6 @@ export const uiMessages = {
     "ui.homelab.getStarted": "Get started",
   },
   de: {
-    "ui.releaseChannel.badge": "Preview",
-    "ui.releaseChannel.hint":
-      "Du bist im Preview-Kanal: die neuesten Änderungen, auf deinen Live-Daten.",
-    "ui.releaseChannel.backToStable": "Zurück zu Stable",
     "setupReplay.restart": "Einrichtung wiederholen",
     "setupReplay.title": "Deine aktuelle Verbindung",
     "setupReplay.body":

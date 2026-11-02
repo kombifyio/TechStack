@@ -22,7 +22,7 @@ var state struct {
 // ExecutionRefusal preserves the existing structured403 response for central
 // Stage ownership denials before a route projects a generic workflow failure.
 func ExecutionRefusal(err error) *httpx.APIError {
-	if !errors.Is(err, releasechannel.ErrTenantNotOwned) && !errors.Is(err, releasechannel.ErrStageOwnerNotAdmitted) {
+	if !errors.Is(err, releasechannel.ErrTenantNotOwned) {
 		return nil
 	}
 	return httpx.NewForbiddenError("This runtime does not admit execution for this test owner", map[string]any{

@@ -8,18 +8,14 @@ import (
 	"strings"
 
 	commonauthlocal "github.com/kombifyio/techstack/internal/gocommon/authlocal"
-	"github.com/kombifyio/techstack/internal/routes"
-	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
 // Admission of a deployment beside stable (config.SecondaryChannel): Early
-// Access, and the Stage execution companion whose channel value is still
-// "preview" (CI-CD-PLATFORM-STANDARD §4.6). Every signed-in person it reaches
+// Access (CI-CD-PLATFORM-STANDARD §4.6). Every signed-in person it reaches
 // gets every action, and the operator UI sends people who chose Stable back
 // there. What stays on stable for every tenant are the machine routes (agents,
 // webhooks, internal service calls) and the shared work that is nobody's
@@ -110,22 +106,6 @@ func secondaryAuthMethodsHandler(registry *providers.Registry) http.Handler {
 	})
 }
 
-// hideStageFromCrawlers keeps the Stage execution companion (channel value
-// "preview", its own host) out of search engines: every response carries a
-// noindex header and /robots.txt disallows everything. Stable and Early
-// Access, which serve the public links, are unchanged.
-func hideStageFromCrawlers(e *httpx.Event) error {
-	if config.ReleaseChannel() != "preview" {
-		return e.Next()
-	}
-	e.Response.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	if e.Request.URL.Path == "/robots.txt" && secondaryReadOnly(e.Request) {
-		e.Response.Header().Set("Cache-Control", "no-store")
-		return e.String(http.StatusOK, "User-agent: *\nDisallow: /\n")
-	}
-	return e.Next()
-}
-
 func secondaryReadOnly(r *http.Request) bool {
 	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
@@ -145,7 +125,7 @@ func admitSecondaryTransport(e *httpx.Event) error {
 	if e.Request.URL.RawPath != "" || e.Request.URL.EscapedPath() != p || path.Clean(p) != p || strings.Contains(p, "\\") {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Preview transport is not admitted.", nil)
 	}
-	if secondaryMachinePath(p) && !stageWorkerTransport(e.Request) {
+	if secondaryMachinePath(p) {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Machine routes run on stable.", nil)
 	}
 	if !secondaryPublicPath(p) {
@@ -182,7 +162,7 @@ func secondaryHTTPAdmission(e *httpx.Event) error {
 	}
 	// The portal exchange is how a person signs in inside a Cloud frame: nobody
 	// is signed in yet, and its handler verifies the signed launch token.
-	if stageWorkerTransport(e.Request) || secondaryPublicPath(e.Request.URL.Path) || portalExchangeRequest(e.Request) {
+	if secondaryPublicPath(e.Request.URL.Path) || portalExchangeRequest(e.Request) {
 		return e.Next()
 	}
 	if id := identity.FromContext(e.Request.Context()); id == nil || !id.IsAuthenticated() {
@@ -196,18 +176,7 @@ func secondaryHTTPAdmission(e *httpx.Event) error {
 		}
 		return httpx.NewUnauthorizedError("Preview requires a signed-in person.", nil)
 	}
-	if !secondaryReadOnly(e.Request) {
-		if err := releasechannel.RequireStageRequestPrincipal(e.Request.Context()); err != nil {
-			return tenantguard.ExecutionRefusal(err)
-		}
-	}
 	return e.Next()
-}
-
-// stageWorkerTransport defers only existing finite machine routes to their
-// capability/worker authentication after an actual Stage owner was bound.
-func stageWorkerTransport(request *http.Request) bool {
-	return releasechannel.StageOwnerActive() && routes.WorkerMachineRoute(request.Method, request.URL.Path)
 }
 
 // secondaryPageRequest is a browser navigation to an app page: a read outside

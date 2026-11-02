@@ -64,6 +64,18 @@
     {
       "version": "176_runtime_host_key_pin_lifecycle.sql",
       "sha256": "5a6e8f9daa6bc7b4ec8baabff6d085ae872cb17250afae7f2a7817f9cbfbbc24"
+    },
+    {
+      "version": "177_household_worker_pocket_id_inventory.sql",
+      "sha256": "d952c9b798daf875d5d4416bb5a6a6f018287cda5b531a63e5291b2ab8721ae2"
+    },
+    {
+      "version": "178_household_inventory_read_context.sql",
+      "sha256": "4f098a2661bd3410b07a98547f8c246f693eba165fb5480b192f3d12d31cdf41"
+    },
+    {
+      "version": "179_household_inventory_helper_acl.sql",
+      "sha256": "534577fbfb108c0ba75403ba5ce83d030adcc7a1347151984085d0f55d9e6aa7"
     }
   ],
   "database_target": "core",

@@ -52,7 +52,7 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 	check := flags.Bool("check", false, "print the enroll capability marker and exit")
 	resumable := flags.Bool("resumable", false, "print whether an interrupted enrollment holds this capability, without redeeming it")
 	server := flags.String("server", "", "control-plane base URL")
-	tokenFile := flags.String("token-file", "", "file holding the one-time pairing capability (deleted after use)")
+	tokenFile := flags.String("token-file", "", "file holding the one-time pairing capability (deleted after use; - reads it from stdin)")
 	enrollmentFile := flags.String("enrollment-file", defaultEnrollmentFile, "where to persist the enrollment response")
 	stateDir := flags.String("state-dir", "", "Guard state directory (env "+guardStateDirEnv+")")
 	hostname := flags.String("hostname", "", "hostname to register (default: this host)")
@@ -68,11 +68,22 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 	if strings.TrimSpace(*server) == "" || strings.TrimSpace(*tokenFile) == "" {
 		return errors.New("--server and --token-file are required")
 	}
-	token, err := readSecretFile(*tokenFile)
+	token, err := readSecretInput(*tokenFile)
 	if err != nil {
 		return fmt.Errorf("read pairing capability: %w", err)
 	}
-	manager, err := hostidentity.Open(resolveGuardStateDir(*stateDir))
+	dir := resolveGuardStateDir(*stateDir)
+	// On the privilege-split layout only the daemon user may open the custody,
+	// so root pairs through a child running as that user. The capability file
+	// stays root's: it goes once the child consumed it, and a failed child keeps
+	// it for a repeated run.
+	if handled, err := enrollAsCustodyOwner(ctx, flags, dir, *enrollmentFile, *resumable, token, stdout); handled {
+		if err == nil && !*resumable {
+			removeSecretInput(*tokenFile)
+		}
+		return err
+	}
+	manager, err := hostidentity.Open(dir)
 	if err != nil {
 		return err
 	}
@@ -102,6 +113,13 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 	if *substrate {
 		bootstrap.Extra = map[string]any{"type": "substrate", "provider": "proxmox"}
 	}
+	// A bound Guard refuses the redemption anyway. Refuse before the
+	// prior-custody declaration, which needs the journal its running service
+	// holds, so a replay is answered "already bound" and never "stop the
+	// service".
+	if manager.Bound(*enrollmentFile) {
+		return hostidentity.ErrAlreadyBound
+	}
 	if err := declarePriorCustody(manager, &bootstrap); err != nil {
 		return err
 	}
@@ -114,12 +132,12 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 			// Definitively rejected, expired or refused: the capability can
 			// never be redeemed again, so its file goes as well. Transient
 			// failures keep it for the same attempt.
-			_ = os.Remove(*tokenFile)
+			removeSecretInput(*tokenFile)
 		}
 		return err
 	}
 	// The capability is consumed: the file it came from must not outlive it.
-	_ = os.Remove(*tokenFile)
+	removeSecretInput(*tokenFile)
 	clearHandoffReceipts(manager)
 	binding := "legacy_bearer"
 	if result.Mode == hostidentity.ModeHostKey {
@@ -127,6 +145,30 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 	}
 	_, _ = fmt.Fprintf(stdout, "GUARD_ENROLLED accepted=%t identity_binding=%s enrollment_file=%s\n", result.Accepted, binding, result.EnrollmentPath)
 	return nil
+}
+
+// readSecretInput reads a one-time secret (a pairing capability or a handoff
+// confirmation) from its owner-only file, or from stdin for "-" (how root hands
+// it to the daemon-user child).
+func readSecretInput(path string) ([]byte, error) {
+	if path != "-" {
+		return readSecretFile(path)
+	}
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxAgentSecretFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxAgentSecretFileBytes {
+		return nil, fmt.Errorf("the secret on stdin exceeds the %d-byte secret limit", maxAgentSecretFileBytes)
+	}
+	return data, nil
+}
+
+// removeSecretInput deletes a consumed secret's file; stdin leaves nothing.
+func removeSecretInput(path string) {
+	if path != "-" {
+		_ = os.Remove(path)
+	}
 }
 
 // unameArch keeps the architecture spelling the installer always reported.

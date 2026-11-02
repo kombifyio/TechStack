@@ -670,8 +670,7 @@ func (l *PostgresLedger) AcquireExecutionClaim(
 	owner, token string,
 	ttl time.Duration,
 ) (ExecutionClaim, error) {
-	if !releasechannel.AdmitsJobExecution(command.TenantID) ||
-		(access == ExecutionClaimSideEffecting && !releasechannel.OwnsTenant(command.TenantID)) {
+	if access == ExecutionClaimSideEffecting && !releasechannel.OwnsTenant(command.TenantID) {
 		return ExecutionClaim{}, releasechannel.ErrTenantNotOwned
 	}
 	if l == nil || l.db == nil {

@@ -71,6 +71,12 @@ var DefaultIdentity = Identity{
 	BuildTriggers: []string{"workflow_dispatch", "schedule"},
 }
 
+// SignerMoveVersion is the first Guard release that pins DefaultIdentity. Every
+// older Guard pins the retired kombify-Techstack release workflow, which can no
+// longer sign anything, so it refuses every update the control plane serves and
+// moves forward only by a reinstall in place (install.sh --reinstall-guard).
+const SignerMoveVersion = "0.45.17"
+
 // Options configure a Verifier. The zero value verifies against the pinned root
 // and the pinned identity (DefaultIdentity) with the wall clock.
 type Options struct {

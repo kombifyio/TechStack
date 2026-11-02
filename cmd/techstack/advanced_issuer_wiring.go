@@ -54,6 +54,13 @@ func advancedCapabilityIssuer(ctx context.Context, boot *v2Boot, log *logger.Log
 		return issuer
 	}
 	if mode == advancedIssuerCustodyRemote {
+		if config.SecondaryChannel() {
+			// Early Access depends on no other host (D-2026-10-30-04).
+			if log != nil {
+				log.Warn("advanced_issuer_unavailable", "reason", "early_access_has_no_execution_host")
+			}
+			return nil
+		}
 		issuer, err := executioncustody.OpenRemote(ctx)
 		if err != nil {
 			if log != nil {

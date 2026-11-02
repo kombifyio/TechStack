@@ -248,6 +248,14 @@ func (r *Remote) BackupStatus(ctx context.Context) (Observation, error) {
 	return observation, err
 }
 
+// HouseholdList asks the executor for a read-only observation of the household
+// identities of the node workspace.
+func (r *Remote) HouseholdList(ctx context.Context) (Observation, error) {
+	var observation Observation
+	err := r.Client.CallInto(ctx, OpHouseholdList, nil, &observation)
+	return observation, err
+}
+
 // ProbeDockerKind runs one of the executor's fixed container probes by its kind
 // (containers or stats).
 func (r *Remote) ProbeDockerKind(ctx context.Context, kind string) ([]byte, error) {

@@ -9,12 +9,12 @@ import (
 )
 
 // EnvReleaseChannel names the release channel a deployment serves
-// (CI-CD-PLATFORM-STANDARD §4.6). "preview" (Preview) and "early-access"
-// (Early Access) change behavior; every other value, including unset, is
-// stable.
+// (CI-CD-PLATFORM-STANDARD §4.6). "early-access" (Early Access) changes
+// behavior; the retired value "preview" is read as early-access (never stable), and every
+// other value, including unset, is stable.
 const EnvReleaseChannel = config.EnvReleaseChannel
 
-// ReleaseChannel returns "preview", "early-access" or "stable".
+// ReleaseChannel returns "early-access" or "stable".
 func ReleaseChannel() string {
 	return config.ReleaseChannel()
 }

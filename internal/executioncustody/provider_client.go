@@ -2,12 +2,12 @@ package executioncustody
 
 import (
 	"context"
+
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 func (client *Remote) CreateOrBindLease(ctx context.Context, request jobs.ManagedLeaseRequest) (*jobs.ManagedLeaseResult, error) {
@@ -44,9 +44,7 @@ func (client *Remote) PreflightCreateOrBindLease(ctx context.Context, request jo
 	if err := client.providerCall(ctx, "preflight", providerRequest{Lease: &request}, nil); err != nil {
 		return err
 	}
-	// Only a successful native capacity preflight may admit the original
-	// verified POST in this process's same canonical Stage policy.
-	return releasechannel.AdmitStageMutation(ctx, request.Provider)
+	return nil
 }
 func (client *Remote) ResolveManagedRuntimeSlotGeneration(ctx context.Context, request jobs.ManagedRuntimeSlotGenerationRequest) (jobs.ManagedRuntimeSlotGeneration, error) {
 	var result jobs.ManagedRuntimeSlotGeneration

@@ -148,15 +148,18 @@ type EnrollResult struct {
 
 var defaultEnrollBackoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}
 
-// Enroll redeems the pairing capability with a host-bound key and confirms the
-// binding. The attempt id and the capability are persisted before the network
-// call, the response is persisted atomically before anything else happens, and
-// a repeated run resumes at the step it reached: a lost response is repeated
-// with the same attempt, a persisted response goes straight to confirmation.
-// After the binding is confirmed the capability is deleted locally.
-// enrollmentPresent reports whether the enrollment file that carries a bound
-// Guard's credential exists. A bound record without it cannot authenticate and
-// takes the recovery path instead.
+// Bound reports whether this server holds a confirmed binding with the
+// enrollment file that carries its credential. Such a Guard refuses every
+// redemption with ErrAlreadyBound, so a caller can refuse before it reads
+// anything else. A bound record without the file cannot authenticate and takes
+// the recovery path instead.
+func (m *Manager) Bound(enrollmentPath string) bool {
+	_, present := m.enrollmentLocation(enrollmentPath)
+	return m.Record().State == StateBound && present
+}
+
+// enrollmentLocation returns the enrollment file to read and whether it exists:
+// the configured path, or the newer copy in the state directory.
 func (m *Manager) enrollmentLocation(configured string) (string, bool) {
 	primary, primaryErr := os.Stat(configured)
 	if leaf, inside := m.custodyLeaf(configured); inside {
@@ -220,6 +223,12 @@ func (m *Manager) readEnrollment(configured string) []byte {
 	return data
 }
 
+// Enroll redeems the pairing capability with a host-bound key and confirms the
+// binding. The attempt id and the capability are persisted before the network
+// call, the response is persisted atomically before anything else happens, and
+// a repeated run resumes at the step it reached: a lost response is repeated
+// with the same attempt, a persisted response goes straight to confirmation.
+// After the binding is confirmed the capability is deleted locally.
 func Enroll(ctx context.Context, opt EnrollOptions) (EnrollResult, error) {
 	var result EnrollResult
 	m := opt.Manager
@@ -245,8 +254,7 @@ func Enroll(ctx context.Context, opt EnrollOptions) (EnrollResult, error) {
 
 	previous, _ := m.LoadBootstrap()
 	record := m.Record()
-	_, enrollmentPresent := m.enrollmentLocation(opt.EnrollmentPath)
-	if record.State == StateBound && enrollmentPresent {
+	if m.Bound(opt.EnrollmentPath) {
 		// A confirmed binding is never replaced or degraded by another
 		// redemption: a rejected replay would otherwise mark a healthy Guard
 		// recovery-needed (finding Q-10). Re-pairing a bound server goes

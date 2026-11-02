@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,27 @@ import (
 // A new server for the same address requests the same certificate, so neither
 // a retry nor a replacement can succeed before the authority's retry-after.
 const StackKitReasonACMERateLimited = "acme_rate_limited"
+
+// StackKitReasonUpgradeKitUnsupported is the StackKits refusal of a fresh
+// upgrade for a kit whose CUE upgrade policy declares support "unsupported".
+// StackKits refuses before it resolves a release or changes the node.
+const StackKitReasonUpgradeKitUnsupported = "upgrade_kit_unsupported"
+
+// StackKitLifecycleFailedError is a lifecycle command that the pinned
+// StackKits ended with its typed actionable error. The job keeps that reason
+// instead of the generic error category.
+type StackKitLifecycleFailedError struct {
+	Operation string
+	Failure   typedStackKitFailure
+}
+
+func (e *StackKitLifecycleFailedError) Error() string {
+	if e.Failure.ReasonCode == StackKitReasonUpgradeKitUnsupported {
+		return "StackKits refused the upgrade: the StackKit's upgrade policy does not support an in-place upgrade (" +
+			StackKitReasonUpgradeKitUnsupported + ")"
+	}
+	return fmt.Sprintf("StackKits %s stopped: %s", e.Operation, e.Failure.ReasonCode)
+}
 
 // typedStackKitFailure is the closed recovery fact a pinned StackKits command
 // reported in its actionable-error envelope. It never carries message text.

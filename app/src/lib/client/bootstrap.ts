@@ -30,10 +30,8 @@ export interface ClientBootstrap {
   kombifyEdition: string;
   version: string;
   publicOrigin: string;
-  /** "preview" on the Preview deployment, otherwise "stable". */
+  /** "early-access" on the Early Access deployment, otherwise "stable". */
   releaseChannel: string;
-  /** Where the Preview badge links back to; empty on stable. */
-  stableOrigin: string;
   telemetry: {
     sentry: SentryBootstrap;
     posthog: PostHogBootstrap;
@@ -50,7 +48,6 @@ export function emptyClientBootstrap(): ClientBootstrap {
     version: "",
     publicOrigin: "",
     releaseChannel: "",
-    stableOrigin: "",
     telemetry: {
       sentry: { dsn: "", environment: "", release: "" },
       posthog: { key: "", host: "", environment: "" },
@@ -87,7 +84,6 @@ export function parseClientBootstrap(body: unknown): ClientBootstrap {
     version: asString(data.version),
     publicOrigin: asString(data.public_origin),
     releaseChannel: asString(data.release_channel),
-    stableOrigin: asString(data.stable_origin),
     telemetry: {
       sentry: {
         dsn: asString(sentry.dsn),

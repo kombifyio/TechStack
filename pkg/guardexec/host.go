@@ -90,6 +90,11 @@ func (h *Host) BackupStatus(ctx context.Context) (Observation, error) {
 	return h.observer.BackupStatus(ctx)
 }
 
+// HouseholdList observes the household identities through the pinned CLI.
+func (h *Host) HouseholdList(ctx context.Context) (Observation, error) {
+	return h.observer.HouseholdList(ctx)
+}
+
 // Capabilities reports host maintenance when this executor may run it, and the
 // host security capability when the pinned StackKits release ships it.
 func (h *Host) Capabilities(ctx context.Context) []string {

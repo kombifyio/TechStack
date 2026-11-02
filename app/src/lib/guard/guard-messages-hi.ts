@@ -180,6 +180,10 @@ export const guardMessagesHi: Record<keyof typeof guardMessages.en, string> = {
     "Guard का संस्करण और हस्ताक्षर रिपोर्ट नहीं हुए।",
   "guard.fact.updated.guardUnsigned":
     "इंस्टॉल किया गया Guard आर्टिफ़ैक्ट हस्ताक्षरित नहीं है।",
+  "guard.fact.updated.reinstallRequired":
+    "Guard {version} अब खुद को अपडेट नहीं कर सकता।",
+  "guard.fact.updated.reinstallRequiredNext":
+    "इस सर्वर पर Guard दोबारा इंस्टॉल करें। यह जुड़ा रहता है।",
   "guard.fact.updated.osOk":
     "कोई लंबित सुरक्षा अपडेट नहीं और रीबूट की ज़रूरत नहीं।",
   "guard.fact.updated.osPending":
@@ -415,6 +419,15 @@ export const guardMessagesHi: Record<keyof typeof guardMessages.en, string> = {
     "यह पेयरिंग कमांड सर्वर पर चलाएँ। यह सर्वर को फिर से पेयर करता है और बाइंडिंग कुंजी को पिन करता है।",
   "guard.repair.copy": "कॉपी करें",
   "guard.repair.copied": "कॉपी हो गया",
+  "guard.reinstall.title": "Guard दोबारा इंस्टॉल करें",
+  "guard.reinstall.body":
+    "इस सर्वर पर root के रूप में कमांड चलाएँ। आपको मौजूदा Guard मिलता है; सर्वर का कनेक्शन और सेटिंग्स बनी रहती हैं।",
+  "guard.reinstall.action": "कमांड पाएँ",
+  "guard.reinstall.preparing": "तैयार हो रहा है…",
+  "guard.reinstall.failed": "कमांड नहीं बन सकी। फिर से कोशिश करें।",
+  "guard.reinstall.expires": "{at} तक मान्य।",
+  "guard.reinstall.copy": "कॉपी करें",
+  "guard.reinstall.copied": "कॉपी हो गया",
   "guard.repair.unavailable": "पेयरिंग कमांड तैयार नहीं हो सका।",
   "guard.repair.failed": "पेयरिंग कमांड तैयार नहीं हो सका।",
 

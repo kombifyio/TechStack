@@ -51,6 +51,39 @@ func (db *DB) MigrateForwardBatch(ctx context.Context, batch []ForwardMigrationA
 	return db.migrate(ctx, &forwardMigration{batch: append([]ForwardMigrationArtifact(nil), batch...), verify: verify})
 }
 
+type ForwardExpandResult struct {
+	AppliedFrom int    `json:"applied_from"`
+	AppliedEnd  int    `json:"applied_end"`
+	Held        string `json:"held,omitempty"`
+}
+
+// MigrateForwardExpand keeps the exact full-tail admission and applies only
+// the consecutive, classified pending expand prefix. A contract and every
+// migration after it remain pending for the release path.
+func (db *DB) MigrateForwardExpand(ctx context.Context, batch []ForwardMigrationArtifact) (ForwardExpandResult, error) {
+	if os.Getenv(EnvDatabaseMigrationMode) != "apply" || os.Getenv(EnvAllowDBGenesis) != "false" {
+		return ForwardExpandResult{}, errors.New("forward expand requires explicit apply and no genesis")
+	}
+	if _, err := forwardBatchBodies(batch); err != nil {
+		return ForwardExpandResult{}, err
+	}
+	manifest, err := DeliveryForwardBatch()
+	if err != nil {
+		return ForwardExpandResult{}, err
+	}
+	if !slices.Equal(batch, manifest) {
+		return ForwardExpandResult{}, errors.New("forward expand requires the complete embedded delivery manifest")
+	}
+	if err := requireForwardPhysicalPin(); err != nil {
+		return ForwardExpandResult{}, err
+	}
+	forward := &forwardMigration{batch: append([]ForwardMigrationArtifact(nil), batch...), verify: verifyForwardExpandPosture, expandOnly: true}
+	if err := db.migrate(ctx, forward); err != nil {
+		return ForwardExpandResult{}, err
+	}
+	return forward.expandResult, nil
+}
+
 func forwardBatchBodies(batch []ForwardMigrationArtifact) ([][]byte, error) {
 	if len(batch) == 0 {
 		return nil, errors.New("empty forward batch")
@@ -402,7 +435,8 @@ func setForwardLockTimeout(ctx context.Context, tx *sql.Tx, timeout time.Duratio
 	return err
 }
 
-func applyForwardBatch(ctx context.Context, conn *sql.Conn, batch []ForwardMigrationArtifact, verify func(context.Context, *sql.Tx) error) error {
+func applyForwardBatch(ctx context.Context, conn *sql.Conn, forward *forwardMigration) error {
+	batch, verify := forward.batch, forward.verify
 	bodies, err := forwardBatchBodies(batch)
 	if err != nil {
 		return err
@@ -410,7 +444,7 @@ func applyForwardBatch(ctx context.Context, conn *sql.Conn, batch []ForwardMigra
 	deadline := time.Now().Add(forwardRetryWindow)
 	var first []string
 	for attempt := 1; ; attempt++ {
-		refused, err := applyForwardBatchAttempt(ctx, conn, batch, bodies, verify, first)
+		refused, err := applyForwardBatchAttempt(ctx, conn, batch, bodies, verify, first, forward)
 		if err == nil || !retryableForwardLock(err) {
 			return err
 		}
@@ -432,7 +466,7 @@ func applyForwardBatch(ctx context.Context, conn *sql.Conn, batch []ForwardMigra
 
 // applyForwardBatchAttempt returns the table whose lock it lost, if any.
 func applyForwardBatchAttempt(ctx context.Context, conn *sql.Conn, batch []ForwardMigrationArtifact, bodies [][]byte,
-	verify func(context.Context, *sql.Tx) error, first []string) (string, error) {
+	verify func(context.Context, *sql.Tx) error, first []string, forward *forwardMigration) (string, error) {
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -440,6 +474,11 @@ func applyForwardBatchAttempt(ctx context.Context, conn *sql.Conn, batch []Forwa
 	defer tx.Rollback()
 	if err := setForwardLockTimeout(ctx, tx, forwardLockTimeout); err != nil {
 		return "", err
+	}
+	if forward.expandOnly {
+		if err := qualifyForwardExpandTransaction(ctx, tx); err != nil {
+			return "", err
+		}
 	}
 	// Cooperating runners use the advisory lock; the table lock also excludes
 	// another ledger writer between this admission and the atomic commit.
@@ -450,8 +489,27 @@ func applyForwardBatchAttempt(ctx context.Context, conn *sql.Conn, batch []Forwa
 	if err != nil {
 		return "", err
 	}
+	end := len(batch)
+	if forward.expandOnly {
+		end, err = embeddedForwardExpandLimit(batch, prefix)
+		if err != nil {
+			return "", err
+		}
+		if end == prefix {
+			// A held or empty prefix still verifies posture. This callback is
+			// fixed to the read-only expand verifier by MigrateForwardExpand.
+			if err := verifyRequiredControlPlaneTables(ctx, tx); err != nil {
+				return "", err
+			}
+			if err := verify(ctx, tx); err != nil {
+				return "", err
+			}
+			forward.expandResult = forwardExpandResult(batch, prefix, end)
+			return "", nil
+		}
+	}
 	if forwardPreLock {
-		tables, err := forwardLockSet(ctx, tx, bodies[prefix:])
+		tables, err := forwardLockSet(ctx, tx, bodies[prefix:end])
 		if err != nil {
 			return "", err
 		}
@@ -477,7 +535,7 @@ func applyForwardBatchAttempt(ctx context.Context, conn *sql.Conn, batch []Forwa
 			return "", err
 		}
 	}
-	for i, artifact := range batch {
+	for i, artifact := range batch[:end] {
 		if i < prefix {
 			continue // Never execute SQL or insert a ledger row for a committed prefix.
 		}
@@ -497,5 +555,16 @@ func applyForwardBatchAttempt(ctx context.Context, conn *sql.Conn, batch []Forwa
 	if err := tx.Commit(); err != nil {
 		return "", forwardCommitError{err}
 	}
+	if forward.expandOnly {
+		forward.expandResult = forwardExpandResult(batch, prefix, end)
+	}
 	return "", nil
+}
+
+func forwardExpandResult(batch []ForwardMigrationArtifact, prefix, end int) ForwardExpandResult {
+	result := ForwardExpandResult{AppliedFrom: prefix, AppliedEnd: end}
+	if end < len(batch) {
+		result.Held = batch[end].Version
+	}
+	return result
 }

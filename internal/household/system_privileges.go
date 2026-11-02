@@ -32,6 +32,7 @@ func verifyHouseholdPrivileges(ctx context.Context, pool *sql.DB, cloud bool) er
 		tables["public.household_projection_attempts"] = "SELECT,INSERT,UPDATE"
 		tables["public.household_identity_refs"] = "SELECT,INSERT,UPDATE,DELETE"
 		tables["public.typed_agent_commands"] = "SELECT,INSERT,UPDATE,DELETE"
+		columns["public.services"] = "tenant_id,stack_id,service_key,name,management_state"
 	}
 	return systemdb.VerifyPrivileges(ctx, pool, tables, columns, functions)
 }

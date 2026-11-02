@@ -26,10 +26,16 @@ func VerifyPrivileges(ctx context.Context, pool *sql.DB, tables, columns map[str
 	}
 	return verifySequences(ctx, pool)
 }
+
+// A role an owning migration created carries PostgreSQL 16+'s implicit creator
+// grant: bootstrap grantor, the database owner as member, ADMIN only. It gives
+// the role no capability, so that exact row is admitted; any other membership
+// still denies.
 func verifyRole(ctx context.Context, pool *sql.DB) error {
 	var safe bool
 	err := pool.QueryRowContext(ctx, `SELECT NOT r.rolinherit AND NOT has_database_privilege(current_database(),'TEMP')
-  AND NOT EXISTS(SELECT 1 FROM pg_auth_members WHERE roleid=r.oid OR member=r.oid)
+  AND NOT EXISTS(SELECT 1 FROM pg_auth_members m WHERE (m.roleid=r.oid OR m.member=r.oid) AND NOT
+   (m.roleid=r.oid AND m.member=(SELECT datdba FROM pg_database WHERE datname=current_database()) AND m.grantor=10 AND m.admin_option AND NOT m.inherit_option AND NOT m.set_option))
   AND NOT EXISTS(SELECT 1 FROM pg_db_role_setting s CROSS JOIN LATERAL unnest(s.setconfig) v
    WHERE s.setrole IN(0,r.oid) AND s.setdatabase IN(0,(SELECT oid FROM pg_database WHERE datname=current_database()))
    AND (v LIKE 'app.%' OR v LIKE 'kombify.%' OR v LIKE 'role=%' OR v LIKE 'session_authorization=%'))

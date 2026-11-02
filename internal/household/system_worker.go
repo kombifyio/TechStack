@@ -10,11 +10,9 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/agentcontrol"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
-	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 // SystemWorker composes actual stores and the existing typed dispatcher. The
@@ -46,7 +44,7 @@ func NewSystemWorker(ctx context.Context, cloud, techstack *sql.DB, relay *agent
 	cfg.WorkerStore = store
 	cfg.StackKitCommander = &agentcontrol.HouseholdCommandSender{Hub: hub}
 	orch := orchestrator.New(cfg, logger.Default())
-	service := &Service{Tenants: store, Homelabs: store, Stacks: store, Links: store, Identity: systemIdentity{orch: orch}}
+	service := &Service{Tenants: store, Homelabs: store, Stacks: store, Links: store, PocketID: store, Identity: systemIdentity{orch: orch}}
 	return &SystemWorker{Reducer: reducer, service: service, deliver: deliver, orch: orch}, nil
 }
 
@@ -56,15 +54,6 @@ func (w *SystemWorker) Close() {
 	}
 }
 func (w *SystemWorker) RunOnce(ctx context.Context) (int, error) {
-	if config.ReleaseChannel() == "preview" && !releasechannel.StageOwnerActive() {
-		// Before an admitted Stage owner, only the Cloud reducer runs: it commits the
-		// canonical snapshot and outbox watermark under the household system role, a
-		// database-only step. Every node effect stays with the admitted owner.
-		if _, err := w.Reducer.Reduce(ctx); err != nil {
-			return 0, err
-		}
-		return 0, releasechannel.ErrStageOwnerNotAdmitted
-	}
 	return w.Reducer.ProjectPending(ctx, w.service, w.deliver)
 }
 func (w *SystemWorker) Run(ctx context.Context, onPass func(int, error)) {
@@ -86,9 +75,6 @@ func (w *SystemWorker) Run(ctx context.Context, onPass func(int, error)) {
 type systemIdentity struct{ orch *orchestrator.Orchestrator }
 
 func (r systemIdentity) ResolveProjectionTarget(ctx context.Context, t Target) (Target, error) {
-	if !releasechannel.AdmitsJobExecution(t.TenantID) {
-		return Target{}, releasechannel.ErrTenantNotOwned
-	}
 	b, err := r.orch.ResolveStackKitIdentityTarget(ctx, t.TenantID, t.OwnerID, t.StackID)
 	if err != nil {
 		return Target{}, err
@@ -98,12 +84,6 @@ func (r systemIdentity) ResolveProjectionTarget(ctx context.Context, t Target) (
 	return t, nil
 }
 func (r systemIdentity) Project(ctx context.Context, t Target, p IdentityProjection) (Invitation, error) {
-	if !releasechannel.AdmitsJobExecution(t.TenantID) {
-		return Invitation{}, releasechannel.ErrTenantNotOwned
-	}
-	if config.ReleaseChannel() == "preview" && !releasechannel.StageOwnerActive() {
-		return Invitation{}, releasechannel.ErrStageOwnerNotAdmitted
-	}
 	result, err := r.orch.RunStackKitIdentityCommand(ctx, orchestrator.StackKitIdentityCommandRequest{
 		TenantID: t.TenantID, OwnerID: t.OwnerID, DeploymentID: t.StackID, Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_PROJECT,
 		OwnerApproved: true, ExpectedAgentID: t.AgentID, ExpectedStackKitInstanceID: t.StackKitInstanceID,
@@ -139,12 +119,6 @@ func (r systemIdentity) Project(ctx context.Context, t Target, p IdentityProject
 // The legacy cleanup lists and removes only under its retained attempt and on
 // the exact runtime it resolved (RemoveLegacyAccount).
 func (r systemIdentity) legacyCommand(ctx context.Context, t Target, a LegacyAttempt, request orchestrator.StackKitIdentityCommandRequest) (*agentpb.StackKitResult, error) {
-	if !releasechannel.AdmitsJobExecution(t.TenantID) {
-		return nil, releasechannel.ErrTenantNotOwned
-	}
-	if config.ReleaseChannel() == "preview" && !releasechannel.StageOwnerActive() {
-		return nil, releasechannel.ErrStageOwnerNotAdmitted
-	}
 	if t.AgentID == "" || t.StackKitInstanceID == "" {
 		return nil, errors.New("legacy household command requires the resolved runtime")
 	}

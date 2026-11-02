@@ -176,9 +176,20 @@ func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver, 
 
 	var req struct {
 		Token string `json:"token"`
+		// Mode "reinstall-guard" answers the command that brings the Guard of an
+		// enrolled server forward in place; the capability only downloads it.
+		Mode string `json:"mode"`
 	}
 	if err := e.BindBody(&req); err != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, "invalid request body", nil)
+	}
+	reinstall := req.Mode == installCommandModeReinstallGuard
+	if req.Mode != "" && req.Mode != installCommandModeInstall && !reinstall {
+		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, "mode must be install or reinstall-guard", nil)
+	}
+	tokenName := "Install command"
+	if reinstall {
+		tokenName = "Guard reinstall"
 	}
 
 	ctx, cancel := context.WithTimeout(e.Request.Context(), 90*time.Second)
@@ -199,13 +210,16 @@ func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver, 
 		if err != nil {
 			return err
 		}
-		token, err := trust.MintStackPairingTokenOnly(ctx, pairing, tenantID, userID, nil, trust.PairingTokenParams{Name: "Install command"})
+		token, err := trust.MintStackPairingTokenOnly(ctx, pairing, tenantID, userID, nil, trust.PairingTokenParams{Name: tokenName})
 		if err != nil {
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, token.FailureMessage(), nil)
 		}
 		minted, req.Token = &token, token.Token
 	}
 
+	if reinstall {
+		return tunnelGuardReinstallCommand(ctx, e, resolver, req.Token, minted)
+	}
 	linuxCmd, err := resolver.GenerateInstallCommand(ctx, req.Token)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
@@ -229,6 +243,29 @@ func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver, 
 	if windowsCmd != "" {
 		response["windows"] = windowsCmd
 	}
+	if minted != nil {
+		response["pairing_token_id"] = minted.TokenID
+		response["expires_at"] = minted.ExpiresAt
+	}
+	return httpx.Success(e, http.StatusOK, response)
+}
+
+// Install command modes of POST /api/v1/tunnel/install-command.
+const (
+	installCommandModeInstall        = "install"
+	installCommandModeReinstallGuard = "reinstall-guard"
+)
+
+// tunnelGuardReinstallCommand answers the Linux command that reinstalls the
+// Guard of an enrolled server in place. The Guard is a Linux service, so there
+// is no Windows command.
+func tunnelGuardReinstallCommand(ctx context.Context, e *httpx.Event, resolver *tunnel.RegistryURLResolver, token string, minted *trust.MintedStackPairing) error {
+	linuxCmd, err := resolver.GenerateGuardReinstallCommand(ctx, token)
+	if err != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
+	}
+	registryURL, _ := resolver.GetRegistryURL(ctx)
+	response := map[string]any{"linux": linuxCmd, "registry_url": registryURL}
 	if minted != nil {
 		response["pairing_token_id"] = minted.TokenID
 		response["expires_at"] = minted.ExpiresAt

@@ -49,7 +49,6 @@ type clientBootstrapResponse struct {
 	Version              string                      `json:"version"`
 	PublicOrigin         string                      `json:"public_origin"`
 	ReleaseChannel       string                      `json:"release_channel"`
-	StableOrigin         string                      `json:"stable_origin"`
 	ContextDevLogolinkID string                      `json:"context_dev_logolink_id"`
 	Telemetry            clientBootstrapTelemetry    `json:"telemetry"`
 	DataProfile          *clientBootstrapDataProfile `json:"data_profile,omitempty"`
@@ -77,7 +76,6 @@ func RegisterClientBootstrapRoutes(r *httpx.Router, version string, edition conf
 			Version:              version,
 			PublicOrigin:         config.PublicOriginFromEnv(),
 			ReleaseChannel:       db.ReleaseChannel(),
-			StableOrigin:         stableOriginFromEnv(),
 			ContextDevLogolinkID: firstNonEmptyEnv("PUBLIC_CONTEXT_DEV_LOGOLINK_ID", "CONTEXT_DEV_LOGOLINK_ID"),
 			Telemetry: clientBootstrapTelemetry{
 				Sentry: clientBootstrapSentry{
@@ -112,13 +110,4 @@ func firstNonEmptyEnv(keys ...string) string {
 		}
 	}
 	return ""
-}
-
-// stableOriginFromEnv is where the Preview badge links back to; empty unless
-// the preview deployment declares it.
-func stableOriginFromEnv() string {
-	if db.ReleaseChannel() != "preview" {
-		return ""
-	}
-	return firstNonEmptyEnv("TECHSTACK_STABLE_ORIGIN")
 }

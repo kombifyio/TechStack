@@ -81,6 +81,9 @@ func stagingDeliveryBinding(dsn, role string) error {
 }
 
 func runDatabaseDelivery(ctx context.Context, args []string) error {
+	if len(args) == 1 && args[0] == "merge-expand" {
+		return runDatabaseMergeExpand(ctx)
+	}
 	staging := len(args) == 1 && strings.HasPrefix(args[0], "staging-")
 	if staging {
 		if err := stagingDeliveryContext(); err != nil {
@@ -115,7 +118,7 @@ func runDatabaseDelivery(ctx context.Context, args []string) error {
 	// carry the safety, and the schema floor admits any newer ledger.
 	if apply && !staging {
 		if os.Getenv(db.EnvDatabaseMigrationMode) != "apply" || os.Getenv("DELIVERY_OPERATION") != "publish" ||
-			os.Getenv("DELIVERY_ARTIFACT") != "database-schema" || os.Getenv("SOURCE_REPOSITORY") != "kombify-Techstack" ||
+			os.Getenv("DELIVERY_ARTIFACT") != "database-schema" || os.Getenv("SOURCE_REPOSITORY") != "kombify-StackKits" ||
 			os.Getenv("SOURCE_SHA") != buildRevision || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(buildRevision) ||
 			!regexp.MustCompile(`^sha256:[a-f0-9]{64}$`).MatchString(os.Getenv("DELIVERY_PLAN_DIGEST")) ||
 			os.Getenv("DELIVERY_DATABASE_ADMITTED") != "true" {

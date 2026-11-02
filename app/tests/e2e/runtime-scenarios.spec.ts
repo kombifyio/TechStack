@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import type { MonthlyRuntimeCleanupReadback } from "../../src/lib/api/stacks";
 import type {
@@ -22,12 +23,14 @@ import {
 import {
   managedLifecycleReceipt,
   type ManagedLifecycleEvidence,
+  type ManagedUpgradePolicy,
 } from "./managed-lifecycle-receipt";
 import {
   assertExistingTargetExtension,
   type SubmittedExtendRun,
 } from "./existing-target-assertion";
 import { assertConfigureInstalledWorkload } from "./configure-usecase-assertion";
+import { runGuardReinstallJourney } from "./guard-reinstall-journey";
 import { assertRemoveInstalledUseCase, assertRemoveSupersededCheckpointRetry, decodeSupersededRemovalFixture } from "./remove-usecase-assertion";
 import { removalDataSentinelsFromEnv } from "./removal-data-sentinel";
 import path from "node:path";
@@ -54,9 +57,10 @@ import {
   createGatewaySessionKeeper,
   type GatewaySessionKeeper,
   type RuntimeBearer,
+  type RuntimeGatewaySession,
 } from "./runtime-auth";
 
-import { previewChannelOverlay } from "../../../scripts/render-environment-contract.mjs";
+import { earlyAccessProductTarget } from "../../../scripts/render-environment-contract.mjs";
 
 const EXISTING_STACK_ID = String(
   process.env.TECHSTACK_RUNTIME_E2E_EXISTING_STACK_ID ?? "",
@@ -69,18 +73,17 @@ if (
 }
 const EXISTING_TARGET_SCENARIO =
   "stack-lifecycle deploys a stack on an owner server, then monitors, backs up, updates and removes it";
-const previewTarget = previewChannelOverlay();
 const REQUIRE_NATIVE_HOST_PREP =
   process.env.TECHSTACK_RUNTIME_E2E_REQUIRE_NATIVE_HOST_PREP === "1";
 if (REQUIRE_NATIVE_HOST_PREP && (
   EXISTING_STACK_ID ||
   String(process.env.TECHSTACK_RUNTIME_E2E_RECOVERY_STACK_ID ?? "").trim() ||
-  process.env.TECHSTACK_E2E_EXPECTED_CHANNEL !== "preview" ||
+  process.env.TECHSTACK_E2E_EXPECTED_CHANNEL !== "early-access" ||
   !/^[a-f0-9]{40}$/.test(process.env.TECHSTACK_E2E_EXPECTED_REVISION ?? "") ||
-  normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_PRODUCT_URL) !== previewTarget.TECHSTACK_PUBLIC_ORIGIN ||
-  normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_API_URL) !== previewTarget.VITE_GATEWAY_API_BASE
+  normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_PRODUCT_URL) !== earlyAccessProductTarget.origin ||
+  normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_API_URL) !== earlyAccessProductTarget.gatewayApiBase
 )) {
-  throw new Error("native_host_preparation_journey_requires_exact_preview_source_and_fresh_foundation");
+  throw new Error("native_host_preparation_journey_requires_exact_early_access_source_and_fresh_foundation");
 }
 
 
@@ -98,7 +101,7 @@ const PRODUCT_BASE = requireLiveProductURL(
     EXISTING_STACK_ID ? "" : process.env.PLAYWRIGHT_BASE_URL,
   ) ||
     (EXISTING_STACK_ID
-      ? previewTarget.TECHSTACK_PUBLIC_ORIGIN
+      ? earlyAccessProductTarget.origin
       : "https://techstack.kombify.io"),
 );
 const API_BASE = requireLiveProductURL(
@@ -106,22 +109,22 @@ const API_BASE = requireLiveProductURL(
   firstProductURL(
     process.env.TECHSTACK_RUNTIME_E2E_API_URL,
     EXISTING_STACK_ID
-      ? previewTarget.VITE_GATEWAY_API_BASE
+      ? earlyAccessProductTarget.gatewayApiBase
       : process.env.TECHSTACK_API_URL,
     PRODUCT_BASE,
   ) || PRODUCT_BASE,
 );
 if (
   EXISTING_STACK_ID &&
-  (PRODUCT_BASE !== previewTarget.TECHSTACK_PUBLIC_ORIGIN ||
-    API_BASE !== previewTarget.VITE_GATEWAY_API_BASE)
+  (PRODUCT_BASE !== earlyAccessProductTarget.origin ||
+    API_BASE !== earlyAccessProductTarget.gatewayApiBase)
 ) {
   throw new Error(
-    "existing_target_requires_canonical_preview_product_and_gateway",
+    "existing_target_requires_canonical_early_access_product_and_gateway",
   );
 }
-// Agents talk to the stable control plane: on the Preview channel the owner
-// server enrolls against the stable origin, not the Preview one.
+// Agents talk to the stable control plane: on the Early Access channel the owner
+// server enrolls against the stable origin.
 const AGENT_ORIGIN =
   normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_AGENT_ORIGIN) || API_BASE;
 const ARTIFACTS_DIR =
@@ -1566,11 +1569,21 @@ function runtimeJobFailureSummary(job: Record<string, unknown>) {
     ["error", job.error],
     ["error_message", job.error_message],
     ["error_details", job.error_details],
+    // A refused node-side removal records what PLAN resolves now (uoe2).
+    ["removal_current_plan", removalCurrentPlan(job)],
   ]
     .filter(([, value]) => String(value ?? "").trim() !== "")
     .map(([key, value]) => `${key}=${JSON.stringify(String(value))}`);
   if (fields.length === 0) return JSON.stringify(redactObject(job));
   return redactText(fields.join("; "));
+}
+
+function removalCurrentPlan(job: Record<string, unknown>) {
+  const result = job.result as Record<string, unknown> | undefined;
+  const failure = result?.local_stackkit_removal_failure as
+    | Record<string, unknown>
+    | undefined;
+  return failure?.current_plan ? JSON.stringify(failure.current_plan) : "";
 }
 
 async function waitForWorkerByHostname(
@@ -4077,7 +4090,12 @@ test.describe.serial("Runtime E2E scenarios", () => {
       // The answered command is the check's (or a later one), never an
       // earlier round trip: both acknowledgements are the control plane's time.
       const earlierAck = Date.parse(String(heartbeatOnly.acknowledged_at ?? "")) || 0;
-      const updateCheck = await runOwnerUpdateCheck(auth.token, serverId);
+      // The maintenance action is Gateway-signed only: the owner's session
+      // token against the product origin carries no signed entitlement, so the
+      // check goes through the Gateway bearer the dashboard itself uses.
+      const gatewayProbe = await page.context().newPage();
+      const gateway = await captureGatewayApiSession(gatewayProbe).finally(() => gatewayProbe.close());
+      const updateCheck = await runOwnerUpdateCheck(auth.token, gateway, serverId);
       const answeredAfterCheck = (trip: LifecycleRecord) =>
         trip.state === "verified" && Date.parse(String(trip.acknowledged_at ?? "")) > earlierAck;
       const confirmedDeadline = Date.now() + 60_000;
@@ -4158,6 +4176,97 @@ test.describe.serial("Runtime E2E scenarios", () => {
     }
   });
 
+  // Guard reinstall (platform-wkig2): a Guard below the signer move shows
+  // reinstall_required, the owner's copied command brings it forward in place,
+  // and the same enrollment and identity key serve the current Guard.
+  test("guard-reinstall brings a Guard below the signer move forward without re-enrollment", async ({
+    page,
+  }) => {
+    const oldGuard = process.env.TECHSTACK_E2E_OLD_GUARD_BINARY ?? "";
+    test.skip(!oldGuard, "TECHSTACK_E2E_OLD_GUARD_BINARY names the archived guard-v0.45.6 techstack-linux-amd64");
+    test.setTimeout(45 * 60_000);
+    const supplier = ownerServerSupplierFromEnv();
+    const auth = await authenticateRuntimeUser("oneliner", page, RUNTIME_AUTH_OPTIONS);
+    await page.goto("about:blank");
+    let resource: OwnerServer | undefined;
+    let stackId = "";
+    try {
+      const created = await createLifecycleWizardRun(
+        auth.token,
+        {
+          intent: {
+            schema: "techstack.wizard-intent/v1",
+            run_kind: "first-run",
+            name: `guard-reinstall-${runtimeRunId()}`,
+            goals: [],
+            server: { transport: "install-command", environment_class: "cloud" },
+            kit_assignment: { mode: "found", kit_slug: "basement-kit" },
+          },
+        },
+        (id) => {
+          stackId = id;
+        },
+      );
+      stackId = String(created.run.stack_id ?? created.run.kit_deployment_id);
+      const registrationToken = await mintRegistrationToken(auth.token, stackId, String(created.run.pairing_job_id ?? ""));
+      resource = await supplier.provision(1);
+      await enrollOwnerServer(auth.token, resource, registrationToken);
+      const before = await waitForConnectedOwnerServer(auth.token, stackId);
+      const serverId = String(before.id);
+      const host = resource;
+      const asRoot = host.ssh && host.ssh.user !== "root" ? "sudo -n sh -c " : "sh -c ";
+      const receipt = await runGuardReinstallJourney(
+        {
+          page,
+          serverPage: `/stacks/${encodeURIComponent(stackId)}/servers/${encodeURIComponent(serverId)}`,
+          root: async (command, timeout = 120_000) =>
+            (await runSSH(host.ip, host.keyPair.privateKeyPath, asRoot + shellQuote(command), timeout, host.ssh)).stdout.trim(),
+          upload: (localPath, remotePath) =>
+            new Promise<void>((resolve, reject) => {
+              const child = spawn("ssh", sshArgs(host.ip, host.keyPair.privateKeyPath, `cat > ${shellQuote(remotePath)}`, host.ssh));
+              child.on("error", reject);
+              child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`upload to ${remotePath} exited ${code}`))));
+              createReadStream(localPath).pipe(child.stdin);
+            }),
+          readServer: () => readServerAggregate(auth.token, serverId),
+          api: async (method, apiPath, body) => {
+            const response = await authorizedFetch(auth.token, runtimeApiUrl(API_BASE, apiPath), {
+              method,
+              ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { "Content-Type": "application/json" } }),
+              signal: AbortSignal.timeout(60_000),
+            });
+            const text = await response.text();
+            if (!response.ok) throw new Error(`Runtime API ${method} ${apiPath} failed with HTTP ${response.status}`);
+            const json = text ? JSON.parse(text) : {};
+            return json.data ?? json;
+          },
+          delay,
+        },
+        oldGuard,
+      );
+      const servers = (await fetchRuntimeApi<LifecycleRecord[]>(auth.token, "/api/v1/servers")).filter(
+        (server) => server.kit_deployment_id === stackId,
+      );
+      expect(servers, "no second server or enrollment for the stack").toHaveLength(1);
+      expect(servers[0]?.worker_id, "the same Guard identity").toBe(before.worker_id);
+      const evidence = {
+        ...receipt,
+        stackId,
+        serverId,
+        workerId: String(before.worker_id),
+        testSourceCommit: process.env.GITHUB_SHA ?? (await testSourceCommit().catch(() => "")),
+      };
+      await mkdir(ARTIFACTS_DIR, { recursive: true });
+      await writeFile(path.join(ARTIFACTS_DIR, "guard-reinstall-receipt.json"), `${JSON.stringify(evidence, null, 2)}\n`);
+      await attachJson("guard-reinstall-receipt.json", evidence);
+    } finally {
+      if (stackId) {
+        await destroyRuntimeStackViaApi(auth.token, stackId).catch(() => undefined);
+      }
+      await resource?.release();
+    }
+  });
+
   // Stack lifecycle on one owner server (Beads platform-37px0.1): the journey
   // that stands in for the retired unit tests of the stack, job and
   // StackKits-lifecycle control plane. One owner server enrolls through the
@@ -4196,7 +4305,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
             expectedRevision: String(
               process.env.TECHSTACK_E2E_EXPECTED_REVISION ?? "",
             ).trim(),
-            previewOnly: true,
+            earlyAccessOnly: true,
             url: (path) => runtimeApiUrl(API_BASE, path),
             waitForJob: (id) => waitForJobTerminal(token, id, 1_200_000),
           }));
@@ -4504,10 +4613,24 @@ test.describe.serial("Runtime E2E scenarios", () => {
       const waitForJob = (id: string) =>
         waitForJobTerminal(auth.token, id, 1_200_000);
 
-      // A first run without goals installs the default use cases.
-      const installed = (
-        await readUseCaseConfiguration(auth.token, stackId)
-      ).use_cases.map((entry) => entry.id);
+      // A first run without goals installs the default use cases. The read
+      // inspects them natively on the node right after the rollout (uoe2: the
+      // inspection reached the node without its workspace and answered 503).
+      const inspected = await test.step("Inspect the installed native configuration after the rollout (uoe2)", async () => {
+        let view = await readUseCaseConfiguration(auth.token, stackId);
+        // The stack turns running moments after its rollout job completes;
+        // until then the read answers without inspecting (configuration_busy).
+        for (let attempt = 0; attempt < 12 && !view.expected_spec_hash; attempt++) {
+          await delay(5_000);
+          view = await readUseCaseConfiguration(auth.token, stackId);
+        }
+        expect(
+          view.expected_spec_hash,
+          "the node's native inspection names the installed spec hash",
+        ).toMatch(/^sha256:[0-9a-f]{64}$/);
+        return view;
+      });
+      const installed = inspected.use_cases.map((entry) => entry.id);
       expect(installed, "the default use cases are installed").toEqual(
         expect.arrayContaining(["media", "vault"]),
       );
@@ -4534,6 +4657,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       await attachJson("existing-target-day2-add-files.json", files);
 
       const configured = await test.step("Configure a typed native setting of the installed vault (qx9a)", async () => {
+        // The inspection after the Day-2 add answers 200 as well (uoe2).
         const change = await typedConfigurationChange(
           auth.token,
           stackId,
@@ -4602,8 +4726,15 @@ test.describe.serial("Runtime E2E scenarios", () => {
         (await readServerAggregate(auth.token, serverId)).allowed_actions,
         "the owner may detach the server they enrolled",
       ).toContain("detach");
+      // The node-side removal resolves the bound StackSpec the rollout
+      // applied, never the unbound init spec (uoe2: binding_mismatch at
+      // resolvedPlan; a refusal carries the node's current PLAN binding,
+      // which the failure summary prints as removal_current_plan).
       const destroy = await destroyRuntimeStackViaApi(auth.token, stackId);
-      expect(destroy?.state).toBe("completed");
+      expect(
+        destroy?.state,
+        `destroy ${destroy?.id ?? ""}: ${redactText(JSON.stringify((destroy as { error?: unknown } | undefined)?.error ?? ""))}`,
+      ).toBe("completed");
       await waitForStackAbsent(auth.token, stackId);
       destroyed = true;
       await detachOwnerServer(auth.token, serverId);
@@ -5035,9 +5166,110 @@ const MANAGED_DAY2_BUDGET_MS = 1_800_000;
 //   port_claims    the server's current port-claim generation holds active
 //                  claims of this stack with complete listener evidence
 //                  (polled: the Guard reports listeners after the rollout)
-const MANAGED_LIFECYCLE_BUDGET_MS = 65 * 60_000;
+// Action wait 15, upgrade 31, verify 20 and ports 5 minutes, plus headroom.
+const MANAGED_LIFECYCLE_BUDGET_MS = 75 * 60_000;
 const MANAGED_UPGRADE_TARGET_RELEASE =
   String(process.env.TECHSTACK_RUNTIME_E2E_UPGRADE_TARGET_RELEASE ?? "").trim() || "latest";
+
+// The kit's upgrade policy as the StackKits release the product runs declares
+// it (`upgradePolicy.support` in the kit's CUE definition). The product names
+// that release and its public source commit; the definition is read there.
+async function stackKitUpgradePolicy(
+  session: GatewaySessionKeeper,
+  kit: string,
+): Promise<ManagedUpgradePolicy> {
+  const catalog = await fetchRuntimeApi<{ release?: LifecycleRecord }>(
+    session,
+    "/api/v1/stackkits/use-cases",
+    session.apiBase,
+  );
+  const release = lifecycleRecord(catalog.release);
+  const tag = String(release.tag ?? "");
+  const sourceRef = String(release.publicSourceSha ?? "");
+  const repository =
+    /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/releases\/tag\//.exec(
+      String(release.releaseUrl ?? ""),
+    )?.[1] ?? "";
+  expect(tag, "the product names its StackKits release").toMatch(
+    /^v\d+\.\d+\.\d+$/,
+  );
+  expect(sourceRef, "the release names its public source commit").toMatch(
+    /^[0-9a-f]{40}$/,
+  );
+  expect(repository, "the release names its public repository").not.toBe("");
+  const sourceUrl = `https://raw.githubusercontent.com/${repository}/${sourceRef}/${kit}/stackfile.cue`;
+  const definition = await retryTransient(`${kit} definition`, async () => {
+    const response = await fetch(sourceUrl, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `${kit} definition at ${sourceRef}: HTTP ${response.status}`,
+      );
+    }
+    return text;
+  });
+  const support =
+    /upgradePolicy:\s*\{[^}]*?\bsupport:\s*"([a-z]+)"/.exec(definition)?.[1] ??
+    "";
+  expect(
+    ["unsupported", "preview", "supported"],
+    `${kit} declares an upgrade policy`,
+  ).toContain(support);
+  return {
+    kit,
+    support,
+    release: tag,
+    source_ref: sourceRef,
+    source_url: sourceUrl,
+  };
+}
+
+// What an upgrade request must leave alone: the node's inventory revision and
+// the stack's services with their desired state and version. observed_at is
+// the latest inventory that observed the stack's services (Guard clock).
+async function managedNodeSnapshot(
+  session: GatewaySessionKeeper,
+  serverId: string,
+  stackId: string,
+) {
+  // The registry is read first, so the revision read after it is at least as
+  // new as the observation it reports.
+  const registry = await fetchRuntimeApi<{ services?: LifecycleRecord[] }>(
+    session,
+    "/api/v1/registry/services",
+    session.apiBase,
+  );
+  const server = await fetchRuntimeApi<LifecycleRecord>(
+    session,
+    `/api/v1/servers/${encodeURIComponent(serverId)}`,
+    session.apiBase,
+  );
+  const rows = (registry.services ?? []).filter(
+    (service) => service.kit_deployment_id === stackId,
+  );
+  const services = rows
+    .map((service) =>
+      [
+        String(service.id ?? ""),
+        String(service.name ?? ""),
+        String(service.desired_state ?? ""),
+        JSON.stringify(service.version ?? null),
+      ].join("|"),
+    )
+    .sort();
+  return {
+    inventory_revision: Number(server.inventory_revision ?? 0),
+    services,
+    observed_at: Math.max(
+      0,
+      ...rows
+        .map((service) => Date.parse(String(service.observed_at ?? "")))
+        .filter(Number.isFinite),
+    ),
+  };
+}
 
 async function runManagedLifecycleEvidence(args: {
   session: GatewaySessionKeeper;
@@ -5056,7 +5288,7 @@ async function runManagedLifecycleEvidence(args: {
   expect(serverId, "the managed stack names its server").not.toBe("");
   expect(agentId, "the managed server names its agent").not.toBe("");
 
-  await test.step("Managed upgrade: upgrade the StackKit and verify", async () => {
+  await test.step("Managed upgrade: the kit's upgrade policy is followed and verified", async () => {
     const deadline = Date.now() + 900_000;
     let actions: string[] = [];
     while (Date.now() < deadline) {
@@ -5072,13 +5304,119 @@ async function runManagedLifecycleEvidence(args: {
     expect(actions, "the managed server admits upgrade and verify").toEqual(
       expect.arrayContaining(["upgrade", "verify"]),
     );
+    const policy = await stackKitUpgradePolicy(
+      session,
+      MANAGED_RUNTIME_STACKKIT,
+    );
+    await attachJson("stack-upgrade-policy.json", policy);
+    if (policy.support === "unsupported") {
+      // StackKits refuses a fresh upgrade of such a kit before it resolves a
+      // release or touches the node. The owner gets that refusal with its
+      // reason, and the node keeps its inventory and services.
+      const before = await managedNodeSnapshot(session, serverId, stackId);
+      const refused = await submitStackKitLifecycleOperation(
+        session,
+        stackId,
+        agentId,
+        "upgrade",
+        {
+          owner_approved: true,
+          target_release: MANAGED_UPGRADE_TARGET_RELEASE,
+        },
+        1_200_000,
+        apiBase,
+      );
+      // Compare only once an inventory observed the node after the refusal,
+      // so an unchanged node is a read-back, not an early read.
+      const settled = await managedNodeSnapshot(session, serverId, stackId);
+      let after = settled;
+      const observedDeadline = Date.now() + 120_000;
+      while (
+        !(after.observed_at > settled.observed_at) &&
+        Date.now() < observedDeadline
+      ) {
+        await delay(2_000);
+        after = await managedNodeSnapshot(session, serverId, stackId);
+      }
+      const command = lifecycleRecord(
+        lifecycleRecord(refused.result.command_result).data,
+      );
+      const outcome = lifecycleRecord(refused.result.last_outcome);
+      const guidance = lifecycleRecord(refused.result.user_guidance);
+      evidence.upgrade = {
+        policy,
+        outcome: "refused_by_policy",
+        job_id: String(refused.job.id ?? ""),
+        status: String(refused.job.state ?? ""),
+        success: refused.result.success === true,
+        stackkit_reason_code: String(command.reasonCode ?? ""),
+        reason_code: String(refused.result.reason_code ?? ""),
+        outcome_reason_code: String(outcome.reason_code ?? ""),
+        guidance_title: String(guidance.title ?? ""),
+        inventory_revision_before: before.inventory_revision,
+        inventory_revision_after: after.inventory_revision,
+        inventory_observed_after_refusal:
+          after.observed_at > settled.observed_at
+            ? new Date(after.observed_at).toISOString()
+            : "",
+        services: before.services.length,
+        services_unchanged:
+          JSON.stringify(after.services) === JSON.stringify(before.services),
+        release: { version: "", archive_sha256: "" },
+        verify_job_id: "",
+        verify_success: false,
+      };
+      expect(refused.job.state, runtimeJobFailureSummary(refused.job)).toBe(
+        "failed",
+      );
+      expect(refused.result.operation).toBe("upgrade");
+      expect(refused.result.success).toBe(false);
+      expect(evidence.upgrade.stackkit_reason_code).toBe(
+        "upgrade_kit_unsupported",
+      );
+      expect(evidence.upgrade.reason_code, "the job keeps the refusal").toBe(
+        "upgrade_kit_unsupported",
+      );
+      expect(evidence.upgrade.outcome_reason_code).toBe(
+        "upgrade_kit_unsupported",
+      );
+      expect(evidence.upgrade.guidance_title, "the owner is told why").not.toBe(
+        "",
+      );
+      expect(String(guidance.body ?? "")).not.toBe("");
+      expect(before.inventory_revision).toBeGreaterThan(0);
+      expect(
+        evidence.upgrade.inventory_observed_after_refusal,
+        "an inventory observed the node after the refusal",
+      ).not.toBe("");
+      expect(after.inventory_revision, "the node inventory is unchanged").toBe(
+        before.inventory_revision,
+      );
+      expect(before.services.length).toBeGreaterThan(0);
+      expect(after.services, "the stack's services are unchanged").toEqual(
+        before.services,
+      );
+      const verify = await runStackKitLifecycleOperation(
+        session,
+        stackId,
+        agentId,
+        "verify",
+        {},
+        1_200_000,
+        apiBase,
+      );
+      evidence.upgrade.release = releaseOf(verify.result);
+      evidence.upgrade.verify_job_id = String(verify.job.id ?? "");
+      evidence.upgrade.verify_success = verify.result.success === true;
+      return;
+    }
     const upgrade = await runStackKitLifecycleOperation(
       session,
       stackId,
       agentId,
       "upgrade",
       { owner_approved: true, target_release: MANAGED_UPGRADE_TARGET_RELEASE },
-      1_200_000,
+      STACKKIT_UPGRADE_OBSERVATION_MS,
       apiBase,
     );
     const verify = await runStackKitLifecycleOperation(
@@ -5091,6 +5429,8 @@ async function runManagedLifecycleEvidence(args: {
       apiBase,
     );
     evidence.upgrade = {
+      policy,
+      outcome: "upgraded",
       job_id: String(upgrade.job.id ?? ""),
       status: String(upgrade.result.status ?? ""),
       success: upgrade.result.success === true,
@@ -5124,6 +5464,22 @@ async function runManagedLifecycleEvidence(args: {
     const ids = (payload: RuntimeJobListPayload) =>
       (payload.items ?? []).map((item) => String(item.id ?? "")).sort();
     const status = await monthlyRuntimeRequest(session, leaseId, "", apiBase);
+    // The retry names the stack's own rollout; reading it back tells a
+    // converged rollout apart from a wrong job or lease.
+    const source = await retryTransient("rollout source job", () =>
+      fetchRuntimeApi<LifecycleRecord>(
+        session,
+        `/api/v1/jobs/${encodeURIComponent(args.provisionJobId)}`,
+        apiBase,
+      ),
+    );
+    const sourceJob = {
+      id: String(source.id ?? ""),
+      type: String(source.type ?? ""),
+      state: String(source.state ?? ""),
+      stack_id: String(source.stack_id ?? ""),
+      lease_id: String(lifecycleRecord(source.result).lease_id ?? ""),
+    };
     evidence.bounded_retry = {
       http_status: response.status,
       reason_code: reasonCode,
@@ -5133,12 +5489,28 @@ async function runManagedLifecycleEvidence(args: {
       new_jobs: ids(after).filter((id) => !ids(before).includes(id)),
       lease_id: String(status.lease_id ?? leaseId),
       enrollment_status: String(status.enrollment_status ?? ""),
+      source_job: sourceJob,
     };
     expect(response.status, redactText(text)).toBe(409);
     expect(reasonCode).toBe("rollout_retry_conflict");
-    // Every invariant refuses with the same code; only this one proves the
-    // retry was bounded by the stack state and not by a wrong job or lease.
-    expect(evidence.bounded_retry.detail).toMatch(/not a failed rollout/);
+    // Every invariant refuses with the same code. The retry is bounded by the
+    // converged rollout when the stack is not a failed rollout, or when its
+    // source -- this stack's own deploy on this lease -- completed: the
+    // product checks the source job before the stack state.
+    const convergedSource =
+      /source job is not a failed deploy for this stack/.test(
+        evidence.bounded_retry.detail,
+      ) &&
+      sourceJob.id === args.provisionJobId &&
+      sourceJob.type === "deploy" &&
+      sourceJob.state === "completed" &&
+      sourceJob.stack_id === stackId &&
+      sourceJob.lease_id === leaseId;
+    expect(
+      /not a failed rollout/.test(evidence.bounded_retry.detail) ||
+        convergedSource,
+      `the refusal is bounded by the converged rollout: ${evidence.bounded_retry.detail}`,
+    ).toBe(true);
     expect(evidence.bounded_retry.new_jobs, "a refused retry creates no job").toEqual([]);
     expect(evidence.bounded_retry.enrollment_status).toBe("enrolled");
   });
@@ -5506,7 +5878,7 @@ type LifecycleRecord = Record<string, any>;
 // 502 page for a short while): a read of the owner API retries on those
 // answers within its own deadline and fails on anything else.
 function isTransientRuntimeError(error: unknown) {
-  return /SyntaxError|Unexpected token|HTTP 5\d\d|fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|UND_ERR|aborted|timed out|timeout/i.test(
+  return /SyntaxError|Unexpected token|HTTP (?:429|5\d\d)|fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|UND_ERR|aborted|timed out|timeout/i.test(
     String(error),
   );
 }
@@ -6091,16 +6463,38 @@ async function readServerAggregate(token: string, serverId: string) {
   );
 }
 
+// A freshly paired Guard reads Connected from its first heartbeat, but it
+// offers maintenance only once runtime convergence has installed its pinned
+// StackKits runtime: the executor derives the capability from that pin, and
+// until then the action is refused with agent_capability_missing. The server
+// aggregate advertises the action exactly when it would be admitted, so the
+// check waits for that, bounded, as the server page enables its button only
+// then.
+async function waitForMaintenanceAction(token: string, serverId: string, action: string) {
+  const deadline = Date.now() + 10 * 60_000;
+  let allowed: string[] = [];
+  while (Date.now() < deadline) {
+    const server = await readServerAggregate(token, serverId);
+    allowed = Array.isArray(server.allowed_actions) ? server.allowed_actions.map(String) : [];
+    if (allowed.includes(action)) return;
+    await delay(10_000);
+  }
+  throw new Error(
+    `The Guard did not offer ${action} within 10 min of pairing (its StackKits runtime never converged); allowed_actions=${JSON.stringify(allowed)}`,
+  );
+}
+
 // The owner's read-only OS update check (os_update_plan): the Guard runs the
 // typed host update plan and its accepted result is a command round trip,
 // whatever the plan says. A moved inventory revision is retried with a fresh
 // read, as the server page does.
-async function runOwnerUpdateCheck(token: string, serverId: string) {
+async function runOwnerUpdateCheck(token: string, gateway: RuntimeGatewaySession, serverId: string) {
   const actions = `/api/v1/servers/${encodeURIComponent(serverId)}/actions`;
+  await waitForMaintenanceAction(token, serverId, "os_update_plan");
   let jobId = "";
   for (let attempt = 1; !jobId; attempt++) {
     const server = await readServerAggregate(token, serverId);
-    const response = await authorizedFetch(token, runtimeApiUrl(API_BASE, actions), {
+    const response = await authorizedFetch(gateway.token, runtimeApiUrl(gateway.apiBase, actions), {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": `guard-disconnect-${randomUUID()}` },
       body: JSON.stringify({
@@ -6186,13 +6580,20 @@ async function waitForServerStackActions(
   );
 }
 
-async function runStackKitLifecycleOperation(
+// The product gives `stackkit upgrade` 30 minutes on the node plus a
+// 30-second result grace (pkg/jobs/stackkit_lifecycle.go); a 20-minute watch
+// gave up on an upgrade the product still ran.
+const STACKKIT_UPGRADE_OBSERVATION_MS = (1_800 + 30 + 30) * 1_000;
+
+// Requests one StackKit lifecycle operation and returns its terminal job,
+// whatever its outcome.
+async function submitStackKitLifecycleOperation(
   token: RuntimeBearer,
   stackId: string,
   agentId: string,
   operation: string,
   extra: Record<string, unknown> = {},
-  timeoutMs = 1_200_000,
+  timeoutMs = operation === "upgrade" ? STACKKIT_UPGRADE_OBSERVATION_MS : 1_200_000,
   apiBase = API_BASE,
 ) {
   const response = await authorizedFetch(
@@ -6219,6 +6620,27 @@ async function runStackKitLifecycleOperation(
   await attachJson(
     `stack-lifecycle-${operation}.json`,
     redactObject({ job_id: jobId, state: job.state, result }),
+  );
+  return { job: job as LifecycleRecord, result };
+}
+
+async function runStackKitLifecycleOperation(
+  token: RuntimeBearer,
+  stackId: string,
+  agentId: string,
+  operation: string,
+  extra: Record<string, unknown> = {},
+  timeoutMs = operation === "upgrade" ? STACKKIT_UPGRADE_OBSERVATION_MS : 1_200_000,
+  apiBase = API_BASE,
+) {
+  const { job, result } = await submitStackKitLifecycleOperation(
+    token,
+    stackId,
+    agentId,
+    operation,
+    extra,
+    timeoutMs,
+    apiBase,
   );
   expect(job.state, runtimeJobFailureSummary(job)).toBe("completed");
   expect(result.schema_version).toBe("techstack.stackkit-lifecycle-result/v1");

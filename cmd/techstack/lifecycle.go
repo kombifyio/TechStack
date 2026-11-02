@@ -103,7 +103,6 @@ func startRuntimeLifecycle(
 	guardReach *guardreach.Service,
 	providerRuntime providerRuntimeRunner,
 	registrySweeper *serverregistry.Sweeper,
-	platformProjector *serverregistry.PlatformProjector,
 	jobReclaimer *orchestrator.JobExecutionReclaimer,
 	backupScanner *backupjobs.Scanner,
 	backupRetention *backupRetention,
@@ -201,11 +200,6 @@ func startRuntimeLifecycle(
 	if registrySweeper != nil && shared {
 		background.run(registrySweeper.Run)
 		fmt.Println("   Registry sweep: observation demotion + outbox retention started")
-	}
-
-	if platformProjector != nil && shared {
-		background.run(platformProjector.Run)
-		fmt.Println("   Platform list: server inventory projected into kombify-db")
 	}
 
 	if providerRuntime != nil {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
+	providerexecutor "github.com/kombifyio/stackkits/contracts/providerexecutor/v1beta1"
 
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -175,9 +175,6 @@ func (d *NativeDecommissioner) DecommissionManagedLeases(
 	req.ResourceGenerationDigest = strings.TrimSpace(req.ResourceGenerationDigest)
 	if req.TenantID == "" || req.OwnerID == "" || (req.StackID == "" && req.LeaseID == "") {
 		return nil, fmt.Errorf("%w: tenant, owner, and stack or lease are required", errNativeDecommissionCustody)
-	}
-	if !releasechannel.AdmitsJobExecution(req.TenantID) {
-		return nil, releasechannel.ErrTenantNotOwned
 	}
 
 	candidates, err := d.prepareCandidates(ctx, req)
@@ -736,8 +733,7 @@ func (d *NativeDecommissioner) convergeCandidate(
 		if errors.Is(err, providercontrol.ErrExecutionClaimHeld) {
 			return jobs.ManagedLeaseDecommissionProof{}, false, true, nil
 		}
-		if errors.Is(err, releasechannel.ErrTenantNotOwned) &&
-			releasechannel.AdmitsJobExecution(record.Command.TenantID) {
+		if errors.Is(err, releasechannel.ErrTenantNotOwned) {
 			// The exact decommission operation already exists durably. Ordinary
 			// Preview admitted it for the owning Stable worker; no local claim was
 			// acquired and provider absence remains unproven. Keep the existing

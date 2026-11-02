@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"net/url"
+
 	"github.com/kombifyio/techstack/internal/gocommon/featureflags"
 	"github.com/kombifyio/techstack/internal/backupjobs"
 	"github.com/kombifyio/techstack/pkg/agentcontrol"
@@ -23,11 +25,9 @@ import (
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
-	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"net/url"
 )
 
 const backupWorkerModeEnv = "TECHSTACK_BACKUP_WORKER_MODE"
@@ -47,8 +47,8 @@ func openBackupWorker(ctx context.Context, inExecution bool) (*backupWorkerRunti
 	if inExecution && mode != "execution" || !inExecution && mode != "standalone" {
 		return nil, errors.New("backup worker requires its explicit private process profile")
 	}
-	if config.ReleaseChannel() != "stable" && (!inExecution || config.ReleaseChannel() != "preview" || !releasechannel.StageRuntimePrepared()) {
-		return nil, errors.New("Preview backup work requires the existing prepared private Execution owner")
+	if config.ReleaseChannel() != "stable" {
+		return nil, errors.New("backup work runs on Stable only")
 	}
 	dsn := strings.TrimSpace(os.Getenv(db.EnvBackupWorkerDatabaseURL))
 	parsed, err := pgx.ParseConfig(dsn)
@@ -74,8 +74,8 @@ func openBackupWorker(ctx context.Context, inExecution bool) (*backupWorkerRunti
 			}
 		}
 	}
-	if db.DeclaresStagingDatabaseBinding() && (!inExecution || !releasechannel.StageRuntimePrepared()) {
-		return nil, errors.New("Stage backup work cannot borrow a Stable process profile")
+	if db.DeclaresStagingDatabaseBinding() {
+		return nil, errors.New("backup work refuses a non-production database binding")
 	}
 	pool, err := db.OpenContext(ctx, db.Config{Backend: db.StoreBackendPostgres, DriverName: db.PostgresDriverName,
 		DSN: dsn, MaxOpenConns: 4, MaxIdleConns: 2})

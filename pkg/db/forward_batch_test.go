@@ -112,6 +112,7 @@ func TestAdditiveMigrationsStayAdditive(t *testing.T) {
 		"-- nullable and constant defaults neither rewrite nor break old inserts\nALTER TABLE servers ADD COLUMN label text, ADD COLUMN IF NOT EXISTS retries integer NOT NULL DEFAULT 0;",
 		"ALTER TABLE servers ADD COLUMN settings jsonb DEFAULT '{}'::jsonb;",
 		"ALTER TABLE servers ADD COLUMN owner_id uuid REFERENCES users(id);",
+		`CREATE TABLE "Servers" (id integer); ALTER TABLE "Servers" ADD COLUMN name text;`,
 	}
 	for _, body := range admitted {
 		if err := ValidateAdditiveMigrationSQL(body); err != nil {
@@ -120,6 +121,14 @@ func TestAdditiveMigrationsStayAdditive(t *testing.T) {
 	}
 	refused := []string{
 		"",
+		`CREATE TABLE "Servers" (id integer); ALTER TABLE servers DROP COLUMN name;`,
+		`CREATE TABLE "a  b" (id integer); ALTER TABLE "a b" DROP COLUMN name;`,
+		`CREATE TABLE public.servers (id integer); ALTER TABLE servers DROP COLUMN name;`,
+		`CREATE TABLE servers (id integer); SET LOCAL search_path = other; ALTER TABLE servers DROP COLUMN name;`,
+		`CREATE TABLE servers (id integer); SELECT pg_catalog.set_config('search_path', 'other', true); ALTER TABLE servers DROP COLUMN name;`,
+		`GRANT SELECT ON servers TO public;`,
+		`CREATE TABLE new_table (id integer); GRANT SELECT ON new_table TO public;`,
+		`GRANT SELECT ON servers TO techstack_application;`,
 		"DROP TABLE servers;",
 		"ALTER TABLE servers DROP COLUMN label;",
 		"ALTER TABLE servers RENAME COLUMN label TO name;",
@@ -147,6 +156,65 @@ func TestAdditiveMigrationsStayAdditive(t *testing.T) {
 		if err := ValidateAdditiveMigrationSQL(body); err == nil {
 			t.Errorf("non-additive migration admitted: %q", body)
 		}
+	}
+}
+
+func TestForwardExpandHoldsContractAndLaterMigrations(t *testing.T) {
+	migrations := []forwardExpandInput{
+		{name: "177_first.additive.sql", body: []byte("SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '2min'; ALTER TABLE servers ADD COLUMN label text;")},
+		{name: "178_contract.sql", body: []byte("ALTER TABLE servers DROP COLUMN old_label;")},
+		{name: "179_later.additive.sql", body: []byte("SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '2min'; ALTER TABLE servers ADD COLUMN note text;")},
+	}
+	limit, err := forwardExpandLimit(migrations, 0)
+	if err != nil || limit != 1 {
+		t.Fatalf("expand limit = %d, error = %v; want first migration only", limit, err)
+	}
+	limit, err = forwardExpandLimit(migrations, 2)
+	if err != nil || limit != 3 {
+		t.Fatalf("expand limit after applied contract = %d, error = %v; want 3", limit, err)
+	}
+	limit, err = forwardExpandLimit(migrations, 1)
+	if err != nil || limit != 1 {
+		t.Fatalf("contract was not held: limit = %d, error = %v", limit, err)
+	}
+	if _, err = forwardExpandLimit(migrations, 4); err == nil {
+		t.Fatal("out-of-range ledger prefix admitted")
+	}
+	unsafe := []forwardExpandInput{{name: "180_unsafe.additive.sql", body: []byte("SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '2min'; DROP TABLE servers;")}}
+	if limit, err = forwardExpandLimit(unsafe, 0); err != nil || limit != 0 {
+		t.Fatalf("unsafe marked migration admitted: limit = %d, error = %v", limit, err)
+	}
+	unsafe = []forwardExpandInput{{name: "180_unsafe.additive.sql", body: []byte("SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '2min'; CREATE TABLE x (tenant_id text); CREATE POLICY x_all ON x USING (true);")}}
+	if err := ValidateAdditiveMigrationSQL(string(unsafe[0].body)); err != nil {
+		t.Fatalf("control no longer demonstrates the additional shared classifier: %v", err)
+	}
+	if limit, err = forwardExpandLimit(unsafe, 0); err != nil || limit != 0 {
+		t.Fatalf("unconfined tenant policy admitted: limit = %d, error = %v", limit, err)
+	}
+}
+
+func TestEmbeddedForwardExpandHoldsLegacyTail(t *testing.T) {
+	batch, err := DeliveryForwardBatch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit, err := embeddedForwardExpandLimit(batch, 0)
+	if err != nil || limit != 0 {
+		t.Fatalf("legacy forward tail: limit = %d, error = %v; want hold", limit, err)
+	}
+}
+
+func TestForwardExpandRefusesSelectedTail(t *testing.T) {
+	batch, err := DeliveryForwardBatch()
+	if err != nil || len(batch) < 2 {
+		t.Fatalf("delivery batch unavailable: %v", err)
+	}
+	t.Setenv(EnvDatabaseMigrationMode, "apply")
+	t.Setenv(EnvAllowDBGenesis, "false")
+	var target *DB
+	_, err = target.MigrateForwardExpand(context.Background(), batch[1:])
+	if err == nil || !strings.Contains(err.Error(), "complete embedded delivery manifest") {
+		t.Fatalf("selected tail error = %v", err)
 	}
 }
 
@@ -462,8 +530,8 @@ func applyForwardBatchBasis(t *testing.T, ctx context.Context, target *DB, batch
 		t.Fatal(err)
 	}
 	pendingFrom := "165_"
-	if !strings.HasPrefix(batch[len(batch)-1].Version, "176_") {
-		t.Fatalf("the case is calibrated on the 165-176 tail, the manifest ends at %s", batch[len(batch)-1].Version)
+	if !strings.HasPrefix(batch[len(batch)-1].Version, "179_") {
+		t.Fatalf("the case is calibrated on the 165-179 tail, the manifest ends at %s", batch[len(batch)-1].Version)
 	}
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
