@@ -19,9 +19,11 @@
 // A phase without its proof is "failed", never "passed".
 // The lifecycle evidence (upgrade, bounded retry, port claims) is carried
 // unchanged for scripts/paid-journey-receipt.mjs, which maps the complete
-// paid-beta B4/B5 journey; it does not change this compatibility status.
+// paid-beta B4/B5 journey; it does not change this compatibility status. So is
+// the kombify.me address evidence (./managed-kombify-me-evidence.ts).
 
 import type { ManagedDay2Evidence } from "./managed-day2-evidence";
+import type { ManagedKombifyMeEvidence } from "./managed-kombify-me-evidence";
 
 export const MANAGED_RECEIPT_SCHEMA = "techstack.depot-vm-run/v1";
 export const MANAGED_EVIDENCE_SCOPE = "managed-provider-lifecycle";
@@ -104,6 +106,7 @@ export interface ManagedLifecycleReceiptInput {
   destroyJobId?: string;
   day2?: ManagedDay2Evidence;
   lifecycle?: ManagedLifecycleEvidence;
+  kombifyMe?: ManagedKombifyMeEvidence;
   cleanupReadback?: Json;
   cleanupReadbackVerified: boolean;
 }
@@ -236,6 +239,7 @@ export function managedLifecycleReceipt(input: ManagedLifecycleReceiptInput) {
     network: "public",
     provider: input.providerId,
     addressMode: String(result.address_mode ?? ""),
+    kombifyMe: input.kombifyMe,
   };
 }
 
