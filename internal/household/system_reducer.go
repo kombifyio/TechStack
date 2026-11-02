@@ -113,13 +113,18 @@ func (r *SystemReducer) Pending(ctx context.Context) ([]PendingProjection, error
 
 // A newly committed lifecycle event invalidates an old acknowledgment even
 // before the reducer has materialized its newer desired projection.
-func (r *SystemReducer) Acknowledge(ctx context.Context, p PendingProjection, status string) (bool, error) {
+// Acknowledge records the projection outcome. mail is the activation e-mail
+// outcome of an add that issued a link ("sent" or "not_sent"); "" stores NULL.
+func (r *SystemReducer) Acknowledge(ctx context.Context, p PendingProjection, status, mail string) (bool, error) {
 	if (status != StatusNone && status != StatusProjected) || (status == StatusNone && p.Action != ActionRemove) {
 		return false, errors.New("invalid household acknowledgment")
 	}
-	result, err := r.database.ExecContext(ctx, `UPDATE household_node_projections p SET status=$4
+	if mail != "" && mail != ActivationMailSent && mail != ActivationMailNotSent {
+		return false, errors.New("invalid household activation mail outcome")
+	}
+	result, err := r.database.ExecContext(ctx, `UPDATE household_node_projections p SET status=$4,activation_mail=NULLIF($6,'')
   WHERE owner_subject=$1 AND subject=$2 AND revision=$3 AND last_attempt_at=$5 AND NOT EXISTS(SELECT 1 FROM household_lifecycle_outbox e
-   WHERE e.owner_subject=p.owner_subject AND e.subject=p.subject AND e.revision>p.revision)`, p.OwnerSubject, p.Member.Subject, p.Revision, status, p.AttemptedAt)
+   WHERE e.owner_subject=p.owner_subject AND e.subject=p.subject AND e.revision>p.revision)`, p.OwnerSubject, p.Member.Subject, p.Revision, status, p.AttemptedAt, mail)
 	if err != nil {
 		return false, err
 	}
@@ -142,9 +147,23 @@ func (r *SystemReducer) deferAttempt(ctx context.Context, p PendingProjection, i
 	return err
 }
 
+// Activation e-mail outcomes stored on household_node_projections (Cloud 000308).
+const (
+	ActivationMailSent    = "sent"
+	ActivationMailNotSent = "not_sent"
+)
+
+// ActivationOutcome is the per-channel result of one activation delivery. The
+// Feed item carries the link; MailSent says whether its e-mail went out too.
+type ActivationOutcome struct {
+	MailSent bool
+}
+
 // ActivationDelivery must call the existing Notifications dispatcher and
 // positively read its recipient delivery. It must not queue/store the bearer.
-type ActivationDelivery func(context.Context, PendingProjection, ProjectionResult) error
+// An unconfirmed Feed item is an error (retried); a refused e-mail is not,
+// because a retry would mint a new one-time link (platform-cztj4.7).
+type ActivationDelivery func(context.Context, PendingProjection, ProjectionResult) (ActivationOutcome, error)
 
 func (r *SystemReducer) ProjectPending(ctx context.Context, service *Service, deliver ActivationDelivery) (int, error) {
 	if service == nil || deliver == nil {
@@ -185,16 +204,22 @@ func (r *SystemReducer) ProjectPending(ctx context.Context, service *Service, de
 			}
 			continue
 		}
+		mail := ""
 		if result.ActivationURL != "" {
-			if err := deliver(ctx, p, result); err != nil {
+			outcome, err := deliver(ctx, p, result)
+			if err != nil {
 				fail("deliver activation", err)
 				if err := r.deferAttempt(ctx, p, false); err != nil {
 					return resolved, err
 				}
 				continue
 			}
+			mail = ActivationMailNotSent
+			if outcome.MailSent {
+				mail = ActivationMailSent
+			}
 		}
-		if acknowledged, err := r.Acknowledge(ctx, p, result.Status); err != nil {
+		if acknowledged, err := r.Acknowledge(ctx, p, result.Status, mail); err != nil {
 			fail("acknowledge", err)
 		} else if acknowledged {
 			resolved++
