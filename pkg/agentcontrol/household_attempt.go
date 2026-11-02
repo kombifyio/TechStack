@@ -124,7 +124,7 @@ func (s *HouseholdCommandSender) SendStackKitCommandForTenant(ctx context.Contex
 				if !(state == "failed" && settledWithoutResult(failure.String)) {
 					old := &agentpb.StackKitCommand{}
 					result := &agentpb.StackKitResult{}
-					if protojson.Unmarshal(priorRaw, old) != nil || protojson.Unmarshal(raw, result) != nil || stackkitcommand.ValidateResult(result, old) != nil {
+					if protojson.Unmarshal(priorRaw, old) != nil || protojson.Unmarshal(raw, result) != nil || stackkitcommand.ValidateDurableResult(result, old) != nil {
 						return nil, ErrHouseholdCommandUnresolved
 					}
 					clear(result.SensitiveResultJson)
