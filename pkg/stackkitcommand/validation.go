@@ -799,6 +799,21 @@ func ValidateReleasePin(pin *agentpb.StackKitReleasePin) error {
 }
 
 func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCommand) error {
+	return validateResult(result, command, true)
+}
+
+// ValidateDurableResult validates a stored result. The durable form never
+// carries the sensitive identity part (the Hub drops it before persistence),
+// so a successful identity issuance is checked without it; a stored sensitive
+// part is refused.
+func ValidateDurableResult(result *agentpb.StackKitResult, command *agentpb.StackKitCommand) error {
+	if result != nil && len(result.SensitiveResultJson) != 0 {
+		return fmt.Errorf("durable StackKit result must not carry a sensitive part")
+	}
+	return validateResult(result, command, false)
+}
+
+func validateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCommand, sensitive bool) error {
 	if result == nil || command == nil {
 		return fmt.Errorf("StackKit result and pending command are required")
 	}
@@ -817,8 +832,10 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 	if err := validateCommandResultEnvelope(result, command); err != nil {
 		return err
 	}
-	if err := validateSensitiveIdentityResult(result, command); err != nil {
-		return err
+	if sensitive {
+		if err := validateSensitiveIdentityResult(result, command); err != nil {
+			return err
+		}
 	}
 	if result.Success {
 		if IsApplicationConnectorOperation(command.Operation) {
