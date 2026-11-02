@@ -447,4 +447,42 @@ export const guardMessagesHi: Record<keyof typeof guardMessages.en, string> = {
   "guard.ladder.bound.awaiting": "सर्वर पर पेयरिंग कमांड चलने की प्रतीक्षा है।",
   "guard.ladder.bound.awaitingNext":
     "सर्वर पर कमांड चलाएँ। समय समाप्त हो गया हो तो नया बनाएँ।",
+  "guard.updates.title": "StackKits अपडेट",
+  "guard.updates.runs": "{version} चल रहा है",
+  "guard.updates.behavior.label": "अपडेट का तरीका",
+  "guard.updates.behavior.hint":
+    "आप यहाँ जो भी चुनें, इस सर्वर के ऐप्स के सुरक्षा पैच तुरंत इंस्टॉल होते हैं।",
+  "guard.updates.behavior.approve": "मुझसे पूछें (हर अपडेट को मंज़ूरी दें)",
+  "guard.updates.behavior.automatic": "अपडेट अपने आप इंस्टॉल करें",
+  "guard.updates.available": "StackKits {version} उपलब्ध है",
+  "guard.updates.forUseCase": "आपके {name} के लिए",
+  "guard.updates.other": "इस अपडेट में यह भी",
+  "guard.updates.more.one": "चेंजलॉग में {count} और बदलाव है।",
+  "guard.updates.more.other": "चेंजलॉग में {count} और बदलाव हैं।",
+  "guard.updates.noNotes": "चेंजलॉग में इस रिलीज़ की नई बातें दी गई हैं।",
+  "guard.updates.changelog": "StackKits में नया क्या है",
+  "guard.updates.approve": "अपडेट को मंज़ूरी दें",
+  "guard.updates.approveHint":
+    "Guard एक चेकपॉइंट सहेजता है, अपडेट चलाता है और विफल होने पर उसे वापस ले लेता है।",
+  "guard.updates.running": "{version} पर अपडेट हो रहा है: {progress}%",
+  "guard.updates.started.automatic":
+    "यह सर्वर अपडेट अपने आप इंस्टॉल करता है, इसलिए Techstack ने यह अपडेट शुरू किया।",
+  "guard.updates.started.security":
+    "kombify यह सुरक्षा पैच आपकी मंज़ूरी का इंतज़ार किए बिना इंस्टॉल करता है।",
+  "guard.updates.security.badge": "सुरक्षा पैच",
+  "guard.updates.security.applied":
+    "सुरक्षा पैच {version}: kombify इसे आपकी मंज़ूरी का इंतज़ार किए बिना इस सर्वर पर इंस्टॉल करता है।",
+  "guard.updates.succeeded":
+    "{version} पर अपडेट हो गया। सर्वर कुछ ही मिनटों में इस पर स्विच हो जाएगा।",
+  "guard.updates.failed":
+    "{version} पर अपडेट विफल रहा। Guard ने उसे वापस ले लिया; यह सर्वर अब भी {installed} चला रहा है।",
+  "guard.updates.current": "यह सर्वर नवीनतम StackKits रिलीज़ चला रहा है।",
+  "guard.updates.notRun":
+    "यह अपडेट इस सर्वर पर नहीं चला; कुछ नहीं बदला और यह अब भी {installed} चला रहा है।",
+  "guard.updates.loadFailed": "इस सर्वर की अपडेट स्थिति पढ़ी नहीं जा सकी।",
+  "guard.updates.kind.security": "सुरक्षा",
+  "guard.updates.kind.added": "नया",
+  "guard.updates.kind.fixed": "ठीक किया गया",
+  "guard.updates.kind.changed": "बदला गया",
+  "guard.updates.kind.reverted": "वापस लिया गया",
 };

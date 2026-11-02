@@ -5705,6 +5705,122 @@
       }
     },
     {
+      "name": "get_managed_creation_pause",
+      "title": "Read whether new managed servers are paused",
+      "description": "Returns the create protection of the signed-in account for one managed provider and region: ready, paused after repeated qualifying provider failures (with the failure count, last failure class and the time creation resumes), or held while one create is still in flight or being reconciled. Only creating is held; reading, stopping and deleting existing servers stay available.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "getManagedCreationPause",
+      "http": {
+        "method": "GET",
+        "path": "/api/v1/runtime/creation-pauses"
+      },
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "provider_id": {
+            "type": "string"
+          },
+          "region": {
+            "description": "The requested placement; omitted for a provider with one pool.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "consecutive_failures": {
+            "type": "integer"
+          },
+          "last_failure": {
+            "properties": {
+              "at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "at"
+            ],
+            "type": "object"
+          },
+          "policy": {
+            "properties": {
+              "cooldown_seconds": {
+                "type": "integer"
+              },
+              "threshold": {
+                "type": "integer"
+              },
+              "window_seconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "threshold",
+              "window_seconds",
+              "cooldown_seconds"
+            ],
+            "type": "object"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "recovery": {
+            "enum": [
+              "none",
+              "automatic_after_cooldown",
+              "wait_for_current_create",
+              "reconcile_existing_create"
+            ],
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "retry_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "paused",
+              "probe_in_flight",
+              "outcome_unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id",
+          "region",
+          "state",
+          "reason_code",
+          "consecutive_failures",
+          "recovery",
+          "policy"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "get_managed_service_logs",
       "title": "Read the latest bounded, redacted StackKits service log page",
       "description": "Read the latest bounded, redacted StackKits service log page",

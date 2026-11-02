@@ -42,6 +42,29 @@ type Component struct {
 	Version        string    `json:"version,omitempty"`
 	ArtifactSHA256 string    `json:"artifact_sha256,omitempty"`
 	ErrorCode      string    `json:"error_code,omitempty"`
+	// Release is the exact installed StackKits release; a command names it
+	// while UpdateAvailable waits for the owner. StackKits component only.
+	Release *Release `json:"release,omitempty"`
+	// UpdateAvailable is the published StackKits release Techstack has not
+	// served this node yet: it waits for the owner's approved upgrade.
+	// StackKits component only.
+	UpdateAvailable *Update `json:"update_available,omitempty"`
+}
+
+// Release is the installed StackKits release pin.
+type Release struct {
+	Version            string `json:"version"`
+	PlatformOS         string `json:"platform_os"`
+	PlatformArch       string `json:"platform_arch"`
+	ArchiveSHA256      string `json:"archive_sha256"`
+	ReleaseIndexSHA256 string `json:"release_index_sha256"`
+}
+
+// Update is a published StackKits release the node does not run yet. The
+// owner approves it as the governed upgrade to Version.
+type Update struct {
+	Version        string `json:"version"`
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
 }
 
 // Snapshot is the wire and persistence contract for agent runtime
@@ -182,6 +205,33 @@ func normalizeComponent(component *Component) error {
 	}
 	if component.State != ComponentFailed && component.ErrorCode != "" && component.ErrorCode != AgentRestartRequiredError {
 		return ErrInvalid
+	}
+	return normalizeStackKitsRelease(component)
+}
+
+func normalizeStackKitsRelease(component *Component) error {
+	if component.Release == nil && component.UpdateAvailable == nil {
+		return nil
+	}
+	if component.Name != StackKitsRuntimeComponent || component.State != ComponentReady {
+		return ErrInvalid
+	}
+	if release := component.Release; release != nil {
+		copied := Release{
+			Version: strings.TrimSpace(release.Version), PlatformOS: strings.TrimSpace(release.PlatformOS), PlatformArch: strings.TrimSpace(release.PlatformArch),
+			ArchiveSHA256: strings.ToLower(strings.TrimSpace(release.ArchiveSHA256)), ReleaseIndexSHA256: strings.ToLower(strings.TrimSpace(release.ReleaseIndexSHA256)),
+		}
+		if !validVersion(copied.Version) || !validName(copied.PlatformOS) || !validName(copied.PlatformArch) || !validSHA256(copied.ArchiveSHA256) || !validSHA256(copied.ReleaseIndexSHA256) {
+			return ErrInvalid
+		}
+		component.Release = &copied
+	}
+	if update := component.UpdateAvailable; update != nil {
+		copied := Update{Version: strings.TrimSpace(update.Version), ArtifactSHA256: strings.ToLower(strings.TrimSpace(update.ArtifactSHA256))}
+		if !validVersion(copied.Version) || (copied.ArtifactSHA256 != "" && !validSHA256(copied.ArtifactSHA256)) {
+			return ErrInvalid
+		}
+		component.UpdateAvailable = &copied
 	}
 	return nil
 }

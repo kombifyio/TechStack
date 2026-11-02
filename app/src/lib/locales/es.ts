@@ -1096,6 +1096,50 @@ export const es: Record<string, string> = {
     "No incluido en tu acceso actual a VPS",
   "wizard.server.managed.moreOptionsPending":
     "Aún no se pueden elegir aquí otros tamaños y ubicaciones de servidor.",
+  "wizard.server.managed.pause.title.paused":
+    "Los servidores nuevos en {provider} están en pausa",
+  "wizard.server.managed.pause.title.probeInFlight":
+    "Se está creando un servidor en {provider}",
+  "wizard.server.managed.pause.title.outcomeUnknown":
+    "Comprobando un servidor anterior en {provider}",
+  "wizard.server.managed.pause.lead":
+    "Tus servidores actuales siguen funcionando y puedes abrirlos, detenerlos y eliminarlos.",
+  "wizard.server.managed.pause.refresh":
+    "Comprobar de nuevo",
+  "wizard.server.managed.pause.failures":
+    "Creaciones fallidas seguidas",
+  "wizard.server.managed.pause.failuresCaption":
+    "{threshold} en {minutes} min pausan los servidores nuevos",
+  "wizard.server.managed.pause.lastFailure":
+    "Último fallo",
+  "wizard.server.managed.pause.failure.auth":
+    "Falló el inicio de sesión en el proveedor",
+  "wizard.server.managed.pause.failure.permission":
+    "Falta un permiso en el proveedor",
+  "wizard.server.managed.pause.failure.quota":
+    "Se alcanzó la cuota del proveedor",
+  "wizard.server.managed.pause.failure.rateLimit":
+    "Límite de solicitudes del proveedor",
+  "wizard.server.managed.pause.failure.transient":
+    "Error temporal del proveedor",
+  "wizard.server.managed.pause.failure.timeout":
+    "El proveedor no respondió a tiempo",
+  "wizard.server.managed.pause.failure.partialCreate":
+    "El servidor solo se creó en parte",
+  "wizard.server.managed.pause.failure.cleanupRequired":
+    "Hace falta limpiar tras una creación fallida",
+  "wizard.server.managed.pause.failure.other":
+    "Error del proveedor",
+  "wizard.server.managed.pause.resumes":
+    "Se reanuda",
+  "wizard.server.managed.pause.resumesCaption":
+    "Primero se hace una creación de prueba",
+  "wizard.server.managed.pause.recovery.wait":
+    "Cuando termine esa creación",
+  "wizard.server.managed.pause.recovery.reconcile":
+    "Tras la comprobación",
+  "wizard.server.managed.pause.blocked":
+    "Los servidores nuevos en {provider} están en pausa por ahora.",
   "wizard.server.remote.connectionDetails": "Detalles de la conexión",
   "wizard.server.remote.connectionHint":
     "Introduce la dirección de tu dispositivo y elige cómo iniciar sesión.",

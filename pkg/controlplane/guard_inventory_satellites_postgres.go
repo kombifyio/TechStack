@@ -94,11 +94,17 @@ func (s *PostgresStore) ApplyGuardInventorySatellites(ctx context.Context, comma
 					- 'enrollment_idempotency_sha256'
 					- 'enrollment_request_sha256'
 					- 'credential_generation'
+					- 'stackkits_target'
+					- 'stackkits_update_behavior'
+					- 'stackkits_update_attempt'
 				) || jsonb_strip_nulls(jsonb_build_object(
 					'agent_token_sha256', workers.resources_json->'agent_token_sha256',
 					'enrollment_idempotency_sha256', workers.resources_json->'enrollment_idempotency_sha256',
 					'enrollment_request_sha256', workers.resources_json->'enrollment_request_sha256',
-					'credential_generation', workers.resources_json->'credential_generation'
+					'credential_generation', workers.resources_json->'credential_generation',
+					'stackkits_target', workers.resources_json->'stackkits_target',
+					'stackkits_update_behavior', workers.resources_json->'stackkits_update_behavior',
+					'stackkits_update_attempt', workers.resources_json->'stackkits_update_attempt'
 				)),
 				updated_at = now()
 		`, worker.ID, prepared.TenantID, worker.InstanceID, worker.StackID, worker.Hostname, worker.IP,

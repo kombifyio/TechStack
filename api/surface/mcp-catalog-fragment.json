@@ -4,7 +4,7 @@
   "source": {
     "product": "techstack",
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "52bf4979e4a6794c0206162d98ffb6d2c787e58e23d705d11aa8c9edb9334d6c"
+    "sha256": "e4d7e3941fb1f4080ccb8d0110ce85c64fb46289a40ce66c218a0a8fbd43c207"
   },
   "tools": [
     {
@@ -4274,6 +4274,63 @@
       "auditEvent": "mcp.customer.techstack.inventory.get_job_stats",
       "operationIds": [
         "techstack.getJobStats"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.get_managed_creation_pause",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_managed_creation_pause",
+      "alias": "techstack.get_managed_creation_pause",
+      "title": "Read whether new managed servers are paused",
+      "description": "Returns the create protection of the signed-in account for one managed provider and region: ready, paused after repeated qualifying provider failures (with the failure count, last failure class and the time creation resumes), or held while one create is still in flight or being reconciled. Only creating is held; reading, stopping and deleting existing servers stay available.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "provider_id": {
+            "type": "string"
+          },
+          "region": {
+            "description": "The requested placement; omitted for a provider with one pool.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_managed_creation_pause",
+      "auditEvent": "mcp.customer.techstack.inventory.get_managed_creation_pause",
+      "operationIds": [
+        "techstack.getManagedCreationPause"
       ],
       "risk": "low",
       "approvalPolicy": "none",

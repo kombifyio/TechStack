@@ -36,6 +36,7 @@ import {
 } from "./existing-target-assertion";
 import { assertConfigureInstalledWorkload } from "./configure-usecase-assertion";
 import { runGuardReinstallJourney } from "./guard-reinstall-journey";
+import { runStackKitsUpdateJourney } from "./stackkits-update-journey";
 import { assertRemoveInstalledUseCase, assertRemoveSupersededCheckpointRetry, decodeSupersededRemovalFixture } from "./remove-usecase-assertion";
 import { removalDataSentinelsFromEnv } from "./removal-data-sentinel";
 import path from "node:path";
@@ -4708,6 +4709,31 @@ test.describe.serial("Runtime E2E scenarios", () => {
         return change;
       });
       await attachJson("existing-target-day2-configure.json", configured);
+
+      // The removals below plan and apply after it, on the release the node
+      // then runs (9r4e acceptance: plan, apply and a change set still work).
+      const update = await test.step("StackKits update: setting, proposal with highlights and changelog, Approve or security patch (9r4e, l38u)", async () => {
+        const server = await readServerAggregate(auth.token, serverId);
+        return runStackKitsUpdateJourney({
+          page,
+          serverPage: `/stacks/${encodeURIComponent(stackId)}/servers/${encodeURIComponent(serverId)}`,
+          workerId: String(server.worker_id),
+          api: async (method, apiPath, body) => {
+            const response = await authorizedFetch(auth.token, url(apiPath), {
+              method,
+              ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { "Content-Type": "application/json" } }),
+              signal: AbortSignal.timeout(60_000),
+            });
+            const text = await response.text();
+            if (!response.ok) throw new Error(`Runtime API ${method} ${apiPath} failed with HTTP ${response.status}`);
+            const json = text ? JSON.parse(text) : {};
+            return json.data ?? json;
+          },
+          waitForJob,
+          delay,
+        });
+      });
+      await attachJson("existing-target-day2-stackkits-update.json", update);
 
       const retained = retainedDataSentinels(owned, runId, {
         [configured.workloadRef]: ["vaultwarden"],

@@ -506,7 +506,10 @@ type StackKitLifecycleConfig struct {
 	// switch restored resources to; empty keeps the reserved test and lab
 	// suffixes. Production domains wait for real-host acceptance.
 	RelocationTestDomainSuffixes []string
-	releaseResolver              func() (*stackkitrelease.Release, error)
+	// StackKitsTargets records the node's StackKits target after an
+	// owner-approved governed upgrade.
+	StackKitsTargets controlplane.WorkerStackKitsTargetRecorder
+	releaseResolver  func() (*stackkitrelease.Release, error)
 }
 
 func NormalizeStackKitLifecycleRequest(req StackKitLifecycleRequest) (StackKitLifecycleRequest, error) {
@@ -961,6 +964,11 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 			return NewPermanentError(err)
 		}
 
+		if req.Operation == StackKitLifecycleUpgrade && req.OwnerApproved && !req.DryRun {
+			if req.TargetRelease, err = approvedStackKitsUpgradeTarget(req.TargetRelease, *release); err != nil {
+				return NewPermanentError(err)
+			}
+		}
 		job.setStep("stackkit_dispatch")
 		q.UpdateProgress(job.ID, 10, "Dispatching typed StackKits "+req.Operation+" operation")
 		if IsAdvancedStackKitLifecycleOperation(req.Operation) {
@@ -1098,6 +1106,14 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 		}
 		if inventoryRefresh != nil {
 			normalized[managedInventoryRefreshResultField] = inventoryRefresh
+		}
+		if req.Operation == StackKitLifecycleUpgrade && req.OwnerApproved && !req.DryRun {
+			record, recordErr := recordStackKitsTarget(ctx, cfg.StackKitsTargets, job.ID, req, result)
+			normalized[StackKitsTargetResultField] = record
+			if recordErr != nil && result.Success {
+				job.replaceResult(normalized)
+				return NewPermanentError(fmt.Errorf("the StackKits upgrade succeeded on the node, but Techstack could not record its target: %w", recordErr))
+			}
 		}
 		if !result.Success {
 			job.replaceResult(normalized)
@@ -1285,6 +1301,9 @@ func planStackKitLifecycleApply(ctx context.Context, sender StackKitCommandSende
 		return "", fmt.Errorf("typed StackKits plan admission dispatch failed: %w", err)
 	}
 	if result == nil || !result.Success {
+		if typedStackKitFailureFromResult(result).ReasonCode == "stored_plan_upgrade_required" {
+			return "", fmt.Errorf("StackKits upgrade required: the node's saved plan was compiled by another StackKits release than it runs; approve the node's StackKits update (operation upgrade) before %s", req.Operation)
+		}
 		return "", fmt.Errorf("typed StackKits plan admission failed")
 	}
 	planHash, err := typedStackKitPlanHash(result)
@@ -1694,6 +1713,7 @@ func sendStackKitCommandBoundedWithGraceForTenant(ctx context.Context, sender St
 	}
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	AddressNodeStackKitRelease(commandCtx, tenantID, agentID, command)
 	if scoped, ok := sender.(tenantStackKitCommandSender); ok {
 		return scoped.SendStackKitCommandForTenant(commandCtx, tenantID, agentID, command)
 	}

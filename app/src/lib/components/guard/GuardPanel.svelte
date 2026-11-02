@@ -26,6 +26,7 @@
   import GuardReachControl from "./GuardReachControl.svelte";
   import GuardIdentityUpgrade from "./GuardIdentityUpgrade.svelte";
   import GuardReinstall from "./GuardReinstall.svelte";
+  import GuardStackKitsUpdate from "./GuardStackKitsUpdate.svelte";
   import { parseApiError } from "#lib/api/errors.js";
   import {
     collectGuardEvidence,
@@ -1384,6 +1385,17 @@
       <GuardIdentityUpgrade
         workerId={evidence.worker_id}
         required={evidence.worker.identity_binding === "legacy_bearer"}
+        {onChanged}
+      />
+    </div>
+  {/if}
+
+  {#if evidence.worker_id}
+    <div class="mt-5">
+      <GuardStackKitsUpdate
+        workerId={evidence.worker_id}
+        {stackId}
+        {agentId}
         {onChanged}
       />
     </div>

@@ -1018,6 +1018,50 @@ export const zhHans: Record<string, string> = {
     "不包含在你当前的 VPS 访问权限中",
   "wizard.server.managed.moreOptionsPending":
     "其他服务器规格和位置暂时还不能在这里选择。",
+  "wizard.server.managed.pause.title.paused":
+    "{provider} 的新服务器已暂停",
+  "wizard.server.managed.pause.title.probeInFlight":
+    "正在 {provider} 创建一台服务器",
+  "wizard.server.managed.pause.title.outcomeUnknown":
+    "正在检查 {provider} 上之前的服务器",
+  "wizard.server.managed.pause.lead":
+    "你现有的服务器会继续运行，你仍可以打开、停止和删除它们。",
+  "wizard.server.managed.pause.refresh":
+    "重新检查",
+  "wizard.server.managed.pause.failures":
+    "连续创建失败",
+  "wizard.server.managed.pause.failuresCaption":
+    "{minutes} 分钟内 {threshold} 次会暂停新服务器",
+  "wizard.server.managed.pause.lastFailure":
+    "最近一次失败",
+  "wizard.server.managed.pause.failure.auth":
+    "提供商登录失败",
+  "wizard.server.managed.pause.failure.permission":
+    "提供商缺少权限",
+  "wizard.server.managed.pause.failure.quota":
+    "已达到提供商配额",
+  "wizard.server.managed.pause.failure.rateLimit":
+    "提供商请求频率限制",
+  "wizard.server.managed.pause.failure.transient":
+    "提供商临时错误",
+  "wizard.server.managed.pause.failure.timeout":
+    "提供商未及时响应",
+  "wizard.server.managed.pause.failure.partialCreate":
+    "服务器只创建了一部分",
+  "wizard.server.managed.pause.failure.cleanupRequired":
+    "创建失败后需要清理",
+  "wizard.server.managed.pause.failure.other":
+    "提供商错误",
+  "wizard.server.managed.pause.resumes":
+    "恢复时间",
+  "wizard.server.managed.pause.resumesCaption":
+    "先进行一次测试创建",
+  "wizard.server.managed.pause.recovery.wait":
+    "该创建完成后",
+  "wizard.server.managed.pause.recovery.reconcile":
+    "检查完成后",
+  "wizard.server.managed.pause.blocked":
+    "{provider} 的新服务器暂时已暂停。",
   "wizard.server.remote.connectionDetails": "连接详情",
   "wizard.server.remote.connectionHint": "输入设备的地址，并选择登录方式。",
   "wizard.server.remote.advanced": "SSH 详情",

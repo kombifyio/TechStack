@@ -120,6 +120,7 @@ func (h *Host) RuntimeDescribe(context.Context) (RuntimeDescription, error) {
 	if evidence, err := h.cfg.StackKit.ConfirmInstalledRuntime(); err == nil {
 		description.Valid = true
 		description.Version, description.ArchiveSHA256 = evidence.Version, evidence.SHA256
+		description.IndexSHA256, description.PlatformOS, description.PlatformArch = evidence.IndexSHA256, evidence.OS, evidence.Arch
 	}
 	return description, nil
 }

@@ -260,6 +260,15 @@ func (h workerRouteHandlers) admitArtifact(e *httpx.Event, kind string) error {
 	}
 	e.Response.Header().Set("Cache-Control", "private, no-store")
 	e.Response.Header().Set("Vary", "Authorization")
+	if installed := strings.Trim(strings.TrimSpace(e.Request.Header.Get("If-None-Match")), `"`); kind == "stackkit_runtime" && served.manifest.StackKits != nil &&
+		h.withheldStackKitsRuntime(e, served.manifest.StackKits.Version, installed, entry.SHA256) {
+		// The edge admits a 304 only when the digest header names the caller's
+		// validator; here that is the installed bundle the node keeps.
+		e.Response.Header().Set("ETag", `"`+installed+`"`)
+		e.Response.Header().Set(agentBinaryChecksumHeader, installed)
+		e.Response.WriteHeader(http.StatusNotModified)
+		return nil
+	}
 	e.Response.Header().Set("ETag", `"`+entry.SHA256+`"`)
 	e.Response.Header().Set(agentBinaryChecksumHeader, entry.SHA256)
 	e.Response.Header().Set(agentBinaryVersionHeader, index.ReleaseVersion)

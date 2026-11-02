@@ -72,6 +72,9 @@ type currentStackKitCommandExecutor struct {
 	runtime currentStackKitCommandRuntime
 	cfg     agentpkg.StackKitRuntimeBootstrapConfig
 	ready   func() bool
+	// upgraded runs after the owner-approved governed upgrade succeeded on the
+	// installed release it names.
+	upgraded func(context.Context, string)
 }
 
 func (executor currentStackKitCommandExecutor) Execute(ctx context.Context, command *agentpb.StackKitCommand) *agentpb.StackKitResult {
@@ -85,12 +88,18 @@ func (executor currentStackKitCommandExecutor) ExecuteStreaming(ctx context.Cont
 	if err := executor.runtime.EnsureRuntime(ctx, executor.cfg); err != nil {
 		return executor.runtime.FailureResult(command, fmt.Errorf("converge current StackKits release before command: %w", err))
 	}
+	var result *agentpb.StackKitResult
 	if streaming, ok := executor.runtime.(interface {
 		ExecuteStreaming(context.Context, *agentpb.StackKitCommand, func(*agentpb.LogEntry)) *agentpb.StackKitResult
 	}); ok {
-		return streaming.ExecuteStreaming(ctx, command, sink)
+		result = streaming.ExecuteStreaming(ctx, command, sink)
+	} else {
+		result = executor.runtime.Execute(ctx, command)
 	}
-	return executor.runtime.Execute(ctx, command)
+	if executor.upgraded != nil && approvedStackKitsUpgrade(command, result) {
+		executor.upgraded(ctx, command.GetRelease().GetVersion())
+	}
+	return result
 }
 
 type agentEnrollmentFile struct {
@@ -381,6 +390,9 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 			runtime: stackKitExecutor,
 			cfg:     stackKitRuntimeConfig,
 			ready:   runtimeReady.Load,
+			upgraded: func(_ context.Context, installed string) {
+				go publishStackKitsRuntimeAfterUpgrade(execCtx, stackKitExecutor, stackKitRuntimeConfig, runtimeConvergence, log, installed)
+			},
 		},
 		RuntimeConvergence: runtimeConvergence.Snapshot,
 		Posture: func() *guardbinding.Posture {
@@ -707,9 +719,29 @@ func convergeRuntimePackagesOnceStatus(
 				}
 				return ""
 			}(),
+			Release:         stackKitInstalledRelease(stackKitResult, stackKitErr),
+			UpdateAvailable: stackKitUpdateAvailable(stackKitResult, stackKitErr),
 		},
 	)
 	return runtimePackageConvergenceStatus{keepRunning: true, converged: techstackReady && stackKitErr == nil, snapshot: state}
+}
+
+// stackKitInstalledRelease reports the installed release pin, which the
+// control plane addresses while an update waits for the owner.
+func stackKitInstalledRelease(result agentpkg.StackKitRuntimeConvergenceResult, err error) *runtimeconvergence.Release {
+	if err != nil || result.IndexSHA256 == "" {
+		return nil
+	}
+	return &runtimeconvergence.Release{Version: result.Version, PlatformOS: result.OS, PlatformArch: result.Arch, ArchiveSHA256: result.SHA256, ReleaseIndexSHA256: result.IndexSHA256}
+}
+
+// stackKitUpdateAvailable reports the published runtime the Guard proposed
+// instead of installing.
+func stackKitUpdateAvailable(result agentpkg.StackKitRuntimeConvergenceResult, err error) *runtimeconvergence.Update {
+	if err != nil || result.UpdateAvailable == nil {
+		return nil
+	}
+	return &runtimeconvergence.Update{Version: result.UpdateAvailable.Version, ArtifactSHA256: result.UpdateAvailable.SHA256}
 }
 
 func derivedAgentControlURL(heartbeatURL, suffix string) string {

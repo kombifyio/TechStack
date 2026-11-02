@@ -467,4 +467,48 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
     "Esperando a que el comando de emparejamiento se ejecute en el servidor.",
   "guard.ladder.bound.awaitingNext":
     "Ejecuta el comando en el servidor. Si caducó, genera uno nuevo.",
+  "guard.updates.title": "Actualizaciones de StackKits",
+  "guard.updates.runs": "Ejecuta {version}",
+  "guard.updates.behavior.label": "Comportamiento de actualización",
+  "guard.updates.behavior.hint":
+    "Los parches de seguridad para las apps de este servidor se instalan de inmediato, elijas lo que elijas aquí.",
+  "guard.updates.behavior.approve": "Preguntarme (aprobar cada actualización)",
+  "guard.updates.behavior.automatic":
+    "Instalar actualizaciones automáticamente",
+  "guard.updates.available": "StackKits {version} está disponible",
+  "guard.updates.forUseCase": "Para tu {name}",
+  "guard.updates.other": "También en esta actualización",
+  "guard.updates.more.one":
+    "{count} cambio más figura en el registro de cambios.",
+  "guard.updates.more.other":
+    "{count} cambios más figuran en el registro de cambios.",
+  "guard.updates.noNotes":
+    "El registro de cambios muestra las novedades de esta versión.",
+  "guard.updates.changelog": "Novedades de StackKits",
+  "guard.updates.approve": "Aprobar actualización",
+  "guard.updates.approveHint":
+    "El Guard guarda un punto de control, ejecuta la actualización y la revierte si falla.",
+  "guard.updates.running": "Actualizando a {version}: {progress} %",
+  "guard.updates.started.automatic":
+    "Techstack inició esta actualización porque este servidor instala las actualizaciones automáticamente.",
+  "guard.updates.started.security":
+    "kombify instala este parche de seguridad sin esperar tu aprobación.",
+  "guard.updates.security.badge": "Parche de seguridad",
+  "guard.updates.security.applied":
+    "Parche de seguridad {version}: kombify lo instala en este servidor sin esperar tu aprobación.",
+  "guard.updates.succeeded":
+    "Actualizado a {version}. El servidor cambia a esta versión en pocos minutos.",
+  "guard.updates.failed":
+    "La actualización a {version} falló. El Guard la revirtió; este servidor sigue ejecutando {installed}.",
+  "guard.updates.current":
+    "Este servidor ejecuta la versión actual de StackKits.",
+  "guard.updates.notRun":
+    "La actualización no se ejecutó en este servidor; no cambió nada y sigue ejecutando {installed}.",
+  "guard.updates.loadFailed":
+    "No se pudo leer el estado de actualización de este servidor.",
+  "guard.updates.kind.security": "Seguridad",
+  "guard.updates.kind.added": "Nuevo",
+  "guard.updates.kind.fixed": "Corregido",
+  "guard.updates.kind.changed": "Cambiado",
+  "guard.updates.kind.reverted": "Revertido",
 };

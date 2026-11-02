@@ -6424,6 +6424,49 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/runtime/creation-pauses:
+    get:
+      operationId: getManagedCreationPause
+      x-kombify-cli: { command: "monthly-runtimes creation-pause" }
+      tags: [Monthly Runtime]
+      summary: Read whether new managed servers are paused
+      description: |
+        Returns the create protection of the signed-in account for one managed
+        provider and region: ready, paused after repeated qualifying provider
+        failures (with the failure count, last failure class and the time
+        creation resumes), or held while one create is still in flight or
+        being reconciled. Only creating is held; reading, stopping and
+        deleting existing servers stay available.
+      parameters:
+        - name: provider_id
+          in: query
+          required: true
+          schema:
+            type: string
+            example: ionos
+        - name: region
+          in: query
+          description: The requested placement; omitted for a provider with one pool.
+          schema:
+            type: string
+            example: de/fra
+      responses:
+        "200":
+          description: Create protection for the provider and region
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ManagedCreationPause"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/monthly-runtimes/{lease_id}:
     get:
       operationId: getMonthlyRuntimeStatus
@@ -13741,6 +13784,55 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WorkerInventoryEndpoint"
+
+    ManagedCreationPause:
+      type: object
+      required: [provider_id, region, state, reason_code, consecutive_failures, recovery, policy]
+      properties:
+        provider_id:
+          type: string
+          example: ionos
+        region:
+          type: string
+          example: de/fra
+        state:
+          type: string
+          enum: [ready, paused, probe_in_flight, outcome_unknown]
+        reason_code:
+          type: string
+          example: provider_create_failure_pause
+        consecutive_failures:
+          type: integer
+          example: 3
+        retry_at:
+          type: string
+          format: date-time
+        last_failure:
+          type: object
+          required: [code, at]
+          properties:
+            code:
+              type: string
+              example: provider.quota
+            at:
+              type: string
+              format: date-time
+        recovery:
+          type: string
+          enum: [none, automatic_after_cooldown, wait_for_current_create, reconcile_existing_create]
+        policy:
+          type: object
+          required: [threshold, window_seconds, cooldown_seconds]
+          properties:
+            threshold:
+              type: integer
+              example: 3
+            window_seconds:
+              type: integer
+              example: 900
+            cooldown_seconds:
+              type: integer
+              example: 900
 
     MonthlyRuntimeOffering:
       type: object

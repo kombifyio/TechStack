@@ -397,4 +397,42 @@ export const guardMessagesZhHans: Record<
   "guard.ladder.bound.awaiting": "正在等待配对命令在服务器上运行。",
   "guard.ladder.bound.awaitingNext":
     "请在服务器上运行该命令。如果已过期,请生成新的命令。",
+  "guard.updates.title": "StackKits 更新",
+  "guard.updates.runs": "运行 {version}",
+  "guard.updates.behavior.label": "更新方式",
+  "guard.updates.behavior.hint":
+    "无论你在此如何选择，此服务器上应用的安全补丁都会立即安装。",
+  "guard.updates.behavior.approve": "询问我（逐个批准更新）",
+  "guard.updates.behavior.automatic": "自动安装更新",
+  "guard.updates.available": "StackKits {version} 可用",
+  "guard.updates.forUseCase": "适用于你的 {name}",
+  "guard.updates.other": "此更新还包括",
+  "guard.updates.more.one": "更新日志中还有 {count} 项更改。",
+  "guard.updates.more.other": "更新日志中还有 {count} 项更改。",
+  "guard.updates.noNotes": "更新日志列出了此版本的新内容。",
+  "guard.updates.changelog": "StackKits 新功能",
+  "guard.updates.approve": "批准更新",
+  "guard.updates.approveHint":
+    "Guard 会先保存检查点，然后执行更新，失败时自动回滚。",
+  "guard.updates.running": "正在更新到 {version}：{progress}%",
+  "guard.updates.started.automatic":
+    "此服务器设置为自动安装更新，因此 Techstack 已启动此更新。",
+  "guard.updates.started.security":
+    "kombify 会直接安装此安全补丁，无需等待你的批准。",
+  "guard.updates.security.badge": "安全补丁",
+  "guard.updates.security.applied":
+    "安全补丁 {version}：kombify 会在此服务器上直接安装，无需等待你的批准。",
+  "guard.updates.succeeded":
+    "已更新到 {version}。服务器将在几分钟内切换到该版本。",
+  "guard.updates.failed":
+    "更新到 {version} 失败。Guard 已将其回滚；此服务器仍运行 {installed}。",
+  "guard.updates.current": "此服务器运行的是最新的 StackKits 版本。",
+  "guard.updates.notRun":
+    "此更新未在此服务器上运行；没有任何更改，服务器仍运行 {installed}。",
+  "guard.updates.loadFailed": "无法读取此服务器的更新状态。",
+  "guard.updates.kind.security": "安全",
+  "guard.updates.kind.added": "新增",
+  "guard.updates.kind.fixed": "已修复",
+  "guard.updates.kind.changed": "已更改",
+  "guard.updates.kind.reverted": "已撤销",
 };

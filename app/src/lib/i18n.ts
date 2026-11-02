@@ -729,6 +729,50 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Not included in your current VPS access",
     "wizard.server.managed.moreOptionsPending":
       "Additional server sizes and locations are not available to choose here yet.",
+    "wizard.server.managed.pause.title.paused":
+      "New servers at {provider} are paused",
+    "wizard.server.managed.pause.title.probeInFlight":
+      "A server is being created at {provider}",
+    "wizard.server.managed.pause.title.outcomeUnknown":
+      "Checking an earlier server at {provider}",
+    "wizard.server.managed.pause.lead":
+      "Your existing servers keep running, and you can still open, stop and delete them.",
+    "wizard.server.managed.pause.refresh":
+      "Check again",
+    "wizard.server.managed.pause.failures":
+      "Failed creates in a row",
+    "wizard.server.managed.pause.failuresCaption":
+      "{threshold} within {minutes} min pause new servers",
+    "wizard.server.managed.pause.lastFailure":
+      "Last failure",
+    "wizard.server.managed.pause.failure.auth":
+      "Provider sign-in failed",
+    "wizard.server.managed.pause.failure.permission":
+      "Permission missing at the provider",
+    "wizard.server.managed.pause.failure.quota":
+      "Provider quota reached",
+    "wizard.server.managed.pause.failure.rateLimit":
+      "Provider rate limit",
+    "wizard.server.managed.pause.failure.transient":
+      "Temporary provider error",
+    "wizard.server.managed.pause.failure.timeout":
+      "Provider did not answer in time",
+    "wizard.server.managed.pause.failure.partialCreate":
+      "Server only partly created",
+    "wizard.server.managed.pause.failure.cleanupRequired":
+      "Cleanup needed after a failed create",
+    "wizard.server.managed.pause.failure.other":
+      "Provider error",
+    "wizard.server.managed.pause.resumes":
+      "Resumes",
+    "wizard.server.managed.pause.resumesCaption":
+      "One create runs first as a test",
+    "wizard.server.managed.pause.recovery.wait":
+      "When that create finishes",
+    "wizard.server.managed.pause.recovery.reconcile":
+      "After the check",
+    "wizard.server.managed.pause.blocked":
+      "New servers at {provider} are paused for now.",
     "wizard.server.remote.connectionDetails": "Connection details",
     "wizard.server.remote.connectionHint":
       "Enter your device’s address and choose how to sign in.",
@@ -1706,6 +1750,50 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Nicht in deinem aktuellen VPS-Zugang enthalten",
     "wizard.server.managed.moreOptionsPending":
       "Weitere Servergrößen und Standorte lassen sich hier noch nicht auswählen.",
+    "wizard.server.managed.pause.title.paused":
+      "Neue Server bei {provider} sind pausiert",
+    "wizard.server.managed.pause.title.probeInFlight":
+      "Bei {provider} wird gerade ein Server erstellt",
+    "wizard.server.managed.pause.title.outcomeUnknown":
+      "Ein früherer Server bei {provider} wird geprüft",
+    "wizard.server.managed.pause.lead":
+      "Deine bestehenden Server laufen weiter, und du kannst sie weiterhin öffnen, stoppen und löschen.",
+    "wizard.server.managed.pause.refresh":
+      "Erneut prüfen",
+    "wizard.server.managed.pause.failures":
+      "Fehlgeschlagene Erstellungen in Folge",
+    "wizard.server.managed.pause.failuresCaption":
+      "{threshold} innerhalb von {minutes} Min. pausieren neue Server",
+    "wizard.server.managed.pause.lastFailure":
+      "Letzter Fehler",
+    "wizard.server.managed.pause.failure.auth":
+      "Anmeldung beim Anbieter fehlgeschlagen",
+    "wizard.server.managed.pause.failure.permission":
+      "Berechtigung beim Anbieter fehlt",
+    "wizard.server.managed.pause.failure.quota":
+      "Kontingent des Anbieters erreicht",
+    "wizard.server.managed.pause.failure.rateLimit":
+      "Anfragelimit des Anbieters",
+    "wizard.server.managed.pause.failure.transient":
+      "Vorübergehender Fehler beim Anbieter",
+    "wizard.server.managed.pause.failure.timeout":
+      "Anbieter hat nicht rechtzeitig geantwortet",
+    "wizard.server.managed.pause.failure.partialCreate":
+      "Server nur teilweise erstellt",
+    "wizard.server.managed.pause.failure.cleanupRequired":
+      "Aufräumen nach fehlgeschlagener Erstellung nötig",
+    "wizard.server.managed.pause.failure.other":
+      "Fehler beim Anbieter",
+    "wizard.server.managed.pause.resumes":
+      "Geht weiter",
+    "wizard.server.managed.pause.resumesCaption":
+      "Zuerst läuft eine Erstellung als Test",
+    "wizard.server.managed.pause.recovery.wait":
+      "Wenn diese Erstellung fertig ist",
+    "wizard.server.managed.pause.recovery.reconcile":
+      "Nach der Prüfung",
+    "wizard.server.managed.pause.blocked":
+      "Neue Server bei {provider} sind vorerst pausiert.",
     "wizard.server.remote.connectionDetails": "Verbindungsdetails",
     "wizard.server.remote.connectionHint":
       "Gib die Adresse deines Geräts ein und wähle die Anmeldung.",

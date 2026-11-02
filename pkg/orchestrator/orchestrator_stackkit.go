@@ -36,6 +36,10 @@ func (o *Orchestrator) ConfigureStackKitCommander(sender jobs.StackKitCommandSen
 		controlplane.ServiceEventWriter
 		controlplane.ServiceEventReader
 	})
+	// A deployed node keeps its installed StackKits CLI until the owner-approved
+	// governed upgrade succeeded; commands address that release until then.
+	jobs.SetNodeStackKitReleaseReader(o.nodeStackKitRelease)
+	config.StackKitsTargets, _ = o.workerStore.(controlplane.WorkerStackKitsTargetRecorder)
 	jobs.RegisterStackKitLifecycleHandler(o.queue, config)
 	jobs.RegisterWorkloadRelocationHandler(o.queue, config)
 	jobs.RegisterDefaultHandlers(o.queue, o.provisionConfig(o.cfg.RuntimeActions))

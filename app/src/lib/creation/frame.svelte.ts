@@ -51,6 +51,11 @@ import {
 import { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
 import type { WizardIssue } from "#lib/wizard/validation-context.js";
 import { tr } from "#lib/i18n.svelte.js";
+import { managedProviders } from "#lib/wizard/managed-providers.js";
+import {
+  managedCreationPauses,
+  managedCreationScope,
+} from "./creation-pause.svelte";
 import type { CreationContext } from "./context";
 import {
   createCreationSession,
@@ -195,7 +200,16 @@ export class CreationFrame {
     this.#followOwner();
     this.#applyLaneDefaults(Boolean(restored));
     this.#followEverythingGoal();
+    this.#followCreationPause();
     this.#loadCatalog();
+  }
+
+  #followCreationPause() {
+    $effect(() => {
+      const scope = this.creationScope;
+      if (scope && this.context.auth.isAuthenticated)
+        untrack(() => void managedCreationPauses.refresh(scope));
+    });
   }
 
   #initialConfig(restored?: StackConfig, stored?: StackConfig): StackConfig {
@@ -319,6 +333,14 @@ export class CreationFrame {
     };
   })();
 
+  /** The managed provider and region a new server would use; read again when either changes. */
+  readonly creationScope = $derived(
+    this.facts.existingServer ? null : managedCreationScope(this.config),
+  );
+  readonly creationPause = $derived(
+    managedCreationPauses.get(this.creationScope),
+  );
+
   #ownerField(message: string): CreationIssueField {
     if (
       message === tr("wizard.login.profile.emailRequired") ||
@@ -350,6 +372,7 @@ export class CreationFrame {
       this.nav.current === this.lastStep &&
       !this.earlierStepIncomplete &&
       this.canGoNext &&
+      !managedCreationPauses.holds(this.creationScope) &&
       (this.facts.existingServer ||
         server.mode !== "hypervisor" ||
         isValidSubstrateGuest(server.substrate))
@@ -361,6 +384,13 @@ export class CreationFrame {
     if (onLast ? this.canDeploy : this.canGoNext) return "";
     if (onLast && this.earlierStepIncomplete)
       return tr("wizard.stepper.locked");
+    const pause = this.creationPause;
+    if (onLast && pause && pause.state !== "ready")
+      return tr("wizard.server.managed.pause.blocked", {
+        provider:
+          managedProviders.find((item) => item.value === pause.provider_id)
+            ?.label ?? pause.provider_id,
+      });
     return (
       this.stepIssues[0]?.message ?? tr("wizard.validation.stepIncomplete")
     );

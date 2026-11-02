@@ -224,6 +224,7 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	// services of the on_behalf_of owner); see inventory_internal_summary.go.
 	r.GET("/api/v1/internal/runtime/summary", h.httpInternalRuntimeSummary)
 	r.GET("/internal/v1/runtime/creation-pauses", h.httpInternalCreateProtection)
+	r.GET("/api/v1/runtime/creation-pauses", h.httpCreateProtection)
 	// Private Cloud monitoring reads next to the summary, behind the same
 	// servicecall guard and owner-scoped authorization; see
 	// inventory_internal_monitoring.go.
