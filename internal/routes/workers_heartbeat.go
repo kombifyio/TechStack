@@ -119,6 +119,7 @@ func (h workerRouteHandlers) heartbeatWithRuntimeAgent(e *httpx.Event, id string
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist server heartbeat", nil)
 	}
 	h.observeGuardPosture(e.Request.Context(), authCtx, req)
+	h.updateEvaluator.observe(authCtx.TenantID, id, req.RuntimeConvergence)
 	acceptedSamples := 0
 	if h.metricWriter != nil {
 		samples := workerHeartbeatSamplesFromStore(*updated, serverID, req, now)

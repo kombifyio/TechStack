@@ -23,6 +23,11 @@
   import { tr } from "#lib/i18n.svelte.js";
   import { NODE_GUIDES } from "#lib/docs-links.js";
   import InfoTip from "./InfoTip.svelte";
+  import ManagedCreationPauseNotice from "./ManagedCreationPauseNotice.svelte";
+  import {
+    managedCreationPauses,
+    managedCreationScope,
+  } from "#lib/creation/creation-pause.svelte.js";
 
   let {
     config = $bindable(),
@@ -49,6 +54,9 @@
       : offering?.region,
   );
 
+  const pauseScope = $derived(managedCreationScope(config));
+  const pause = $derived(managedCreationPauses.get(pauseScope));
+
   async function loadOfferings() {
     loading = true;
     loadFailed = false;
@@ -66,6 +74,13 @@
 </script>
 
 <div class="managed-options" data-testid="managed-provider-selector">
+  {#if pause && pause.state !== "ready" && pauseScope}
+    <ManagedCreationPauseNotice
+      {pause}
+      provider={provider?.label ?? pause.provider_id}
+      onrefresh={() => managedCreationPauses.refresh(pauseScope)}
+    />
+  {/if}
   <section class="server-summary">
     <header class="server-identity">
       {#if provider}

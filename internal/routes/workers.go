@@ -85,6 +85,9 @@ type WorkerRouteConfig struct {
 	// UserNotices admits the opt-in user_notification class: user-authored
 	// smart-home notices a node reports. Nil refuses them as unavailable.
 	UserNotices usernotice.Sink
+	// StackKitsUpdates is Techstack's StackKits update management of a node.
+	// Nil leaves updates unmanaged: no proposal and no automatic start.
+	StackKitsUpdates WorkerStackKitsUpdates
 }
 
 // WorkerAgentIdentityIssuer is the fail-closed bridge from one claimed
@@ -158,6 +161,8 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 		posture:              cfg.Posture,
 		telemetry:            cfg.Telemetry,
 		userNotices:          cfg.UserNotices,
+		stackKitsUpdates:     cfg.StackKitsUpdates,
+		updateEvaluator:      newStackKitsUpdateEvaluator(cfg.StackKitsUpdates),
 		entitlements:         cfg.Entitlements,
 		networkRebinder:      cfg.NetworkRebinder,
 		connectorReconciler:  cfg.ConnectorReconciler,
@@ -195,6 +200,8 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 	r.GET("/api/v1/workers/{id}/identity/upgrade", h.identityUpgradeStatus)
 	r.POST("/api/v1/workers/{id}/identity/upgrade/approve", h.identityUpgradeApprove).BindFunc(workerBodyBound(4 << 10))
 	r.POST("/api/v1/workers/{id}/identity/upgrade/reject", h.identityUpgradeReject).BindFunc(workerBodyBound(4 << 10))
+	r.GET("/api/v1/workers/{id}/stackkits-update", h.stackKitsUpdate)
+	r.PUT("/api/v1/workers/{id}/stackkits-update/behavior", h.setStackKitsUpdateBehavior).BindFunc(workerBodyBound(1 << 10))
 	r.POST("/api/v1/workers/{id}/tenant-handoff", h.confirmTenantHandoff).BindFunc(workerBodyBound(1 << 10))
 	r.POST("/api/v1/workers/tenant-handoffs/verify", h.verifyTenantHandoff).BindFunc(workerBodyBound(4 << 10))
 	r.POST("/api/v1/workers/{id}/reach", h.workerReach).BindFunc(h.workerAgentIngress(workerReachMaxBody))
@@ -227,6 +234,8 @@ type workerRouteHandlers struct {
 	posture                 WorkerPosture
 	telemetry               WorkerTelemetry
 	userNotices             usernotice.Sink
+	stackKitsUpdates        WorkerStackKitsUpdates
+	updateEvaluator         *stackKitsUpdateEvaluator
 	entitlements            EntitlementGate
 	credentialStore         controlplane.WorkerCredentialStore
 	enrollmentStore         controlplane.WorkerEnrollmentStore

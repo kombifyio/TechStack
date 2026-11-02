@@ -462,6 +462,45 @@ export const guardMessages = {
       "Waiting for the pairing command to run on the server.",
     "guard.ladder.bound.awaitingNext":
       "Run the command on the server. If it has expired, generate a new one.",
+    "guard.updates.title": "StackKits updates",
+    "guard.updates.runs": "Runs {version}",
+    "guard.updates.behavior.label": "Update behavior",
+    "guard.updates.behavior.hint":
+      "Security patches for apps on this server install right away, whatever you choose here.",
+    "guard.updates.behavior.approve": "Ask me (approve each update)",
+    "guard.updates.behavior.automatic": "Install updates automatically",
+    "guard.updates.available": "StackKits {version} is available",
+    "guard.updates.forUseCase": "For your {name}",
+    "guard.updates.other": "Also in this update",
+    "guard.updates.more.one": "{count} more change is in the changelog.",
+    "guard.updates.more.other": "{count} more changes are in the changelog.",
+    "guard.updates.noNotes": "The changelog lists what is new in this release.",
+    "guard.updates.changelog": "What's new in StackKits",
+    "guard.updates.approve": "Approve update",
+    "guard.updates.approveHint":
+      "The Guard saves a checkpoint, runs the update and rolls it back if it fails.",
+    "guard.updates.running": "Updating to {version}: {progress}%",
+    "guard.updates.started.automatic":
+      "Techstack started this update because this server installs updates automatically.",
+    "guard.updates.started.security":
+      "kombify installs this security patch without waiting for your approval.",
+    "guard.updates.security.badge": "Security patch",
+    "guard.updates.security.applied":
+      "Security patch {version}: kombify installs it on this server without waiting for your approval.",
+    "guard.updates.succeeded":
+      "Updated to {version}. The server switches to it within a few minutes.",
+    "guard.updates.failed":
+      "The update to {version} failed. The Guard rolled it back; this server still runs {installed}.",
+    "guard.updates.current": "This server runs the current StackKits release.",
+    "guard.updates.notRun":
+      "The update did not run on this server; nothing changed and it still runs {installed}.",
+    "guard.updates.loadFailed":
+      "The update state of this server could not be read.",
+    "guard.updates.kind.security": "Security",
+    "guard.updates.kind.added": "New",
+    "guard.updates.kind.fixed": "Fixed",
+    "guard.updates.kind.changed": "Changed",
+    "guard.updates.kind.reverted": "Reverted",
   },
 
   de: {
@@ -938,5 +977,47 @@ export const guardMessages = {
       "Warte darauf, dass der Kopplungsbefehl auf dem Server ausgeführt wird.",
     "guard.ladder.bound.awaitingNext":
       "Führe den Befehl auf dem Server aus. Ist er abgelaufen, erzeuge einen neuen.",
+    "guard.updates.title": "StackKits-Updates",
+    "guard.updates.runs": "Läuft mit {version}",
+    "guard.updates.behavior.label": "Update-Verhalten",
+    "guard.updates.behavior.hint":
+      "Sicherheitspatches für Apps auf diesem Server werden sofort installiert, egal was du hier wählst.",
+    "guard.updates.behavior.approve": "Mich fragen (jedes Update freigeben)",
+    "guard.updates.behavior.automatic": "Updates automatisch installieren",
+    "guard.updates.available": "StackKits {version} ist verfügbar",
+    "guard.updates.forUseCase": "Für deine {name}",
+    "guard.updates.other": "Außerdem in diesem Update",
+    "guard.updates.more.one": "{count} weitere Änderung steht im Changelog.",
+    "guard.updates.more.other":
+      "{count} weitere Änderungen stehen im Changelog.",
+    "guard.updates.noNotes":
+      "Der Changelog zeigt, was in diesem Release neu ist.",
+    "guard.updates.changelog": "Neu in StackKits",
+    "guard.updates.approve": "Update freigeben",
+    "guard.updates.approveHint":
+      "Der Guard legt einen Prüfpunkt an, führt das Update aus und setzt es zurück, wenn es fehlschlägt.",
+    "guard.updates.running": "Update auf {version}: {progress} %",
+    "guard.updates.started.automatic":
+      "Techstack hat dieses Update gestartet, weil dieser Server Updates automatisch installiert.",
+    "guard.updates.started.security":
+      "kombify installiert diesen Sicherheitspatch, ohne auf deine Freigabe zu warten.",
+    "guard.updates.security.badge": "Sicherheitspatch",
+    "guard.updates.security.applied":
+      "Sicherheitspatch {version}: kombify installiert ihn auf diesem Server, ohne auf deine Freigabe zu warten.",
+    "guard.updates.succeeded":
+      "Auf {version} aktualisiert. Der Server wechselt in wenigen Minuten darauf.",
+    "guard.updates.failed":
+      "Das Update auf {version} ist fehlgeschlagen. Der Guard hat es zurückgesetzt; dieser Server läuft weiter mit {installed}.",
+    "guard.updates.current":
+      "Dieser Server läuft mit dem aktuellen StackKits-Release.",
+    "guard.updates.notRun":
+      "Das Update ist auf diesem Server nicht gelaufen; nichts wurde geändert, er läuft weiter mit {installed}.",
+    "guard.updates.loadFailed":
+      "Der Update-Status dieses Servers konnte nicht gelesen werden.",
+    "guard.updates.kind.security": "Sicherheit",
+    "guard.updates.kind.added": "Neu",
+    "guard.updates.kind.fixed": "Behoben",
+    "guard.updates.kind.changed": "Geändert",
+    "guard.updates.kind.reverted": "Zurückgenommen",
   },
 } as const;

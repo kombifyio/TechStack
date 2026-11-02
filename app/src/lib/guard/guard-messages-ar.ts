@@ -427,4 +427,42 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.ladder.bound.awaiting": "في انتظار تشغيل أمر الإقران على الخادم.",
   "guard.ladder.bound.awaitingNext":
     "شغّل الأمر على الخادم. إن انتهت صلاحيته فأنشئ أمرًا جديدًا.",
+  "guard.updates.title": "تحديثات StackKits",
+  "guard.updates.runs": "يعمل بالإصدار {version}",
+  "guard.updates.behavior.label": "طريقة التحديث",
+  "guard.updates.behavior.hint":
+    "تُثبَّت تصحيحات الأمان لتطبيقات هذا الخادم فورًا، مهما كان اختيارك هنا.",
+  "guard.updates.behavior.approve": "اسألني (الموافقة على كل تحديث)",
+  "guard.updates.behavior.automatic": "تثبيت التحديثات تلقائيًا",
+  "guard.updates.available": "يتوفر StackKits {version}",
+  "guard.updates.forUseCase": "لـ {name} لديك",
+  "guard.updates.other": "أيضًا في هذا التحديث",
+  "guard.updates.more.one": "يوجد تغيير إضافي واحد ({count}) في سجل التغييرات.",
+  "guard.updates.more.other": "توجد {count} تغييرات إضافية في سجل التغييرات.",
+  "guard.updates.noNotes": "يعرض سجل التغييرات الجديد في هذا الإصدار.",
+  "guard.updates.changelog": "الجديد في StackKits",
+  "guard.updates.approve": "الموافقة على التحديث",
+  "guard.updates.approveHint":
+    "يحفظ Guard نقطة استعادة، ثم ينفّذ التحديث ويتراجع عنه إذا فشل.",
+  "guard.updates.running": "جارٍ التحديث إلى {version}: {progress}%",
+  "guard.updates.started.automatic":
+    "بدأ Techstack هذا التحديث لأن هذا الخادم يثبّت التحديثات تلقائيًا.",
+  "guard.updates.started.security":
+    "تثبّت kombify تصحيح الأمان هذا دون انتظار موافقتك.",
+  "guard.updates.security.badge": "تصحيح أمان",
+  "guard.updates.security.applied":
+    "تصحيح الأمان {version}: تثبّته kombify على هذا الخادم دون انتظار موافقتك.",
+  "guard.updates.succeeded":
+    "تم التحديث إلى {version}. ينتقل الخادم إليه خلال دقائق قليلة.",
+  "guard.updates.failed":
+    "فشل التحديث إلى {version}. تراجع Guard عنه؛ ولا يزال هذا الخادم يعمل بالإصدار {installed}.",
+  "guard.updates.current": "يعمل هذا الخادم بأحدث إصدار من StackKits.",
+  "guard.updates.notRun":
+    "لم يُنفَّذ التحديث على هذا الخادم؛ لم يتغير شيء ولا يزال يعمل بالإصدار {installed}.",
+  "guard.updates.loadFailed": "تعذّرت قراءة حالة التحديث لهذا الخادم.",
+  "guard.updates.kind.security": "أمان",
+  "guard.updates.kind.added": "جديد",
+  "guard.updates.kind.fixed": "تم الإصلاح",
+  "guard.updates.kind.changed": "تم التغيير",
+  "guard.updates.kind.reverted": "تم التراجع",
 };

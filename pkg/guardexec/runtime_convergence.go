@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,7 +159,7 @@ func (c *runtimeConvergence) converge(ctx context.Context, cfg agentpkg.StackKit
 		if err := clear(); err != nil {
 			return zero, err
 		}
-		return agentpkg.StackKitRuntimeConvergenceResult{Version: description.Version, SHA256: description.ArchiveSHA256}, nil
+		return installedRuntime(description, nil), nil
 	}
 	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(scope+"\x00"+admission.IdentitySHA256)))
 	if state.Identity != "" && state.Identity != identity {
@@ -184,6 +185,20 @@ func (c *runtimeConvergence) converge(ctx context.Context, cfg agentpkg.StackKit
 		}
 		defer file.Close()
 		return guardrelease.VerifyRuntimeBundle(admission.Runtime, file)
+	}
+	if state.SHA256 != "" && description.Valid && description.InstalledDigest != state.SHA256 {
+		// A retained candidate installs only while Techstack still serves it.
+		bundle, err := agentpkg.FetchStackKitRuntimeBundle(ctx, cfg, description.InstalledDigest)
+		if err != nil {
+			return fail(err)
+		}
+		if bundle.NotModified {
+			if err := clear(); err != nil {
+				return zero, err
+			}
+			return installedRuntime(description, withheldRuntime(admission, description)), nil
+		}
+		_ = os.Remove(bundle.Path)
 	}
 	if state.SHA256 != "" {
 		digest, err := fileDigest(candidatePath)
@@ -211,11 +226,15 @@ func (c *runtimeConvergence) converge(ctx context.Context, cfg agentpkg.StackKit
 			return fail(err)
 		}
 		if bundle.NotModified {
-			if !admission.Signed && description.Valid {
+			// Techstack serves the node its approved release; a signed newer
+			// runtime it withholds waits for the owner's approval. An installed
+			// tree that claims the admitted release but fails its signed
+			// identity stays refused.
+			if description.Valid && !(admission.Signed && stackKitReleaseTag(admission.Version) == stackKitReleaseTag(description.Version)) {
 				if err := clear(); err != nil {
 					return zero, err
 				}
-				return agentpkg.StackKitRuntimeConvergenceResult{Version: description.Version, SHA256: description.ArchiveSHA256}, nil
+				return installedRuntime(description, withheldRuntime(admission, description)), nil
 			}
 			return fail(errors.New("control plane reports current runtime without matching authenticated installed tree"))
 		}
@@ -253,7 +272,7 @@ func (c *runtimeConvergence) converge(ctx context.Context, cfg agentpkg.StackKit
 		if err := clear(); err != nil {
 			return zero, err
 		}
-		return agentpkg.StackKitRuntimeConvergenceResult{Version: after.Version, SHA256: after.ArchiveSHA256}, nil
+		return installedRuntime(after, nil), nil
 	}
 	if installErr == nil {
 		installErr = errors.New("runtime install has no independent committed readback")
@@ -272,4 +291,26 @@ func (c *runtimeConvergence) converge(ctx context.Context, cfg agentpkg.StackKit
 		return zero, fmt.Errorf("%w; persist outcome: %v", installErr, err)
 	}
 	return zero, &runtimeRetry{After: state.NextAttempt, Cause: installErr}
+}
+
+// installedRuntime is the installed StackKits identity a description read
+// back, with the published release Techstack withholds until approval, if any.
+func installedRuntime(description RuntimeDescription, update *agentpkg.StackKitRuntimeUpdate) agentpkg.StackKitRuntimeConvergenceResult {
+	return agentpkg.StackKitRuntimeConvergenceResult{
+		Version: description.Version, SHA256: description.ArchiveSHA256, IndexSHA256: description.IndexSHA256,
+		OS: description.PlatformOS, Arch: description.PlatformArch, UpdateAvailable: update,
+	}
+}
+
+// withheldRuntime is the signed published release Techstack has not served
+// the node yet.
+func withheldRuntime(admission RuntimeAdmission, description RuntimeDescription) *agentpkg.StackKitRuntimeUpdate {
+	if !admission.Signed || admission.Version == "" || stackKitReleaseTag(admission.Version) == stackKitReleaseTag(description.Version) {
+		return nil
+	}
+	return &agentpkg.StackKitRuntimeUpdate{Version: stackKitReleaseTag(admission.Version), SHA256: admission.Runtime.ArchiveSHA256}
+}
+
+func stackKitReleaseTag(version string) string {
+	return "v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
 }

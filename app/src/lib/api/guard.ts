@@ -536,3 +536,86 @@ export async function decideGuardIdentityUpgrade(
 export function denialReason(details: unknown): string | undefined {
   return text(record(details)?.reason);
 }
+
+// ---------------------------------------------------------------------------
+// StackKits updates (D-2026-11-02-03): Techstack proposes and starts them, the
+// Guard runs the governed upgrade and rolls it back on failure.
+// ---------------------------------------------------------------------------
+
+export type StackKitsUpdateBehavior = "approve" | "automatic";
+
+export interface StackKitsUpdateChange {
+  version: string;
+  /** `security`, `added`, `fixed`, `changed` or `reverted`. */
+  kind: string;
+  scope?: string;
+  text: string;
+}
+
+export interface StackKitsUpdateProposal {
+  installed: string;
+  available: string;
+  changelog_url: string;
+  /** Changes to the use cases activated on this server, those first. */
+  highlights: {
+    use_case_id: string;
+    use_case_title: string;
+    changes: StackKitsUpdateChange[];
+  }[];
+  /** The rest in short; `other_changes_total` counts all of them. */
+  other_changes: StackKitsUpdateChange[];
+  other_changes_total: number;
+  security?: {
+    affected_apps: string[];
+    /** Techstack applies the update without approval on this server. */
+    affects_node: boolean;
+    changes: StackKitsUpdateChange[];
+  };
+}
+
+export interface StackKitsUpdateView {
+  worker_id: string;
+  stack_id: string;
+  behavior: StackKitsUpdateBehavior;
+  installed?: string;
+  available?: string;
+  /** The public StackKits changelog. */
+  changelog_url?: string;
+  proposal?: StackKitsUpdateProposal;
+  /** The update Techstack started without a click. */
+  started?: {
+    version: string;
+    trigger: "automatic" | "security";
+    job_id?: string;
+    started_at: string;
+    /** What a security patch fixed and why, from its release notes. */
+    patched?: { app?: string; text: string }[];
+  };
+  /** The last governed upgrade; a failed one was rolled back. */
+  last_upgrade?: {
+    version: string;
+    outcome: "succeeded" | "failed";
+    job_id?: string;
+    recorded_at: string;
+  };
+}
+
+export async function getStackKitsUpdate(
+  workerId: string,
+): Promise<StackKitsUpdateView> {
+  const res = await fetchApi<StackKitsUpdateView>(
+    `/api/v1/workers/${encodeURIComponent(workerId)}/stackkits-update`,
+  );
+  return res.data;
+}
+
+export async function setStackKitsUpdateBehavior(
+  workerId: string,
+  behavior: StackKitsUpdateBehavior,
+): Promise<StackKitsUpdateView> {
+  const res = await fetchApi<StackKitsUpdateView>(
+    `/api/v1/workers/${encodeURIComponent(workerId)}/stackkits-update/behavior`,
+    { method: "PUT", body: JSON.stringify({ behavior }) },
+  );
+  return res.data;
+}

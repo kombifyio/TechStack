@@ -40,18 +40,26 @@ type StackKitRuntimeBootstrapConfig struct {
 type StackKitRuntimeConvergenceResult struct {
 	Version string
 	SHA256  string
+	// IndexSHA256, OS and Arch complete the installed release pin, which a
+	// command must name while an update waits for approval.
+	IndexSHA256 string
+	OS          string
+	Arch        string
+	// UpdateAvailable is the published runtime Techstack withholds until the
+	// owner approved the governed upgrade.
+	UpdateAvailable *StackKitRuntimeUpdate
 }
 
-// EnsureRuntime converges an enrolled Agent to the exact bundle currently
-// published by its authenticated Techstack control plane. A locally valid but
-// older release is not sufficient evidence that the Agent is current.
+// EnsureRuntime converges an enrolled Agent to the bundle its authenticated
+// Techstack control plane serves it: the node's approved StackKits release,
+// which is the published one only once the owner approved it.
 func (executor *StackKitExecutor) EnsureRuntime(ctx context.Context, cfg StackKitRuntimeBootstrapConfig) error {
 	_, err := executor.EnsureRuntimeEvidence(ctx, cfg)
 	return err
 }
 
-// EnsureRuntimeEvidence converges the runtime and returns the exact published
-// StackKits artifact identity that was revalidated after activation.
+// EnsureRuntimeEvidence returns the exact StackKits artifact identity that is
+// installed after convergence, and the published release still withheld.
 func (executor *StackKitExecutor) EnsureRuntimeEvidence(ctx context.Context, cfg StackKitRuntimeBootstrapConfig) (StackKitRuntimeConvergenceResult, error) {
 	if executor == nil {
 		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits executor is required")
@@ -561,7 +569,10 @@ func (executor *StackKitExecutor) currentStackKitRuntimeEvidence() (StackKitRunt
 		return StackKitRuntimeConvergenceResult{}, err
 	}
 	receipt := release.Receipt()
-	return StackKitRuntimeConvergenceResult{Version: receipt.Version, SHA256: receipt.ArchiveSHA256}, nil
+	return StackKitRuntimeConvergenceResult{
+		Version: receipt.Version, SHA256: receipt.ArchiveSHA256,
+		IndexSHA256: receipt.IndexSHA256, OS: receipt.Platform.OS, Arch: receipt.Platform.Arch,
+	}, nil
 }
 
 func isLoopbackHost(host string) bool {

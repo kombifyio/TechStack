@@ -136,6 +136,7 @@ func (o *Orchestrator) RunStackKitIdentityCommand(ctx context.Context, request S
 	if sender == nil {
 		return nil, ErrStackKitLifecycleUnavailable
 	}
+	jobs.AddressNodeStackKitRelease(ctx, request.TenantID, binding.AgentID, command)
 	var result *agentpb.StackKitResult
 	if scoped, ok := sender.(tenantIdentityCommandSender); ok {
 		result, err = scoped.SendStackKitCommandForTenant(ctx, request.TenantID, binding.AgentID, command)

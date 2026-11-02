@@ -742,6 +742,7 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 		NetworkRebinder:      deps.orch,
 		ConnectorReconciler:  deps.orch,
 		UserNotices:          userNoticeSink(deps),
+		StackKitsUpdates:     deps.orch,
 	})
 	routes.RegisterStackOperationsRoutesWithStores(router, deps.monitor.queryBackend, deps.monitor.status, deps.monitor.alertEngine, deps.grpc.server, routes.StackOperationsRouteStores{
 		Stacks:   stackStores.Stacks,

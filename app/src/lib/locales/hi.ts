@@ -1075,6 +1075,50 @@ export const hi: Record<string, string> = {
     "आपकी मौजूदा VPS पहुँच में शामिल नहीं",
   "wizard.server.managed.moreOptionsPending":
     "अतिरिक्त सर्वर आकार और स्थान यहाँ चुनने के लिए अभी उपलब्ध नहीं हैं।",
+  "wizard.server.managed.pause.title.paused":
+    "{provider} पर नए सर्वर रोके गए हैं",
+  "wizard.server.managed.pause.title.probeInFlight":
+    "{provider} पर एक सर्वर बनाया जा रहा है",
+  "wizard.server.managed.pause.title.outcomeUnknown":
+    "{provider} पर पिछले सर्वर की जाँच हो रही है",
+  "wizard.server.managed.pause.lead":
+    "आपके मौजूदा सर्वर चलते रहते हैं, और आप उन्हें अब भी खोल, रोक और हटा सकते हैं।",
+  "wizard.server.managed.pause.refresh":
+    "फिर से जाँचें",
+  "wizard.server.managed.pause.failures":
+    "लगातार विफल निर्माण",
+  "wizard.server.managed.pause.failuresCaption":
+    "{minutes} मिनट में {threshold} विफलताएँ नए सर्वर रोक देती हैं",
+  "wizard.server.managed.pause.lastFailure":
+    "पिछली विफलता",
+  "wizard.server.managed.pause.failure.auth":
+    "प्रदाता पर साइन-इन विफल रहा",
+  "wizard.server.managed.pause.failure.permission":
+    "प्रदाता पर अनुमति नहीं है",
+  "wizard.server.managed.pause.failure.quota":
+    "प्रदाता का कोटा पूरा हो गया",
+  "wizard.server.managed.pause.failure.rateLimit":
+    "प्रदाता की दर सीमा",
+  "wizard.server.managed.pause.failure.transient":
+    "प्रदाता की अस्थायी त्रुटि",
+  "wizard.server.managed.pause.failure.timeout":
+    "प्रदाता ने समय पर जवाब नहीं दिया",
+  "wizard.server.managed.pause.failure.partialCreate":
+    "सर्वर केवल आंशिक रूप से बना",
+  "wizard.server.managed.pause.failure.cleanupRequired":
+    "विफल निर्माण के बाद सफ़ाई ज़रूरी है",
+  "wizard.server.managed.pause.failure.other":
+    "प्रदाता त्रुटि",
+  "wizard.server.managed.pause.resumes":
+    "फिर से शुरू",
+  "wizard.server.managed.pause.resumesCaption":
+    "पहले एक निर्माण परीक्षण के रूप में चलता है",
+  "wizard.server.managed.pause.recovery.wait":
+    "जब वह निर्माण पूरा हो",
+  "wizard.server.managed.pause.recovery.reconcile":
+    "जाँच के बाद",
+  "wizard.server.managed.pause.blocked":
+    "{provider} पर नए सर्वर अभी रोके गए हैं।",
   "wizard.server.remote.connectionDetails": "कनेक्शन का ब्योरा",
   "wizard.server.remote.connectionHint":
     "अपने डिवाइस का पता दर्ज कीजिए और चुनिए कि साइन-इन कैसे करना है।",

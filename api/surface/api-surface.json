@@ -3,7 +3,7 @@
   "product": "techstack",
   "source": {
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "52bf4979e4a6794c0206162d98ffb6d2c787e58e23d705d11aa8c9edb9334d6c"
+    "sha256": "e4d7e3941fb1f4080ccb8d0110ce85c64fb46289a40ce66c218a0a8fbd43c207"
   },
   "envelope": "data",
   "cli": {
@@ -15865,6 +15865,141 @@
       "mcp": {
         "toolName": "get_managed_service_logs",
         "title": "Read the latest bounded, redacted StackKits service log page",
+        "requiredCapability": "techstack.inventory.read",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "derived": true
+      }
+    },
+    {
+      "operationId": "getManagedCreationPause",
+      "method": "GET",
+      "path": "/api/v1/runtime/creation-pauses",
+      "summary": "Read whether new managed servers are paused",
+      "description": "Returns the create protection of the signed-in account for one managed\nprovider and region: ready, paused after repeated qualifying provider\nfailures (with the failure count, last failure class and the time\ncreation resumes), or held while one create is still in flight or\nbeing reconciled. Only creating is held; reading, stopping and\ndeleting existing servers stay available.",
+      "tags": [
+        "Monthly Runtime"
+      ],
+      "arguments": [
+        {
+          "name": "provider_id",
+          "in": "query",
+          "wireName": "provider_id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "region",
+          "in": "query",
+          "wireName": "region",
+          "description": "The requested placement; omitted for a provider with one pool.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "output": {
+        "contentType": "application/json",
+        "envelope": "data",
+        "schema": {
+          "properties": {
+            "consecutive_failures": {
+              "type": "integer"
+            },
+            "last_failure": {
+              "properties": {
+                "at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "at"
+              ],
+              "type": "object"
+            },
+            "policy": {
+              "properties": {
+                "cooldown_seconds": {
+                  "type": "integer"
+                },
+                "threshold": {
+                  "type": "integer"
+                },
+                "window_seconds": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "threshold",
+                "window_seconds",
+                "cooldown_seconds"
+              ],
+              "type": "object"
+            },
+            "provider_id": {
+              "type": "string"
+            },
+            "reason_code": {
+              "type": "string"
+            },
+            "recovery": {
+              "enum": [
+                "none",
+                "automatic_after_cooldown",
+                "wait_for_current_create",
+                "reconcile_existing_create"
+              ],
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "retry_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "ready",
+                "paused",
+                "probe_in_flight",
+                "outcome_unknown"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider_id",
+            "region",
+            "state",
+            "reason_code",
+            "consecutive_failures",
+            "recovery",
+            "policy"
+          ],
+          "type": "object"
+        }
+      },
+      "cli": {
+        "command": [
+          "monthly-runtimes",
+          "creation-pause"
+        ]
+      },
+      "mcp": {
+        "toolName": "get_managed_creation_pause",
+        "title": "Read whether new managed servers are paused",
         "requiredCapability": "techstack.inventory.read",
         "annotations": {
           "readOnlyHint": true,

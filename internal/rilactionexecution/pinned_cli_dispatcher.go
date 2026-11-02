@@ -57,6 +57,7 @@ func (d *PinnedCLIDispatcher) Execute(ctx context.Context, request rilaction.Req
 		WorkingDirectory: "/opt/stackkit", SpecPath: "stack-spec.yaml", OutputDirectory: "deploy",
 		TimeoutSeconds: 240, Release: grpcserver.StackKitReleasePinFor(*release), Offline: true,
 	}
+	jobs.AddressNodeStackKitRelease(ctx, request.TenantID, request.Target.RuntimeInstanceRef, command)
 	var result *agentpb.StackKitResult
 	var dispatchErr error
 	if scoped, ok := d.sender.(interface {

@@ -1553,6 +1553,38 @@ export async function getMonthlyRuntimeOfferings(): Promise<
   );
 }
 
+/** Techstack's create protection for one provider and region of the account. */
+export interface ManagedCreationPause {
+  provider_id: string;
+  region: string;
+  state: "ready" | "paused" | "probe_in_flight" | "outcome_unknown";
+  reason_code: string;
+  consecutive_failures: number;
+  retry_at?: string;
+  last_failure?: { code: string; at: string };
+  recovery:
+    | "none"
+    | "automatic_after_cooldown"
+    | "wait_for_current_create"
+    | "reconcile_existing_create";
+  policy: {
+    threshold: number;
+    window_seconds: number;
+    cooldown_seconds: number;
+  };
+}
+
+export async function getManagedCreationPause(
+  providerId: string,
+  region: string,
+): Promise<ManagedCreationPause> {
+  const query = new URLSearchParams({ provider_id: providerId, region });
+  return apiRequest<ManagedCreationPause>(
+    "GET",
+    `/api/v1/runtime/creation-pauses?${query}`,
+  );
+}
+
 export async function getMonthlyRuntimeOperations(
   leaseId: string,
   tenantId?: string,

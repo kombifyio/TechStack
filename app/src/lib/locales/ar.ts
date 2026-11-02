@@ -1056,6 +1056,50 @@ export const ar: Record<string, string> = {
     "غير مشمول في وصولك الحالي إلى VPS",
   "wizard.server.managed.moreOptionsPending":
     "أحجام ومواقع الخوادم الإضافية غير متاحة للاختيار هنا بعد.",
+  "wizard.server.managed.pause.title.paused":
+    "الخوادم الجديدة لدى {provider} متوقفة مؤقتًا",
+  "wizard.server.managed.pause.title.probeInFlight":
+    "يجري إنشاء خادم لدى {provider}",
+  "wizard.server.managed.pause.title.outcomeUnknown":
+    "جارٍ التحقق من خادم سابق لدى {provider}",
+  "wizard.server.managed.pause.lead":
+    "تظل خوادمك الحالية تعمل، ويمكنك فتحها وإيقافها وحذفها.",
+  "wizard.server.managed.pause.refresh":
+    "تحقّق مرة أخرى",
+  "wizard.server.managed.pause.failures":
+    "عمليات إنشاء فاشلة متتالية",
+  "wizard.server.managed.pause.failuresCaption":
+    "{threshold} خلال {minutes} دقيقة توقف الخوادم الجديدة",
+  "wizard.server.managed.pause.lastFailure":
+    "آخر فشل",
+  "wizard.server.managed.pause.failure.auth":
+    "فشل تسجيل الدخول لدى المزوّد",
+  "wizard.server.managed.pause.failure.permission":
+    "إذن مفقود لدى المزوّد",
+  "wizard.server.managed.pause.failure.quota":
+    "تم بلوغ حصة المزوّد",
+  "wizard.server.managed.pause.failure.rateLimit":
+    "حدّ معدل الطلبات لدى المزوّد",
+  "wizard.server.managed.pause.failure.transient":
+    "خطأ مؤقت لدى المزوّد",
+  "wizard.server.managed.pause.failure.timeout":
+    "لم يستجب المزوّد في الوقت المحدد",
+  "wizard.server.managed.pause.failure.partialCreate":
+    "تم إنشاء الخادم جزئيًا فقط",
+  "wizard.server.managed.pause.failure.cleanupRequired":
+    "يلزم تنظيف بعد إنشاء فاشل",
+  "wizard.server.managed.pause.failure.other":
+    "خطأ لدى المزوّد",
+  "wizard.server.managed.pause.resumes":
+    "يُستأنف",
+  "wizard.server.managed.pause.resumesCaption":
+    "يُجرى إنشاء واحد أولًا كاختبار",
+  "wizard.server.managed.pause.recovery.wait":
+    "عند انتهاء ذلك الإنشاء",
+  "wizard.server.managed.pause.recovery.reconcile":
+    "بعد التحقق",
+  "wizard.server.managed.pause.blocked":
+    "الخوادم الجديدة لدى {provider} متوقفة مؤقتًا الآن.",
   "wizard.server.remote.connectionDetails": "تفاصيل الاتصال",
   "wizard.server.remote.connectionHint":
     "أدخل عنوان جهازك واختر طريقة تسجيل الدخول.",

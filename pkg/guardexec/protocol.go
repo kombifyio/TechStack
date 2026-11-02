@@ -147,6 +147,9 @@ type RuntimeDescription struct {
 	Valid           bool   `json:"valid"`
 	Version         string `json:"version,omitempty"`
 	ArchiveSHA256   string `json:"archive_sha256,omitempty"`
+	IndexSHA256     string `json:"index_sha256,omitempty"`
+	PlatformOS      string `json:"platform_os,omitempty"`
+	PlatformArch    string `json:"platform_arch,omitempty"`
 }
 
 // RuntimeInstallParams hands a downloaded bundle to the executor. The path names
