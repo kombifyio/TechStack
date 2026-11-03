@@ -76,6 +76,22 @@
     {
       "version": "179_household_inventory_helper_acl.sql",
       "sha256": "534577fbfb108c0ba75403ba5ce83d030adcc7a1347151984085d0f55d9e6aa7"
+    },
+    {
+      "version": "180_ril_decision_proposal.sql",
+      "sha256": "ad6ea6a56bc791e7f38d176ea85e69c92c152156690425175ecf1f1e6712f3d7"
+    },
+    {
+      "version": "181_ril_encrypted_dispatch_proof.sql",
+      "sha256": "1f136be75299c286079566951b363bee52d04cc071e7bb408db871aeabdd4e0a"
+    },
+    {
+      "version": "182_ril_issued_lease_custody.sql",
+      "sha256": "7274c97d2bb5ddb66aea49fc8f87ca4d50bf5043fbbf7ccddf103730d426a3f6"
+    },
+    {
+      "version": "183_ril_queue_proof_expiry.sql",
+      "sha256": "a86e7b7427aa844258114824ff044879356e911a8e8e5597db05a8d1259cf874"
     }
   ],
   "database_target": "core",

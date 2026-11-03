@@ -22,6 +22,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/ril/nodeproof"
 	"github.com/kombifyio/techstack/pkg/secrets"
 	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
@@ -132,6 +133,15 @@ func (executor *StackKitExecutor) validate() error {
 	return err
 }
 
+// The privileged executor reads only this host-configured public key custody;
+// a command or JWS never supplies its verifier key or a key URL.
+func rilPurposeKeyFile() string {
+	if path := strings.TrimSpace(os.Getenv("TECHSTACK_RIL_PURPOSE_KEYS_FILE")); path != "" {
+		return path
+	}
+	return "/etc/techstack/ril-purpose-keys.json"
+}
+
 // Execute validates one typed command, revalidates its exact published
 // release, executes the fixed operation, and returns bounded/redacted
 // command-result and rollout-event data.
@@ -161,6 +171,15 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 	timeout := defaultStackKitCommandTimeout
 	if command != nil && command.TimeoutSeconds > 0 {
 		timeout = time.Duration(command.TimeoutSeconds) * time.Second
+	}
+	if command != nil && command.RilExecutionProof != nil {
+		deadline, err := nodeproof.Verify(ctx, command, rilPurposeKeyFile(), time.Now().UTC())
+		if err != nil {
+			return finishStackKitResult(result, command, nil, nil, err, started)
+		}
+		var cancelAuthority context.CancelFunc
+		ctx, cancelAuthority = context.WithDeadline(ctx, deadline)
+		defer cancelAuthority()
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -206,6 +225,16 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		process.Stdin = bytes.NewReader(command.RelocationPlanJson)
 	}
 	process.Env = stackKitChildEnvironment(os.Environ())
+	// This value comes from the privileged executor's own configuration, never
+	// from the command body. The child independently checks that its workspace
+	// and evidence remain beneath this root before publishing a RIL profile.
+	if os.Geteuid() == 0 {
+		workspaceRoot, err := filepath.Abs(filepath.Clean(stackKitWorkspaceRoot()))
+		if err != nil {
+			return finishStackKitResult(result, command, nil, nil, fmt.Errorf("resolve RIL workspace root: %w", err), started)
+		}
+		process.Env = append(process.Env, "TECHSTACK_RIL_WORKSPACE_ROOT="+workspaceRoot)
+	}
 	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
 		// INIT consumes only this non-secret mode marker. Its native image
 		// admission enforces the CUE-owned managed target; prepare's separate
@@ -235,6 +264,17 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		}()
 	} else {
 		close(silenceStopped)
+	}
+	// Recheck immediately before the OS process boundary after any queue,
+	// runtime lock or release preparation. A timer also kills the subprocess.
+	if command.RilExecutionProof != nil {
+		if _, err := nodeproof.Verify(runCtx, command, rilPurposeKeyFile(), time.Now().UTC()); err != nil {
+			close(eventsDone)
+			<-eventsStopped
+			<-silenceStopped
+			stderrLogs.Close()
+			return finishStackKitResult(result, command, nil, nil, err, started)
+		}
 	}
 	runErr := process.Start()
 	if runErr == nil {
@@ -759,7 +799,7 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY:
 		return stackKitApplyArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY:
-		return stackKitVerifyArgs(command), nil
+		return stackKitVerifyArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_UPGRADE:
 		return stackKitUpgradeArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT:
@@ -1001,12 +1041,27 @@ func stackKitApplyArgs(command *agentpb.StackKitCommand) ([]string, error) {
 	}, nil
 }
 
-func stackKitVerifyArgs(command *agentpb.StackKitCommand) []string {
+func stackKitVerifyArgs(command *agentpb.StackKitCommand) ([]string, error) {
 	args := []string{"verify", "--json"}
+	if command.ExpectedPlanHash != "" {
+		args = append(args, "--expected-plan-hash", command.ExpectedPlanHash)
+	}
+	if command.RilExecutionProof != nil {
+		var effect struct {
+			Primitive struct {
+				ID           string `json:"id"`
+				ContractHash string `json:"contractHash"`
+			} `json:"primitive"`
+		}
+		if json.Unmarshal(command.RilExecutionProof.EffectJson, &effect) != nil || effect.Primitive.ID != "verify-stackkit-state" || !stackKitExpectedSpecHashPattern.MatchString(effect.Primitive.ContractHash) {
+			return nil, fmt.Errorf("RIL primitive contract invalid")
+		}
+		args = append(args, "--expected-ril-primitive-hash", effect.Primitive.ContractHash)
+	}
 	if command.Offline {
 		args = append(args, "--offline")
 	}
-	return args
+	return args, nil
 }
 
 func stackKitUpgradeArgs(command *agentpb.StackKitCommand) ([]string, error) {
@@ -1290,6 +1345,18 @@ func attestPinnedCLILocalEvidence(result *agentpb.StackKitResult, command *agent
 	result.PinnedCliEvidenceVerified = false
 	result.PinnedCliEvidenceSha256 = ""
 	if command == nil || !result.Success || len(result.CommandResultJson) == 0 {
+		return
+	}
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY && command.ExpectedPlanHash != "" {
+		digest := sha256.Sum256(result.CommandResultJson)
+		proof := proto.Clone(result).(*agentpb.StackKitResult)
+		proof.PinnedCliEvidenceVerified = true
+		proof.PinnedCliEvidenceSha256 = "sha256:" + hex.EncodeToString(digest[:])
+		if _, err := stackkitcommand.ParseVerifyPlanEvidence(command, proof); err != nil {
+			return
+		}
+		result.PinnedCliEvidenceVerified = true
+		result.PinnedCliEvidenceSha256 = proof.PinnedCliEvidenceSha256
 		return
 	}
 	if stackkitcommand.IsApplicationConnectorOperation(command.Operation) {

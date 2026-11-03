@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -288,10 +289,15 @@ func parseGatewayDenial(status int, body []byte) *GatewayError {
 	denial := &GatewayError{Status: status, Retryable: status >= 500 || status == http.StatusTooManyRequests}
 	var envelope struct {
 		ReasonCode string `json:"reason_code"`
+		Reason     string `json:"reason"`
 		Retryable  *bool  `json:"retryable"`
 	}
 	if json.Unmarshal(body, &envelope) == nil {
-		denial.ReasonCode = strings.TrimPrefix(envelope.ReasonCode, gatewayReasonPrefix)
+		reason := envelope.ReasonCode
+		if reason == "" && regexp.MustCompile("^[a-z0-9_-]{1,128}$").MatchString(envelope.Reason) {
+			reason = envelope.Reason
+		}
+		denial.ReasonCode = strings.TrimPrefix(reason, gatewayReasonPrefix)
 		if envelope.Retryable != nil {
 			denial.Retryable = *envelope.Retryable
 		}

@@ -25,6 +25,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardcompat"
+	"github.com/kombifyio/techstack/pkg/ril/nodeproof"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
@@ -311,6 +312,7 @@ func (c *Client) runControlLoop(ctx context.Context) {
 			_ = waitContext(ctx, emptyCommandPollDelay)
 			continue
 		}
+		commandCtx := nodeproof.WithIdentity(ctx, nodeproof.Identity{TenantID: c.cfg.TenantID, OwnerID: c.cfg.OwnerID, ServerID: c.cfg.ServerID, StackID: c.cfg.StackID})
 		var result *agentpb.StackKitResult
 		if streaming, ok := c.cfg.CommandExecutor.(streamingCommandExecutor); ok {
 			logQueue := make(chan *agentpb.LogEntry, 512)
@@ -323,7 +325,7 @@ func (c *Client) runControlLoop(ctx context.Context) {
 					}
 				}
 			}()
-			result = streaming.ExecuteStreaming(ctx, command, func(entry *agentpb.LogEntry) {
+			result = streaming.ExecuteStreaming(commandCtx, command, func(entry *agentpb.LogEntry) {
 				select {
 				case logQueue <- entry:
 				case <-ctx.Done():
@@ -332,7 +334,7 @@ func (c *Client) runControlLoop(ctx context.Context) {
 			close(logQueue)
 			<-logsDone
 		} else {
-			result = c.cfg.CommandExecutor.Execute(ctx, command)
+			result = c.cfg.CommandExecutor.Execute(commandCtx, command)
 		}
 		if result == nil {
 			result = &agentpb.StackKitResult{CommandId: command.GetCommandId(), Success: false, Stderr: "typed command executor returned no result"}
@@ -357,6 +359,9 @@ func (c *Client) controlIdentity() controlRequest {
 		Capabilities: append([]string{
 			"stackkit",
 			stackkitcommand.ExpectedPlanHashCapability,
+			stackkitcommand.VerifyExpectedPlanHashCapability,
+			stackkitcommand.RILPrimitiveHashCapability,
+			stackkitcommand.RILExecutionProofCapability,
 			stackkitcommand.WorkspaceInstanceCapability,
 			stackkitcommand.RestoreActivationCapability,
 			stackkitcommand.OriginalRecoveryReleaseCapability,
@@ -516,7 +521,7 @@ func (c *Client) prepareObservation(snapshot *Snapshot) {
 	snapshot.StackKitCapabilities = nil
 	for _, capability := range c.controlIdentity().Capabilities {
 		switch capability {
-		case "stackkit", stackkitcommand.ExpectedPlanHashCapability, stackkitcommand.WorkspaceInstanceCapability, stackkitcommand.RestoreActivationCapability, stackkitcommand.OriginalRecoveryReleaseCapability, stackkitcommand.AdvancedOperationsCapability:
+		case "stackkit", stackkitcommand.ExpectedPlanHashCapability, stackkitcommand.VerifyExpectedPlanHashCapability, stackkitcommand.RILPrimitiveHashCapability, stackkitcommand.RILExecutionProofCapability, stackkitcommand.WorkspaceInstanceCapability, stackkitcommand.RestoreActivationCapability, stackkitcommand.OriginalRecoveryReleaseCapability, stackkitcommand.AdvancedOperationsCapability:
 			if !slices.Contains(snapshot.StackKitCapabilities, capability) {
 				snapshot.StackKitCapabilities = append(snapshot.StackKitCapabilities, capability)
 			}

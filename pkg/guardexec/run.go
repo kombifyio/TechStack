@@ -17,6 +17,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardrelease"
+	"github.com/kombifyio/techstack/pkg/ril/nodeproof"
 )
 
 // Options configure the executor process.
@@ -116,6 +117,7 @@ func ServeConnection(ctx context.Context, conn net.Conn, opts Options) error {
 	server := &Server{
 		Backend: host, Replay: &FileReplay{Dir: filepath.Join(opts.StateDir, "admitted")},
 		AllowPeer: peerPolicy(opts.GuardUser), Log: opts.Log,
+		RILIdentity: func() (nodeproof.Identity, error) { return nodeproof.LoadLocalIdentity(opts.StateDir) },
 		Pins: func() ([]guardbinding.PinnedKey, error) {
 			return guardbinding.ReadPins(filepath.Join(opts.StateDir, guardbinding.PinFile))
 		},

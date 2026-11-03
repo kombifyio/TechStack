@@ -17,6 +17,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardcompat"
+	"github.com/kombifyio/techstack/pkg/ril/nodeproof"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
@@ -772,6 +773,7 @@ func (c *Client) postReportRequest(ctx context.Context, request durableRequest, 
 
 // executeTypedCommand runs the executor, streaming runtime logs when it can.
 func (c *Client) executeTypedCommand(ctx context.Context, command *agentpb.StackKitCommand) *agentpb.StackKitResult {
+	commandCtx := nodeproof.WithIdentity(ctx, nodeproof.Identity{TenantID: c.cfg.TenantID, OwnerID: c.cfg.OwnerID, ServerID: c.cfg.ServerID, StackID: c.cfg.StackID})
 	var result *agentpb.StackKitResult
 	if streaming, ok := c.cfg.CommandExecutor.(streamingCommandExecutor); ok {
 		logQueue := make(chan *agentpb.LogEntry, 512)
@@ -784,7 +786,7 @@ func (c *Client) executeTypedCommand(ctx context.Context, command *agentpb.Stack
 				}
 			}
 		}()
-		result = streaming.ExecuteStreaming(ctx, command, func(entry *agentpb.LogEntry) {
+		result = streaming.ExecuteStreaming(commandCtx, command, func(entry *agentpb.LogEntry) {
 			select {
 			case logQueue <- entry:
 			case <-ctx.Done():
@@ -793,7 +795,7 @@ func (c *Client) executeTypedCommand(ctx context.Context, command *agentpb.Stack
 		close(logQueue)
 		<-logsDone
 	} else {
-		result = c.cfg.CommandExecutor.Execute(ctx, command)
+		result = c.cfg.CommandExecutor.Execute(commandCtx, command)
 	}
 	if result == nil {
 		result = &agentpb.StackKitResult{CommandId: command.GetCommandId(), Success: false, Stderr: "typed command executor returned no result"}

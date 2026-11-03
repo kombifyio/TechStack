@@ -18,6 +18,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/guardcompat"
+	"github.com/kombifyio/techstack/pkg/ril/nodeproof"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
@@ -325,7 +326,40 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 			}()
 		}
 	}
-	payload, err := protojson.Marshal(command)
+	persistedCommand := command
+	authoritySeconds := CommandAuthorityLifetime.Seconds()
+	var sealedProof []byte
+	var proofExpires int64
+	if proof := command.GetRilExecutionProof(); proof != nil {
+		facts, err := nodeproof.InspectTransport(proof)
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		proofExpires, err = rilQueueProofExpiry(ctx, facts.Exp, now)
+		if err != nil {
+			return nil, err
+		}
+		remaining := time.Unix(proofExpires, 0).Sub(now).Seconds()
+		if remaining <= 0 {
+			return nil, fmt.Errorf("RIL claim expired before enqueue")
+		}
+		if remaining < authoritySeconds {
+			authoritySeconds = remaining
+		}
+		key, err := rilQueueKey()
+		if err != nil {
+			return nil, err
+		}
+		sealedProof, err = sealRILProof(key, tenantID, agentID, command.CommandId, proof, proofExpires, now)
+		clear(key)
+		if err != nil {
+			return nil, err
+		}
+		persistedCommand = proto.Clone(command).(*agentpb.StackKitCommand)
+		persistedCommand.RilExecutionProof = &agentpb.RILExecutionProof{ProofDigest: proof.ProofDigest}
+	}
+	payload, err := protojson.Marshal(persistedCommand)
 	if err != nil {
 		return nil, fmt.Errorf("encode typed StackKits command: %w", err)
 	}
@@ -342,10 +376,10 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 			DELETE FROM typed_agent_commands
 			WHERE tenant_id = $2 AND command_family = 'stackkit' AND state IN ('completed', 'failed') AND expires_at < now() - make_interval(secs => $6)
 		)
-		INSERT INTO typed_agent_commands (command_id, tenant_id, agent_id, command_json, expires_at)
-		VALUES ($1, $2, $3, $4::jsonb, now() + make_interval(secs => $5))
+		INSERT INTO typed_agent_commands (command_id, tenant_id, agent_id, command_json, expires_at, ril_proof_ciphertext, ril_proof_expires_at)
+        VALUES ($1, $2, $3, $4::jsonb, CASE WHEN $8 = 0 THEN now() + make_interval(secs => $5) ELSE LEAST(now() + make_interval(secs => $5), to_timestamp($8)) END, $7, CASE WHEN $8 = 0 THEN NULL ELSE to_timestamp($8) END)
 		ON CONFLICT (command_id) DO NOTHING
-	`, command.GetCommandId(), tenantID, agentID, payload, CommandAuthorityLifetime.Seconds(), guardcompat.SettledCommandRetention.Seconds())
+	`, command.GetCommandId(), tenantID, agentID, payload, authoritySeconds, guardcompat.SettledCommandRetention.Seconds(), sealedProof, proofExpires)
 	if err == nil {
 		var inserted int64
 		inserted, err = result.RowsAffected()
@@ -359,6 +393,9 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+	if proofExpires > 0 {
+		h.scheduleRILProofExpiry(tenantID, command.CommandId, proofExpires)
 	}
 
 	outcome, err := h.awaitDurable(ctx, tenantID, command.GetCommandId(), transient)
@@ -594,7 +631,7 @@ func (h *Hub) WithdrawQueuedStackKitCommandForTenant(ctx context.Context, tenant
 	defer tx.Rollback()
 	var state string
 	err = tx.QueryRowContext(ctx, `
-		UPDATE typed_agent_commands SET state = 'failed', error = $3, completed_at = now()
+		UPDATE typed_agent_commands SET state = 'failed', error = $3, completed_at = now(), ril_proof_ciphertext = NULL, ril_proof_expires_at = NULL
 		WHERE tenant_id = $1 AND command_id = $2 AND state = 'queued'
 		RETURNING state
 	`, tenantID, commandID, cancelledBeforeDispatchPrefix+"withdrawn by its caller").Scan(&state)
@@ -643,7 +680,7 @@ func (h *Hub) withdrawQueued(ctx context.Context, tenantID, commandID, message s
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now()
+		UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now(), ril_proof_ciphertext = NULL, ril_proof_expires_at = NULL
 		WHERE command_id = $1 AND state = 'queued'
 	`, commandID, cancelledBeforeDispatchPrefix+message); err != nil {
 		_ = tx.Rollback()

@@ -699,6 +699,18 @@ message StackKitCommand {
   string household_projection_key = 76;
   uint64 household_projection_revision = 77;
   string household_projection_action = 78;
+  // Gateway-signed one-use RIL authority; only valid for expected-plan VERIFY.
+  RILExecutionProof ril_execution_proof = 79;
+}
+
+// Public, bounded Gateway proofs. No key material or authority URLs travel here.
+message RILExecutionProof {
+  string lease_jws = 1;
+  string claim_jws = 2;
+  bytes receipt_json = 3;
+  bytes effect_json = 4;
+  // SHA-256 of deterministic proof bytes with this field empty.
+  string proof_digest = 5;
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON

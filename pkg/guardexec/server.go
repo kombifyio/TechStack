@@ -17,6 +17,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/drivehealth"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/ril/nodeproof"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
@@ -62,9 +63,10 @@ type Server struct {
 	// so a daemon that was taken over cannot mint its own authority. With no
 	// pinned key, observations stay admissible and a mutation is refused
 	// until the host is paired again. Nil skips the check.
-	Pins func() ([]guardbinding.PinnedKey, error)
-	Now  func() time.Time
-	Log  *slog.Logger
+	Pins        func() ([]guardbinding.PinnedKey, error)
+	RILIdentity func() (nodeproof.Identity, error)
+	Now         func() time.Time
+	Log         *slog.Logger
 }
 
 // bindingPinState reads the same pin function the mutation check uses.
@@ -322,6 +324,7 @@ func (s *Server) execute(ctx context.Context, raw json.RawMessage, out *frameWri
 		return deny(CodeBindingMismatch, "the command differs from its binding")
 	}
 	mutating := stackkitcommand.IsMutatingOperation(command.Operation)
+	isRIL := command.RilExecutionProof != nil
 	local := binding.ContractVersion == guardbinding.LocalRepairContractVersion
 	if params.LocalGrant != nil && !local {
 		return deny(CodeBindingMismatch, "only a local repair carries a local repair grant")
@@ -351,12 +354,28 @@ func (s *Server) execute(ctx context.Context, raw json.RawMessage, out *frameWri
 		// Without a pinned key an unsigned binding verifies, so a process
 		// that can reach the socket could forge one. Observations stay
 		// admissible; a mutation needs a pinned control-plane key.
-		if mutating && len(pins) == 0 {
+		if (mutating || isRIL) && len(pins) == 0 {
 			return deny(CodeBindingMismatch, "this host pinned no binding signing key; re-pair kombify Guard before running mutating commands")
 		}
 		if denial := binding.VerifySignature(pins); denial != nil {
 			return deny(CodeBindingMismatch, "%s", denial.Message)
 		}
+	}
+	if isRIL {
+		if s.Pins == nil || binding.ContractVersion != guardbinding.ContractVersion || binding.TenantID == "" || binding.ServerID == "" || binding.Signature == "" {
+			return deny(CodeBindingMismatch, "RIL execution needs a signed server-bound Guard command")
+		}
+		if s.RILIdentity == nil {
+			return deny(CodeUnavailable, "RIL enrolled identity unavailable")
+		}
+		local, err := s.RILIdentity()
+		if err != nil || local.TenantID != binding.TenantID || local.ServerID != binding.ServerID {
+			return deny(CodeBindingMismatch, "RIL command differs from enrolled host identity")
+		}
+		ctx = nodeproof.WithIdentity(ctx, local)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, binding.AuthorityExpiresAt)
+		defer cancel()
 	}
 	if binding.WorkerGeneration > binding.CurrentGeneration {
 		return deny(CodeBindingMismatch, "the binding generation is newer than the credential generation")
@@ -364,8 +383,21 @@ func (s *Server) execute(ctx context.Context, raw json.RawMessage, out *frameWri
 	if binding.AuthorityExpiresAt.IsZero() || !s.now().Before(binding.AuthorityExpiresAt) {
 		return deny(CodeAuthorityExpired, "the authority to run this command expired")
 	}
-	if mutating {
-		if s.Backend.DenyMutations() {
+	if isRIL {
+		// RIL admission is Verify-only. Holding the shared applied-profile lock
+		// through this bounded subprocess prevents cached proofs surviving a
+		// Full Local activation; Apply takes the exclusive side of this lock.
+		if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY {
+			return deny(CodeNotAllowed, "RIL authority admits Verify only")
+		}
+		release, err := nodeproof.AcquireHostedProfile(ctx)
+		if err != nil {
+			return deny(CodeUnavailable, "RIL applied profile unavailable")
+		}
+		defer release()
+	}
+	if mutating || isRIL {
+		if mutating && s.Backend.DenyMutations() {
 			return deny(CodeRecoveryNeeded, "a failed update left no admissible fallback; recover kombify Guard on this host")
 		}
 		if s.Replay == nil {

@@ -11,6 +11,7 @@ import (
 	"runtime"
 
 	"github.com/kombifyio/techstack/pkg/guardexec"
+	"github.com/kombifyio/techstack/pkg/ril/nodeproof"
 )
 
 // isGuardExecutorMode reports whether the binary was invoked as
@@ -50,6 +51,15 @@ func runGuardExecutor(ctx context.Context, args []string) error {
 	}
 	opts.Log = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).With("service", "techstack-guard-executor", "version", version)
 	switch args[0] {
+	case "ril-keys-refresh":
+		if _, err := os.Stat("/etc/techstack/ril-hosted-enrollment"); errors.Is(err, os.ErrNotExist) {
+			if err := bootstrapExistingHostedRIL(ctx); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		return nodeproof.RefreshPurposeKeys(ctx, "/etc/techstack")
 	case "serve":
 		conn, err := guardexec.ConnFromStdin()
 		if err != nil {

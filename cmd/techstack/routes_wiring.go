@@ -39,8 +39,8 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
-	"github.com/kombifyio/techstack/pkg/diskcustody"
 	"github.com/kombifyio/techstack/pkg/discovery"
+	"github.com/kombifyio/techstack/pkg/diskcustody"
 	"github.com/kombifyio/techstack/pkg/features"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -879,11 +879,22 @@ func registerRILRoutes(router *httpx.Router, deps routeDeps, inventoryPolicy rou
 		panic("registerRILRoutes: workflow engine required")
 	}
 	authority := actions.NewPostgresAuthority(deps.v2.db.DB)
+	authority.ConfigureRILDecisionGateway(bootMaintenanceOriginGateway(deps.log))
+	authority.ConfigureVerifyReleaseAdmission(func(ctx context.Context, tenant, stack string) (string, error) {
+		release, err := jobs.TargetStackKitReleaseForStack(ctx, tenant, stack)
+		if err != nil {
+			return "", err
+		}
+		if release == nil || !release.VerifyExpectedPlanSupported() || !release.VerifyRILPrimitiveSupported() {
+			return "", fmt.Errorf("exact StackKits release lacks authenticated RIL verify capabilities")
+		}
+		return release.RILPrimitiveHash(), nil
+	})
 	ledger := controlplane.NewPostgresStore(deps.v2.db.DB)
 	if deps.grpc.server != nil {
 		deps.grpc.server.SetRILHealStore(ledger)
 	}
-	dispatcher, err := rilactionexecution.NewPinnedCLIDispatcher(rilactionexecution.PinnedCLIConfig{Sender: deps.grpc.server})
+	dispatcher, err := rilactionexecution.NewPinnedCLIDispatcher(rilactionexecution.PinnedCLIConfig{Sender: deps.orch.StackKitCommander(), Authority: rilactionexecution.PostgresDispatchAuthority{DB: deps.v2.db.DB}, ProofGateway: bootMaintenanceOriginGateway(deps.log)})
 	if err != nil {
 		panic(fmt.Sprintf("registerRILRoutes: %v", err))
 	}
@@ -899,7 +910,9 @@ func registerRILRoutes(router *httpx.Router, deps routeDeps, inventoryPolicy rou
 		panic(fmt.Sprintf("registerRILRoutes: %v", err))
 	}
 	launcher := &activities.RemediationLauncher{Engine: deps.workflowEngine, Authority: authority}
-	routes.RegisterGovernedActionRoutes(router, routes.GovernedActionRouteConfig{Authority: authority, Workflow: launcher, Policy: inventoryPolicy, Servers: ledger})
+	routes.RegisterGovernedActionRoutes(router, routes.GovernedActionRouteConfig{Authority: authority, Workflow: launcher, Policy: inventoryPolicy, Servers: ledger, DecisionAuthority: bootMaintenanceOriginGateway(deps.log)})
+	routes.RegisterRILGatewayCardRoute(router, authority)
+	routes.RegisterRILHostIdentityRoute(router, deps.v2.db.DB)
 	routes.RegisterWorkflowAuditRoutes(router, deps.workflowEngine)
 	routes.RegisterRILHealRoutes(router, ledger)
 }

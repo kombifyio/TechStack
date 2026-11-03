@@ -104,7 +104,15 @@ func ResolveLinuxRuntimeMetadata(dir string) (Release, error) {
 	if _, err := DecodeAdvancedOperations(catalog, pin.Version); err != nil {
 		return Release{}, err
 	}
-	return Release{receiptPath: pinPath, advancedOperations: catalog, receipt: Receipt{
+	// The optional image-baked executable is authenticated by the same
+	// signed binary digest as the managed node. Older images without it remain
+	// usable, but cannot advertise capabilities requiring this proof.
+	capability, rilCapability, rilHash, err := verifyCapabilitiesBinary(filepath.Join(dir, "stackkit-capability-binary"), currentRuntime.BinarySHA256)
+	if err != nil {
+		return Release{}, err
+	}
+
+	return Release{receiptPath: pinPath, advancedOperations: catalog, verifyExpectedPlan: capability, verifyRILPrimitive: rilCapability, rilPrimitiveHash: rilHash, receipt: Receipt{
 		SchemaVersion: PinSchemaVersion, Kit: pin.Kit, Version: pin.Version,
 		Channel: channelForVersion(pin.Version), Platform: pin.Platform,
 		ArchiveSHA256: pin.ArchiveSHA256, IndexSHA256: pin.IndexSHA256,

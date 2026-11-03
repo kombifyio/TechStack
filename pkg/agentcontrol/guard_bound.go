@@ -146,8 +146,12 @@ func (h *Hub) pollBoundOnce(ctx context.Context, opts PollOptions, bound bool) (
 		}
 	}
 
+	// Expired encrypted bearer material is removed on each worker poll.
+	if _, err := tx.ExecContext(ctx, `UPDATE typed_agent_commands SET ril_proof_ciphertext=NULL, ril_proof_expires_at=NULL WHERE tenant_id=$1 AND agent_id=$2 AND ril_proof_expires_at<=clock_timestamp()`, opts.TenantID, opts.AgentID); err != nil {
+		return nil, false, err
+	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT command_id, command_json, expires_at
+		SELECT command_id, command_json, expires_at, ril_proof_ciphertext, ril_proof_expires_at
 		FROM typed_agent_commands
 		WHERE tenant_id = $1 AND agent_id = $2 AND command_family = 'stackkit' AND state = 'queued' AND expires_at > now()
 		ORDER BY created_at
@@ -158,14 +162,16 @@ func (h *Hub) pollBoundOnce(ctx context.Context, opts PollOptions, bound bool) (
 		return nil, false, err
 	}
 	type candidate struct {
-		id      string
-		payload []byte
-		expires time.Time
+		id          string
+		payload     []byte
+		expires     time.Time
+		ciphertext  []byte
+		proofExpiry sql.NullTime
 	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.id, &c.payload, &c.expires); err != nil {
+		if err := rows.Scan(&c.id, &c.payload, &c.expires, &c.ciphertext, &c.proofExpiry); err != nil {
 			_ = rows.Close()
 			return nil, false, err
 		}
@@ -182,10 +188,29 @@ func (h *Hub) pollBoundOnce(ctx context.Context, opts PollOptions, bound bool) (
 		if err := protojson.Unmarshal(c.payload, command); err != nil {
 			return nil, false, err
 		}
+		if placeholder := command.RilExecutionProof; placeholder != nil {
+			if !bound || opts.ObserveOnly || !containsCapability(opts.Capabilities, stackkitcommand.RILExecutionProofCapability) || !c.proofExpiry.Valid || len(c.ciphertext) == 0 {
+				continue
+			}
+			key, err := rilQueueKey()
+			if err != nil {
+				return nil, false, err
+			}
+			proof, err := openRILProof(key, opts.TenantID, opts.AgentID, command.CommandId, placeholder.ProofDigest, c.proofExpiry.Time.Unix(), time.Now().UTC(), c.ciphertext)
+			clear(key)
+			if err != nil {
+				return nil, false, err
+			}
+			command.RilExecutionProof = proof
+			if err := stackkitcommand.ValidateCommand(command); err != nil {
+				return nil, false, err
+			}
+		}
+
 		for _, capability := range stackkitcommand.RequiredAgentCapabilities(command) {
 			if !containsCapability(opts.Capabilities, capability) {
 				message := fmt.Sprintf("agent %q does not advertise %s", opts.AgentID, capability)
-				_, _ = tx.ExecContext(ctx, `UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now() WHERE command_id = $1`, c.id, message)
+				_, _ = tx.ExecContext(ctx, `UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now(), ril_proof_ciphertext = NULL, ril_proof_expires_at = NULL WHERE command_id = $1`, c.id, message)
 				_ = tx.Commit()
 				return nil, false, errors.New(message)
 			}
@@ -240,7 +265,7 @@ func (h *Hub) pollBoundOnce(ctx context.Context, opts PollOptions, bound bool) (
 			UPDATE typed_agent_commands
 			SET state = 'dispatched', dispatched_at = now(), last_offered_at = now(),
 			    payload_digest = $2, worker_generation = $3, authority_expires_at = expires_at,
-			    contract_version = $4, mutating = $5
+			    contract_version = $4, mutating = $5, ril_proof_ciphertext = NULL, ril_proof_expires_at = NULL
 			WHERE command_id = $1
 		`, c.id, digest, opts.CurrentGeneration, contract, bound && mutating); err != nil {
 			return nil, false, err
@@ -258,6 +283,9 @@ func (h *Hub) pollBoundOnce(ctx context.Context, opts PollOptions, bound bool) (
 			}
 		}
 		return offer, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
 	}
 	return nil, false, nil
 }
@@ -280,6 +308,7 @@ func (h *Hub) reofferUnknownDispatched(ctx context.Context, tx *sql.Tx, opts Pol
 		FROM typed_agent_commands
 		WHERE tenant_id = $1 AND agent_id = $2 AND command_family = 'stackkit' AND state = 'dispatched'
 		  AND contract_version = $3 AND authority_expires_at IS NOT NULL
+          AND NOT (command_json ? 'rilExecutionProof')
 		  AND NOT (command_id = ANY(SELECT jsonb_array_elements_text($4::jsonb)))
 		  AND COALESCE(last_offered_at, dispatched_at) < now() - make_interval(secs => $5)
 		ORDER BY created_at

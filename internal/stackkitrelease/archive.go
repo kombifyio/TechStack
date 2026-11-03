@@ -250,14 +250,15 @@ func digestArchiveReader(reader io.Reader, size int64) (fileDigest, error) {
 		return fileDigest{}, fmt.Errorf("canonical executable must be a bounded non-empty file")
 	}
 	digest := sha256.New()
-	written, err := io.Copy(digest, io.LimitReader(reader, size+1))
+	scanner := &capabilityScanner{}
+	written, err := io.Copy(io.MultiWriter(digest, scanner), io.LimitReader(reader, size+1))
 	if err != nil {
 		return fileDigest{}, err
 	}
 	if written != size {
 		return fileDigest{}, fmt.Errorf("canonical executable changed or was truncated while read")
 	}
-	return fileDigest{sha256: hex.EncodeToString(digest.Sum(nil)), size: written}, nil
+	return fileDigest{sha256: hex.EncodeToString(digest.Sum(nil)), size: written, verifyExpectedPlan: scanner.matches == 1, verifyRILPrimitive: scanner.rilMatches == 1, rilPrimitiveHash: scanner.qualifiedHash()}, nil
 }
 
 func executableName(platform Platform) string {
