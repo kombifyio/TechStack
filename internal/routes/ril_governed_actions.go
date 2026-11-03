@@ -12,6 +12,7 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/denial"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/guardreach"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/middleware"
 	"github.com/kombifyio/techstack/pkg/ril/actioncontract"
@@ -26,10 +27,15 @@ type GovernedOperationWorkflow interface {
 	ExecuteOperation(context.Context, actions.BeginExecution, string) (*actions.GovernedCard, error)
 }
 
+type RILDecisionAuthority interface {
+	RILAuthority(context.Context, string, string, string, string, string, string, string) (guardreach.RILAuthorityResult, error)
+}
+
 type GovernedActionRouteConfig struct {
-	Authority actions.Authority
-	Workflow  GovernedActionWorkflow
-	Policy    InventoryPolicy
+	DecisionAuthority RILDecisionAuthority
+	Authority         actions.Authority
+	Workflow          GovernedActionWorkflow
+	Policy            InventoryPolicy
 	// Servers is the owner-scoped server read: the card owner executes on
 	// their own server without a per-server grant (authorizeOwnerServerOperate).
 	Servers interface {
@@ -51,6 +57,7 @@ func RegisterGovernedActionRoutes(r *httpx.Router, config GovernedActionRouteCon
 	r.POST("/v1/ril/action-cards", h.create)
 	r.GET("/v1/ril/action-cards", h.list)
 	r.GET("/v1/ril/action-cards/{cardId}", h.get)
+	r.POST("/v1/ril/action-cards/{cardId}/decision", h.requestDecision)
 	r.POST("/v1/ril/action-cards/{cardId}/approve", h.approve)
 	r.POST("/v1/ril/action-cards/{cardId}/deny", h.deny)
 	r.POST("/v1/ril/action-cards/{cardId}/execute", h.execute)
@@ -105,6 +112,31 @@ func (h governedActionHandler) get(e *httpx.Event) error {
 		return writeGovernedActionError(e, err)
 	}
 	return httpx.Success(e, http.StatusOK, card)
+}
+
+// requestDecision files the canonical owner card through Gateway. It never
+// interprets request-body approval or identity as authority.
+func (h governedActionHandler) requestDecision(e *httpx.Event) error {
+	scope, err := inventoryScopeFromEvent(e)
+	if err != nil {
+		return writeGovernedActionError(e, err)
+	}
+	if h.config.DecisionAuthority == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Decision authority unavailable", nil)
+	}
+	cardID := strings.TrimSpace(e.Request.PathValue("cardId"))
+	card, err := h.config.Authority.Get(e.Request.Context(), scope.tenantID, scope.ownerID, cardID)
+	if err != nil {
+		return writeGovernedActionError(e, err)
+	}
+	if err = authorizeOwnerServerOperate(e.Request.Context(), h.config.Policy, h.config.Servers, scope, card.ServerID); err != nil {
+		return writeGovernedActionError(e, err)
+	}
+	result, err := h.config.DecisionAuthority.RILAuthority(e.Request.Context(), scope.ownerID, scope.tenantID, "prepare", cardID, "", "", "")
+	if err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Decision authority unavailable", nil)
+	}
+	return httpx.Success(e, http.StatusAccepted, result)
 }
 
 type actionDecisionRequest struct {

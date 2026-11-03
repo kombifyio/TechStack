@@ -192,7 +192,7 @@ func Apply(ctx context.Context, opts Options) (Result, error) {
 	if err := writeFile(opts.path(ExecutorEnvFile), ExecutorEnvText(params), 0o600, false); err != nil {
 		return result, err
 	}
-	for name, text := range map[string]string{ExecutorSocketUnit: ExecutorSocketText(params), ExecutorUnit: ExecutorUnitText(params)} {
+	for name, text := range map[string]string{ExecutorSocketUnit: ExecutorSocketText(params), ExecutorUnit: ExecutorUnitText(params), RILKeysUnit: RILKeysUnitText(params), RILKeysTimer: RILKeysTimerText()} {
 		if err := writeFile(filepath.Join(opts.path(systemdDir), name), text, 0o644, true); err != nil {
 			return result, err
 		}
@@ -202,6 +202,9 @@ func Apply(ctx context.Context, opts Options) (Result, error) {
 	}
 	if err := opts.Runner.Run(ctx, "systemctl", "enable", "--now", ExecutorSocketUnit); err != nil {
 		return result, fmt.Errorf("start the executor socket: %w", err)
+	}
+	if err := opts.Runner.Run(ctx, "systemctl", "enable", "--now", RILKeysTimer); err != nil {
+		opts.Log.Warn("ril_key_refresh_pending", "error", err.Error())
 	}
 	if opts.VerifyExecutor != nil {
 		if err := opts.VerifyExecutor(ctx, opts.SocketPath); err != nil {

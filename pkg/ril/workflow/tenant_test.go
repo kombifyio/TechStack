@@ -28,3 +28,21 @@ func TestEngineRequiresTenantBeforeStoreAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkflowIdentityRejectsChangedConnectorProjection(t *testing.T) {
+	original := &Run{RunID: "run", TenantID: "tenant", Type: TypeActionCardRemediation, OwnerID: "owner", ServerID: "server", CardID: "card", Input: map[string]any{"connector_projection": map[string]any{"binding_id": "binding-one"}}}
+	changed := *original
+	changed.Input = map[string]any{"connector_projection": map[string]any{"binding_id": "binding-two"}}
+	if sameRunIdentity(original, &changed) {
+		t.Fatal("changed projection adopted an existing workflow")
+	}
+	missing := *original
+	missing.Input = map[string]any{}
+	if sameRunIdentity(original, &missing) {
+		t.Fatal("missing projection adopted an existing workflow")
+	}
+	identical := *original
+	if !sameRunIdentity(original, &identical) {
+		t.Fatal("identical input could not resume its workflow")
+	}
+}

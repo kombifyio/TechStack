@@ -136,6 +136,11 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 		}
 		return err
 	}
+	// RIL is an additive capability; an unavailable public key source leaves
+	// it closed without undoing a successfully confirmed Guard enrollment.
+	if rilErr := installHostedRILBootstrap(ctx, bootstrap.Server, result.EnrollmentPath, result); rilErr != nil {
+		log.Warn("ril_bootstrap_pending", "reason", rilErr.Error())
+	}
 	// The capability is consumed: the file it came from must not outlive it.
 	removeSecretInput(*tokenFile)
 	clearHandoffReceipts(manager)

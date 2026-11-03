@@ -14,7 +14,7 @@ import (
 )
 
 // The reviewed immutable reusable producer is the only admitted authority.
-const schemaExpandProducerSHA = "2771f6be2f7612f898f979da4e08b59075efe3d4"
+const schemaExpandProducerSHA = "32e64c7a90ac8f8a20341950839905b0f0b402c5"
 const schemaExpandIssuer = "https://token.actions.githubusercontent.com"
 const schemaExpandProducer = "public-schema-producer-unavailable/.github/.github/workflows/techstack-schema-expand.yml"
 const schemaExpandRepository = "kombifyio/TechStack"
@@ -56,7 +56,7 @@ func verifySchemaExpandAuthority(ctx context.Context) (schemaExpandAuthority, er
 	hash := regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 	positive := regexp.MustCompile(`^[1-9][0-9]*$`)
 	if body.Schema != "techstack.schema-expand-company.v1" || !sha.MatchString(body.SourceSHA) || !sha.MatchString(body.ExecutionSHA) ||
-		!sha.MatchString(body.AuthoritySHA) || !hash.MatchString(body.ManifestSHA256) ||
+		body.SourceSHA != body.ExecutionSHA || !sha.MatchString(body.AuthoritySHA) || !hash.MatchString(body.ManifestSHA256) ||
 		!hash.MatchString(body.LocalReceiptSHA256) || !positive.MatchString(body.LocalRunID) ||
 		!positive.MatchString(body.RunID) || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(body.Nonce) {
 		return deny()
@@ -77,7 +77,7 @@ func verifySchemaExpandAuthority(ctx context.Context) (schemaExpandAuthority, er
 	want := map[string]string{
 		"repository": schemaExpandRepository, "repository_id": "1129956899", "repository_owner_id": "249091777",
 		"ref": "refs/heads/main", "run_attempt": "1",
-		"workflow_ref":     schemaExpandRepository + "/.github/workflows/early-access-merge.yml@refs/heads/main",
+		"workflow_ref":     schemaExpandRepository + "/.github/workflows/local-database-migrate.yml@refs/heads/main",
 		"job_workflow_ref": schemaExpandProducer + "@" + schemaExpandProducerSHA,
 		"job_workflow_sha": schemaExpandProducerSHA, "sha": body.ExecutionSHA, "workflow_sha": body.ExecutionSHA,
 		"run_id": body.RunID, "sub": "repo:" + schemaExpandRepository + ":environment:techstack-schema-production",
@@ -89,7 +89,7 @@ func verifySchemaExpandAuthority(ctx context.Context) (schemaExpandAuthority, er
 		}
 	}
 	event, ok := claims.Raw["event_name"].(string)
-	if !ok || (event != "push" && event != "workflow_dispatch") || (event == "push" && body.SourceSHA != body.ExecutionSHA) {
+	if !ok || event != "workflow_dispatch" {
 		return deny()
 	}
 	jti, ok := claims.Raw["jti"].(string)

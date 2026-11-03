@@ -35,6 +35,8 @@ func (p ApplicationPrincipal) validate() error {
 const applicationCapacityPolicyDigest = "managed_runtime_capacity_policy_digest(text,text,text,text,text,integer,text)"
 
 var applicationCapabilityFunctions = []string{
+	"techstack_list_due_ril_leases()",
+	"techstack_list_due_ril_queue_proofs()",
 	applicationCapacityPolicyDigest,
 	"techstack_household_inventory_owner(text,text)", "techstack_household_inventory_server(text,text,text)",
 	"techstack_lookup_subject_directory(text)", "techstack_forget_subject_directory(text,text)",

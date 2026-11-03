@@ -296,6 +296,12 @@ func runDatabaseDelivery(ctx context.Context, args []string) error {
 	}
 	if apply {
 		evidence["forward_before"] = before
+		for _, pending := range before.Pending {
+			if pending.Version == "183_ril_queue_proof_expiry.sql" {
+				evidence["execution_adapter"] = db.RILQueueAdapterEvidence()
+				break
+			}
+		}
 		evidence["db_context_key_id"] = contextKey.id
 		evidence["db_context_registered"] = true
 	}

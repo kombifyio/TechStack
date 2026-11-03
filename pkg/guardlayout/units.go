@@ -15,6 +15,8 @@ const (
 	AgentUnit          = "techstack-agent.service"
 	ExecutorSocketUnit = "techstack-guard-executor.socket"
 	ExecutorUnit       = "techstack-guard-executor@.service"
+	RILKeysUnit        = "techstack-ril-keys.service"
+	RILKeysTimer       = "techstack-ril-keys.timer"
 	LegacyUnitSuffix   = ".legacy"
 	ExecutorEnvFile    = "/etc/techstack/executor.env"
 	// EnrollmentFile is where the Guard keeps the enrollment response with its
@@ -199,4 +201,35 @@ TECHSTACK_GUARD_USER=%[3]s
 # Unsigned local builds are refused unless an operator sets this explicitly:
 # TECHSTACK_GUARD_ALLOW_UNSIGNED_UPDATES=1
 `, p.BinaryPath, p.OperationsPath, p.GuardUser), "\n")
+}
+
+// The root-only refresh can bootstrap a previously paired host; it checks the
+// current applied profile at the network dial and fails closed if unknown.
+func RILKeysUnitText(p UnitParams) string {
+	return strings.TrimLeft(fmt.Sprintf(`
+[Unit]
+Description=kombify RIL public verification key refresh
+After=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=%s guard-executor ril-keys-refresh
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/techstack /var/lib/techstack-guard-executor /run
+`, p.BinaryPath), "\n")
+}
+func RILKeysTimerText() string {
+	return strings.TrimLeft(`
+[Unit]
+Description=Refresh kombify RIL verification keys
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=20s
+Unit=techstack-ril-keys.service
+[Install]
+WantedBy=timers.target
+`, "\n")
 }

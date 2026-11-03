@@ -20,6 +20,9 @@ const (
 	CommandResultVersion              = "stackkit.command-result/v1"
 	RolloutEventVersion               = "stackkit.rollout-event/v1"
 	ExpectedPlanHashCapability        = "stackkit.apply.expected-plan-hash.v1"
+	RILPrimitiveHashCapability        = "stackkit.verify.ril-primitive-hash.v1"
+	VerifyExpectedPlanHashCapability  = "stackkit.verify.expected-plan-hash.v1"
+	RILExecutionProofCapability       = "stackkit.ril-execution-proof.v1"
 	WorkspaceInstanceCapability       = "stackkit.workspace-instance-binding.v1"
 	RestoreActivationCapability       = "stackkit.restore-activation.v1"
 	OriginalRecoveryReleaseCapability = "stackkit.restore-original-release.v1"
@@ -92,6 +95,15 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	}
 	if command.TimeoutSeconds < 0 || command.TimeoutSeconds > int32((2*time.Hour)/time.Second) {
 		return fmt.Errorf("StackKit timeout_seconds must be between 0 and 7200")
+	}
+	if proof := command.RilExecutionProof; proof != nil {
+		digest, digestErr := RILProofDigest(proof)
+		if digestErr != nil || digest != proof.ProofDigest {
+			return fmt.Errorf("RIL proof digest mismatch")
+		}
+		if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY || !specHashPattern.MatchString(command.ExpectedPlanHash) || len(proof.LeaseJws) == 0 || len(proof.LeaseJws) > 16384 || len(proof.ClaimJws) == 0 || len(proof.ClaimJws) > 16384 || len(proof.ReceiptJson) == 0 || len(proof.ReceiptJson) > 65536 || len(proof.EffectJson) == 0 || len(proof.EffectJson) > 65536 {
+			return fmt.Errorf("invalid RIL execution proof")
+		}
 	}
 	if err := ValidateReleasePin(command.Release); err != nil {
 		return err
@@ -190,8 +202,12 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_VALIDATE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT:
+		return nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY:
+		if command.ExpectedPlanHash != "" && !specHashPattern.MatchString(command.ExpectedPlanHash) {
+			return fmt.Errorf("StackKit verify expected_plan_hash must be a lowercase sha256 digest")
+		}
 		return nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY:
 		return validateApplyCommand(command)
@@ -756,6 +772,12 @@ func RequiredAgentCapabilities(command *agentpb.StackKitCommand) []string {
 	}
 	if command != nil && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY {
 		required = append(required, ExpectedPlanHashCapability)
+	}
+	if command != nil && command.RilExecutionProof != nil {
+		required = append(required, RILExecutionProofCapability, RILPrimitiveHashCapability)
+	}
+	if command != nil && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY && command.ExpectedPlanHash != "" {
+		required = append(required, VerifyExpectedPlanHashCapability)
 	}
 	if RequiresWorkspaceInstanceBinding(command) {
 		required = append(required, WorkspaceInstanceCapability)

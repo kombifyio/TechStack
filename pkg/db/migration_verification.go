@@ -16,7 +16,7 @@ const EnvDatabaseMigrationMode = "TECHSTACK_DATABASE_MIGRATION_MODE"
 // SchemaFloor is the highest migration number this binary's serving code needs.
 // Bump it in the same pull request that adds a migration the code depends on;
 // an expand migration the code does not read yet may stay above it.
-const SchemaFloor = 179
+const SchemaFloor = 183
 
 // PlatformProjectionSchemaFloor is what the private platform projection process
 // of the same binary needs: the role, grants and policies of migration 173. The

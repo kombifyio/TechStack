@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	rilaction "github.com/kombifyio/techstack/pkg/ril/actioncontract"
 	"github.com/kombifyio/techstack/pkg/ril/actions"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
 	"github.com/kombifyio/techstack/pkg/ril/workflows"
@@ -42,12 +43,39 @@ func (l *RemediationLauncher) Execute(ctx context.Context, input actions.BeginEx
 		}
 		return nil, actions.ErrCardConflict
 	}
-	if card.Status != string(actions.StatusApproved) && card.Status != "executing" && card.Status != "verifying" {
+	isVerify := card.Template.Primitive.ID == "verify-stackkit-state" && card.Template.Primitive.OperationClass == "product-verify" && card.Template.Target.Scope == rilaction.TargetScopeStack
+	canonicalVerify := card.Status == "awaiting_approval" && isVerify
+	if !canonicalVerify && card.Status != string(actions.StatusApproved) && card.Status != "executing" && card.Status != "verifying" {
 		return nil, actions.ErrApprovalRequired
 	}
 	if (card.Status == "executing" || card.Status == "verifying") &&
 		(card.IdempotencyKey != input.IdempotencyKey || card.ExecutionID != input.ExecutionID || card.TraceID != input.TraceID) {
 		return nil, actions.ErrCardConflict
+	}
+	// An unanswered Verify must not create a terminal workflow. Admit the
+	// real Gateway decision first; Begin commits the exact lease and fenced
+	// execution together. A lost workflow-start response can then safely
+	// resume that same admitted execution without minting another lease.
+	if canonicalVerify || card.Status == "executing" || card.Status == "verifying" {
+		begun, beginErr := l.Authority.Begin(ctx, input)
+		if beginErr != nil {
+			return nil, beginErr
+		}
+		if begun.Card == nil || begun.Card.IdempotencyKey != input.IdempotencyKey || begun.Card.ExecutionID != input.ExecutionID || begun.Card.TraceID != input.TraceID {
+			return nil, actions.ErrCardConflict
+		}
+		if begun.Disposition == actions.BeginReplay {
+			return begun.Card, nil
+		}
+		if begun.Disposition != actions.BeginAcquired || (begun.Card.Status != "executing" && begun.Card.Status != "verifying") {
+			return nil, actions.ErrCardConflict
+		}
+		card = begun.Card
+		// A changed current template cannot downgrade an already admitted
+		// Verify to the legacy workflow identity.
+		if begun.Request.Primitive.ID == "verify-stackkit-state" {
+			isVerify = true
+		}
 	}
 	if card.Status == string(actions.StatusApproved) {
 		if err := actions.RefuseUnentitledStart(card, input); err != nil {
@@ -71,7 +99,17 @@ func (l *RemediationLauncher) Execute(ctx context.Context, input actions.BeginEx
 		}
 		runInput[workflows.InputConnectorProjection] = projection
 	}
-	runID, err := remediationRunID(runInput)
+	identityInput := runInput
+	if isVerify {
+		// Connector projection stays in the immutable workflow input for exact
+		// conflict checks, but cannot select a second run for this execution.
+		identityInput = map[string]any{
+			workflows.InputTenantID: input.TenantID, workflows.InputOwnerSubjectID: input.OwnerSubjectID,
+			workflows.InputCardID: input.CardID, workflows.InputExecutionID: input.ExecutionID,
+			workflows.InputTraceID: input.TraceID, workflows.InputIdempotencyKey: input.IdempotencyKey,
+		}
+	}
+	runID, err := remediationRunID(identityInput)
 	if err != nil {
 		return nil, err
 	}

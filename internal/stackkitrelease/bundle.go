@@ -162,6 +162,9 @@ func resolveLinuxRuntimeBundleReader(bundlePath string, input io.Reader, admit f
 	return Release{
 		useCaseCatalog:     useCases,
 		advancedOperations: catalog,
+		verifyExpectedPlan: binary.verifyExpectedPlan,
+		verifyRILPrimitive: binary.verifyRILPrimitive,
+		rilPrimitiveHash:   binary.rilPrimitiveHash,
 		binaryPath:         linuxRuntimeBinaryPath,
 		receiptPath:        bundlePath,
 		receipt: Receipt{

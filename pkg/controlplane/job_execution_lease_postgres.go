@@ -10,6 +10,11 @@ import (
 
 var _ JobExecutionReclaimStore = (*PostgresStore)(nil)
 
+// reclaimNodeCommandSettleGrace is how long past its own budget a dispatched
+// node command of an orphaned job may still report before the job is reclaimed
+// anyway: the result grace plus one report round trip of the Guard.
+const reclaimNodeCommandSettleGrace = 60 * time.Second
+
 // ListJobExecutionReclaimTenants pages the secret-free wake-up directory. It
 // returns tenant IDs only; the job rows themselves are read afterwards inside
 // the tenant-scoped RLS boundary.
@@ -124,6 +129,13 @@ func (s *PostgresStore) ListExpiredJobExecutionLeases(
 // observed fact from the scan (owner, lease deadline, stack, state) is part of
 // the same conditional UPDATE, so an execution that renewed its lease in the
 // meantime is refused with ErrConflict rather than stolen.
+//
+// A job whose mutating StackKits command is still running on its node is not
+// orphaned in effect: the Guard executes it durably across a control-plane
+// restart and withholds every later mutation on that server until it settles.
+// Reclaiming it would tell the owner the stack is free while a retry's first
+// command can only queue behind the old one and time out, so the row stays
+// running (ErrConflict) until that command reports or outlives its budget.
 func (s *PostgresStore) ReclaimExpiredJobExecution(
 	ctx context.Context,
 	req ReclaimExpiredJobExecutionRequest,
@@ -157,12 +169,21 @@ func (s *PostgresStore) ReclaimExpiredJobExecution(
 				AND execution_lease_expires_at IS NOT NULL
 				AND execution_lease_expires_at <= $8
 				AND COALESCE(execution_owner_id, '') = $9
+				AND NOT EXISTS (
+					SELECT 1 FROM typed_agent_commands c
+					WHERE c.tenant_id = $1
+						AND left(c.command_id, length($2) + 1) = $2 || '-'
+						AND c.command_family = 'stackkit' AND c.mutating
+						AND c.state = 'dispatched'
+						AND c.dispatched_at + make_interval(secs => COALESCE((c.command_json->>'timeoutSeconds')::int, 0) + $10) > now()
+				)
 			RETURNING id, tenant_id, instance_id, stack_id, type, state, priority,
 				progress, step, message, error, error_details, logs_json::text,
 				result_json::text, scheduled_for, started_at, completed_at,
 				created_at, updated_at
 		`, req.TenantID, req.JobID, req.StackID, req.Error, req.ErrorDetails,
-			patchJSON, reclaimedAt, req.LeaseExpiredBefore.UTC(), req.ExpectedOwnerID))
+			patchJSON, reclaimedAt, req.LeaseExpiredBefore.UTC(), req.ExpectedOwnerID,
+			int(reclaimNodeCommandSettleGrace/time.Second)))
 		if scanErr == sql.ErrNoRows {
 			return ErrConflict
 		}

@@ -60,24 +60,26 @@ type forwardPostureSchema struct {
 }
 
 type forwardPostureRelation struct {
-	Name            string  `json:"name"`
-	Exists          bool    `json:"exists"`
-	Kind            *string `json:"kind"`
-	OwnerIsMigrator *bool   `json:"owner_is_migrator"`
-	OwnerInherited  *bool   `json:"owner_inherited"`
-	RLS             *bool   `json:"rls"`
-	Forced          *bool   `json:"forced"`
-	Select          *bool   `json:"select"`
-	Insert          *bool   `json:"insert"`
-	Update          *bool   `json:"update"`
-	Delete          *bool   `json:"delete"`
-	Truncate        *bool   `json:"truncate"`
-	Maintain        *bool   `json:"maintain"`
-	SelectGrant     *bool   `json:"select_grant"`
-	InsertGrant     *bool   `json:"insert_grant"`
-	UpdateGrant     *bool   `json:"update_grant"`
-	DeleteGrant     *bool   `json:"delete_grant"`
-	PolicyCount     *int64  `json:"policy_count"`
+	Name                       string  `json:"name"`
+	Exists                     bool    `json:"exists"`
+	Kind                       *string `json:"kind"`
+	OwnerIsMigrator            *bool   `json:"owner_is_migrator"`
+	OwnerInherited             *bool   `json:"owner_inherited"`
+	RLS                        *bool   `json:"rls"`
+	Forced                     *bool   `json:"forced"`
+	Select                     *bool   `json:"select"`
+	Insert                     *bool   `json:"insert"`
+	Update                     *bool   `json:"update"`
+	Delete                     *bool   `json:"delete"`
+	Truncate                   *bool   `json:"truncate"`
+	Maintain                   *bool   `json:"maintain"`
+	SelectGrant                *bool   `json:"select_grant"`
+	InsertGrant                *bool   `json:"insert_grant"`
+	UpdateGrant                *bool   `json:"update_grant"`
+	DeleteGrant                *bool   `json:"delete_grant"`
+	PolicyCount                *int64  `json:"policy_count"`
+	RestrictiveReadPolicyCount *int64  `json:"restrictive_read_policy_count"`
+	RILSnapshotPolicyCount     *int64  `json:"ril_snapshot_policy_count"`
 }
 
 type forwardPostureRoutine struct {
@@ -93,12 +95,22 @@ type forwardPostureRoutine struct {
 	BackupExecute      *bool   `json:"backup_execute"`
 }
 
+type forwardRILPolicy struct {
+	Name       string   `json:"name"`
+	Command    string   `json:"command"`
+	Permissive bool     `json:"permissive"`
+	Roles      []string `json:"roles"`
+	UsingExpr  *string  `json:"using_expr"`
+	CheckExpr  *string  `json:"check_expr"`
+}
+
 type forwardPostureCatalog struct {
-	Identity  forwardPostureIdentity   `json:"identity"`
-	Roles     []forwardPostureRole     `json:"roles"`
-	Schemas   []forwardPostureSchema   `json:"schemas"`
-	Relations []forwardPostureRelation `json:"relations"`
-	Routines  []forwardPostureRoutine  `json:"routines"`
+	RILReadPolicies []forwardRILPolicy       `json:"ril_read_policies"`
+	Identity        forwardPostureIdentity   `json:"identity"`
+	Roles           []forwardPostureRole     `json:"roles"`
+	Schemas         []forwardPostureSchema   `json:"schemas"`
+	Relations       []forwardPostureRelation `json:"relations"`
+	Routines        []forwardPostureRoutine  `json:"routines"`
 }
 
 // InspectStageForwardPosture reads only fixed catalog targets on the existing
@@ -198,7 +210,8 @@ relation_targets(ord,name) AS (VALUES (1,'public.schema_migrations'),(2,'public.
  (6,'public.jobs'),(7,'public.typed_agent_commands'),(8,'public.household_identity_refs'),
  (9,'public.techstack_memberships'),(10,'public.techstack_tenants'),(11,'public.homelabs'),
  (12,'public.stacks'),(13,'public.workers'),(14,'public.servers'),(15,'kombify_ctx.role_class'),
- (16,'kombify_ctx.keys'),(17,'public.household_projection_bindings'),(18,'public.household_projection_attempts')),
+ (16,'kombify_ctx.keys'),(17,'public.household_projection_bindings'),(18,'public.household_projection_attempts'),
+ (19,'public.ril_action_cards')),
 routine_targets(ord,name) AS (VALUES (1,'pg_catalog.pg_control_system()'),(2,'kombify_ctx.verified_context()'),
  (3,'kombify_ctx.subject()'),(4,'kombify_ctx.org_id()'),(5,'public.techstack_backup_execution_conflicts(text,text)'),
  (6,'public.household_reference_immutable()'),(7,'public.household_projection_binding_monotonic()'))
@@ -227,8 +240,14 @@ SELECT json_build_object(
    'insert_grant',has_table_privilege(current_user,c.oid,'INSERT WITH GRANT OPTION'),
    'update_grant',has_table_privilege(current_user,c.oid,'UPDATE WITH GRANT OPTION'),
    'delete_grant',has_table_privilege(current_user,c.oid,'DELETE WITH GRANT OPTION'),
-   'policy_count',CASE WHEN c.oid IS NOT NULL THEN (SELECT count(*) FROM pg_policy p WHERE p.polrelid=c.oid) END)
+   'policy_count',CASE WHEN c.oid IS NOT NULL THEN (SELECT count(*) FROM pg_policy p WHERE p.polrelid=c.oid) END,
+   'restrictive_read_policy_count',CASE WHEN c.oid IS NOT NULL THEN (SELECT count(*) FROM pg_policy p WHERE p.polrelid=c.oid AND NOT p.polpermissive AND p.polcmd IN ('r','*')) END,
+   'ril_snapshot_policy_count',CASE WHEN c.oid IS NOT NULL THEN (SELECT count(*) FROM pg_policy p WHERE p.polrelid=c.oid AND p.polname='techstack_ril_queue_snapshot') END)
    ORDER BY t.ord) FROM relation_targets t LEFT JOIN pg_class c ON c.oid=to_regclass(t.name)),
+ 'ril_read_policies',(SELECT coalesce(json_agg(json_build_object('name',p.polname,'command',p.polcmd,'permissive',p.polpermissive,
+   'roles',(SELECT coalesce(json_agg(CASE WHEN role_oid=0 THEN 'PUBLIC' ELSE (SELECT rolname FROM pg_roles WHERE oid=role_oid) END ORDER BY role_oid),'[]'::json) FROM unnest(p.polroles) role_oid),
+   'using_expr',pg_get_expr(p.polqual,p.polrelid),'check_expr',pg_get_expr(p.polwithcheck,p.polrelid)) ORDER BY p.polname),'[]'::json)
+   FROM pg_policy p WHERE p.polrelid=to_regclass('public.typed_agent_commands') AND p.polname IN ('backup_worker_typed_commands','household_worker_command_ceiling')),
  'routines',(SELECT json_agg(json_build_object('name',t.name,'exists',p.oid IS NOT NULL,'kind',p.prokind,
    'owner_is_migrator',p.proowner=current_user::regrole,'owner_inherited',pg_has_role(current_user,p.proowner,'USAGE'),
    'security_definer',p.prosecdef,'execute',has_function_privilege(current_user,p.oid,'EXECUTE'),

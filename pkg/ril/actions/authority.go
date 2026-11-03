@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kombifyio/techstack/pkg/guardreach"
+	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"strings"
 	"time"
 
@@ -117,13 +120,39 @@ type Authority interface {
 	Fail(context.Context, string, string, string, string, time.Time) (*GovernedCard, error)
 }
 
-type PostgresAuthority struct{ db *sql.DB }
+type PostgresAuthority struct {
+	db              *sql.DB
+	verifyRelease   func(context.Context, string, string) (string, error)
+	decisionGateway RILDecisionGateway
+}
+
+// ConfigureVerifyReleaseAdmission installs the verified exact-release capability authority.
+func (s *PostgresAuthority) ConfigureVerifyReleaseAdmission(admit func(context.Context, string, string) (string, error)) {
+	s.verifyRelease = admit
+}
+
+func (s *PostgresAuthority) ConfigureRILDecisionGateway(gateway RILDecisionGateway) {
+	s.decisionGateway = gateway
+}
 
 func NewPostgresAuthority(db *sql.DB) *PostgresAuthority { return &PostgresAuthority{db: db} }
 
 func (s *PostgresAuthority) Create(ctx context.Context, input CreateGovernedCard) (*GovernedCard, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("ril actions: database not configured")
+	}
+	if input.Template.Primitive.ID == "verify-stackkit-state" {
+		if s.verifyRelease == nil {
+			return nil, ErrExecutionAdmission
+		}
+		hash, err := s.verifyRelease(ctx, input.TenantID, input.Template.StackID)
+		if err != nil || hash == "" {
+			return nil, ErrExecutionAdmission
+		}
+		if input.Template.Primitive.ContractHash != "" && input.Template.Primitive.ContractHash != hash {
+			return nil, ErrExecutionAdmission
+		}
+		input.Template.Primitive.ContractHash = hash
 	}
 	var out *GovernedCard
 	err := s.withTenant(ctx, input.TenantID, func(tx *sql.Tx) error {
@@ -162,7 +191,11 @@ func CreateInTx(ctx context.Context, tx *sql.Tx, input CreateGovernedCard) (*Gov
 		return nil, err
 	}
 	status := "awaiting_approval"
-	if input.Template.Grant == nil {
+	if input.Template.Primitive.ID == "verify-stackkit-state" {
+		if input.Template.Primitive.OperationClass != "product-verify" || input.Template.Grant != nil || input.Template.ConnectorBinding == nil {
+			return nil, ErrExecutionAdmission
+		}
+	} else if input.Template.Grant == nil {
 		status = "awaiting_grant"
 	}
 	card, err := scanGovernedCard(tx.QueryRowContext(ctx, `
@@ -228,7 +261,7 @@ func (s *PostgresAuthority) Approve(ctx context.Context, tenantID, ownerID, card
 	receiptHash := digestText(receiptRef + "\x00" + ownerID + "\x00" + correlationID + "\x00" + now.Format(time.RFC3339Nano))
 	record := ApprovalRecord{ReceiptRef: receiptRef, ReceiptHash: receiptHash, ActorSubjectID: ownerID, Class: rilaction.ApprovalClassOwnerStepUp, AuditCorrelation: correlationID, ApprovedAt: now, ValidUntil: now.Add(rilaction.MaxAuthorityValidity)}
 	data, _ := json.Marshal(record)
-	return s.transition(ctx, tenantID, ownerID, cardID, `status='awaiting_approval'`, "approved", `approval_json=$5::jsonb, approved_at=$6`, data, now)
+	return s.transition(ctx, tenantID, ownerID, cardID, `status='awaiting_approval' AND COALESCE(action_template_json->'primitive'->>'id','') <> 'verify-stackkit-state'`, "approved", `approval_json=$5::jsonb, approved_at=$6`, data, now)
 }
 
 func (s *PostgresAuthority) Deny(ctx context.Context, tenantID, ownerID, cardID, correlationID string, now time.Time) (*GovernedCard, error) {
@@ -271,14 +304,39 @@ func (s *PostgresAuthority) Begin(ctx context.Context, input BeginExecution) (Be
 	if input.Now.Location() != time.UTC {
 		return BeginResult{}, fmt.Errorf("ril actions: UTC clock required")
 	}
+	var gatewayIssue guardreach.RILAuthorityResult
+	var gatewayApproval *ApprovalRecord
+	current, err := s.Get(ctx, input.TenantID, input.OwnerSubjectID, input.CardID)
+	if err != nil {
+		return BeginResult{}, err
+	}
+	if current.Template.Primitive.ID == "verify-stackkit-state" && current.Status == "awaiting_approval" {
+		gatewayIssue, gatewayApproval, err = issueDecision(ctx, s.decisionGateway, input)
+		if err != nil {
+			var denial *guardreach.GatewayError
+			if errors.As(err, &denial) && denial.Status == 403 && denial.ReasonCode == "ril_decision_not_allowed" {
+				return BeginResult{}, ErrApprovalRequired
+			}
+			return BeginResult{}, fmt.Errorf("%w: gateway issue unavailable: %v", ErrExecutionAdmission, err)
+		}
+		input.Now = time.Now().UTC()
+	}
 	var out BeginResult
-	err := s.withTenant(ctx, input.TenantID, func(tx *sql.Tx) error {
+	err = s.withTenant(ctx, input.TenantID, func(tx *sql.Tx) error {
 		card, err := scanGovernedCard(tx.QueryRowContext(ctx, `SELECT `+governedCardColumns+` FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3 FOR UPDATE`, input.TenantID, input.OwnerSubjectID, input.CardID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCardNotFound
 		}
 		if err != nil {
 			return err
+		}
+		// Only the configured Gateway can issue evidence for a verify card.
+		// Never fall back to the legacy approval on a changed or missing card.
+		if card.Template.Primitive.ID == "verify-stackkit-state" && gatewayApproval == nil && card.Status != string(StatusCompleted) && card.Status != string(StatusFailed) && card.Status != "executing" && card.Status != "verifying" {
+			return fmt.Errorf("%w: gateway RIL authority required", ErrExecutionAdmission)
+		}
+		if gatewayApproval != nil && card.Template.Primitive.ID != "verify-stackkit-state" {
+			return ErrExecutionAdmission
 		}
 		if card.Status == string(StatusCompleted) || card.Status == string(StatusFailed) {
 			if card.IdempotencyKey != input.IdempotencyKey || card.Evidence == nil {
@@ -297,12 +355,71 @@ func (s *PostgresAuthority) Begin(ctx context.Context, input BeginExecution) (Be
 				if requestJSON == "" || json.Unmarshal([]byte(requestJSON), &request) != nil || card.ExecutionAdmission == nil {
 					return ErrCardConflict
 				}
+				if request.Primitive.ID == "verify-stackkit-state" {
+					// The frozen proposal's revision is advanced and its body
+					// cleared on any template/owner/server change. Together
+					// with the bound projection hash this identifies the
+					// original admission before a workflow can be resumed.
+					if card.Template.Primitive != request.Primitive || card.Template.ConnectorBinding == nil {
+						return ErrCardConflict
+					}
+					var raw string
+					var revision int64
+					if err := tx.QueryRowContext(ctx, `SELECT COALESCE(decision_proposal_json::text,''),decision_card_revision FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3`, input.TenantID, input.OwnerSubjectID, input.CardID).Scan(&raw, &revision); err != nil {
+						return err
+					}
+					var proposal struct {
+						Effect struct {
+							CardRevision int64 `json:"cardRevision"`
+						} `json:"effect"`
+					}
+					if raw == "" || json.Unmarshal([]byte(raw), &proposal) != nil || revision < 1 || proposal.Effect.CardRevision != revision {
+						return ErrCardConflict
+					}
+					if err := validateConnectorBinding(card, input); err != nil {
+						return err
+					}
+				}
 				out = BeginResult{Disposition: BeginAcquired, Card: card, Request: request, Admission: *card.ExecutionAdmission}
 				return nil
 			}
 			return ErrCardConflict
 		}
-		if card.Status != string(StatusApproved) || card.Approval == nil {
+		statusBefore := card.Status
+		var decisionProposal DecisionProposal
+		if gatewayApproval != nil {
+			if card.Status != "awaiting_approval" {
+				return ErrApprovalRequired
+			}
+			var raw string
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(decision_proposal_json::text,'') FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3`, input.TenantID, input.OwnerSubjectID, input.CardID).Scan(&raw); err != nil {
+				return err
+			}
+			if json.Unmarshal([]byte(raw), &decisionProposal) != nil {
+				return ErrExecutionAdmission
+			}
+			storedEffect, err := json.Marshal(decisionProposal.Effect)
+			if err != nil {
+				return err
+			}
+			left, err := jsoncanonicalizer.Transform(storedEffect)
+			if err != nil {
+				return err
+			}
+			right, err := jsoncanonicalizer.Transform(gatewayIssue.Effect)
+			if err != nil || !bytes.Equal(left, right) {
+				return ErrExecutionAdmission
+			}
+			card.Approval = gatewayApproval
+			if card.Template.Grant != nil {
+				return ErrExecutionAdmission
+			}
+			grant, err := gatewayLeaseGrant(gatewayIssue)
+			if err != nil {
+				return ErrExecutionAdmission
+			}
+			card.Template.Grant = grant
+		} else if card.Status != string(StatusApproved) || card.Approval == nil {
 			return ErrApprovalRequired
 		}
 		if err := RefuseUnentitledStart(card, input); err != nil {
@@ -310,21 +427,45 @@ func (s *PostgresAuthority) Begin(ctx context.Context, input BeginExecution) (Be
 		}
 		validUntil := grantValidUntil(card, input.Now)
 		request := rilaction.Request{APIVersion: rilaction.APIVersionV1Alpha1, ActionCardID: card.ID, ExecutionID: input.ExecutionID, TraceID: input.TraceID, TenantID: input.TenantID, StackID: card.Template.StackID, Primitive: card.Template.Primitive, ResolvedPlanHash: card.Template.ResolvedPlanHash, Approval: rilaction.ApprovalBinding{ReceiptRef: card.Approval.ReceiptRef, ReceiptHash: card.Approval.ReceiptHash, Decision: string(StatusApproved), Class: card.Approval.Class, ApprovedAt: card.Approval.ApprovedAt.Format(time.RFC3339Nano), ValidUntil: card.Approval.ValidUntil.Format(time.RFC3339Nano)}, Grant: *card.Template.Grant, Target: card.Template.Target, Inputs: card.Template.Inputs, EvidenceSinkRef: card.Template.EvidenceSinkRef, IssuedAt: input.Now.Format(time.RFC3339Nano), ValidUntil: validUntil.Format(time.RFC3339Nano), Nonce: "nonce-" + uuid.NewString(), IdempotencyKey: input.IdempotencyKey}
+		if request.Primitive.ID == "verify-stackkit-state" {
+			if s.verifyRelease == nil {
+				return fmt.Errorf("%w: verify release capability unavailable", ErrExecutionAdmission)
+			}
+			hash, err := s.verifyRelease(ctx, request.TenantID, request.StackID)
+			if err != nil || hash == "" || hash != request.Primitive.ContractHash {
+				return fmt.Errorf("%w: verify release capability or primitive changed", ErrExecutionAdmission)
+			}
+		}
 		admission, admittedRequest, admissionErr := admitExecutionTx(ctx, tx, card, request, input.Now)
 		if admissionErr != nil {
 			return admissionErr
 		}
+		if gatewayApproval != nil && (admission.ServerRevision != decisionProposal.ServerRevision || int64(admission.LeaseRevision) != decisionProposal.LifecycleRevision || admission.LeaseRevision == 0) {
+			return ErrExecutionAdmission
+		}
 		request = admittedRequest
 		requestJSON, _ := json.Marshal(request)
-		card, err = scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status='executing', execution_request_json=$4::jsonb, execution_id=$5, trace_id=$6, idempotency_key=$7, execution_started_at=$8, admission_inventory_revision=$9, admission_server_revision=$10, admission_server_generation=$11, admission_lease_id=$12, admission_lease_revision=$13, admission_resource_generation_id=$14::uuid, execution_admission_digest=$15, updated_at=now() WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3 AND status='approved' RETURNING `+governedCardColumns, input.TenantID, input.OwnerSubjectID, input.CardID, requestJSON, input.ExecutionID, input.TraceID, input.IdempotencyKey, input.Now, admission.InventoryRevision, admission.ServerRevision, admission.ServerGeneration, admission.LeaseID, admission.LeaseRevision, admission.ResourceGenerationID, admission.Digest))
+		var sealed []byte
+		if gatewayApproval != nil {
+			sealed, err = SealRILIssuedLease(input.TenantID, input.CardID, input.ExecutionID, request.Grant.BindingHash, gatewayIssue)
+			if err != nil {
+				return err
+			}
+		}
+		card, err = scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status='executing', execution_request_json=$4::jsonb, execution_id=$5, trace_id=$6, idempotency_key=$7, execution_started_at=$8, admission_inventory_revision=$9, admission_server_revision=$10, admission_server_generation=$11, admission_lease_id=$12, admission_lease_revision=$13, admission_resource_generation_id=$14::uuid, execution_admission_digest=$15, updated_at=now() WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3 AND status=$16 RETURNING `+governedCardColumns, input.TenantID, input.OwnerSubjectID, input.CardID, requestJSON, input.ExecutionID, input.TraceID, input.IdempotencyKey, input.Now, admission.InventoryRevision, admission.ServerRevision, admission.ServerGeneration, admission.LeaseID, admission.LeaseRevision, admission.ResourceGenerationID, admission.Digest, statusBefore))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCardConflict
 		}
 		if err != nil {
 			return err
 		}
+		if gatewayApproval != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE ril_action_cards SET issued_lease_ciphertext=$4,issued_lease_expires_at=$5 WHERE tenant_id=$1 AND id=$2 AND execution_id=$3`, input.TenantID, input.CardID, input.ExecutionID, sealed, request.ValidUntil); err != nil {
+				return err
+			}
+		}
 		if err := appendActionTransitionAudit(ctx, tx, actionTransitionAudit{
-			TenantID: input.TenantID, CardID: input.CardID, FromStatus: cardStatusBeforeExecution,
+			TenantID: input.TenantID, CardID: input.CardID, FromStatus: statusBefore,
 			ToStatus: "executing", CorrelationID: newAuditCorrelation(input.TraceID),
 			ActorSubjectID: input.OwnerSubjectID, ExecutionID: input.ExecutionID,
 			TraceID: input.TraceID, OccurredAt: input.Now,
@@ -368,7 +509,7 @@ func (s *PostgresAuthority) Complete(ctx context.Context, tenantID, cardID strin
 			out = card
 			return nil
 		}
-		card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status=$3,evidence_json=$4::jsonb,error_code=NULLIF($5,''),completed_at=$6,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status IN ('executing','verifying') AND execution_id=$7 RETURNING `+governedCardColumns, tenantID, cardID, status, data, errorCode, now, evidence.ExecutionID))
+		card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status=$3,evidence_json=$4::jsonb,error_code=NULLIF($5,''),completed_at=$6,issued_lease_ciphertext=NULL,issued_lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status IN ('executing','verifying') AND execution_id=$7 RETURNING `+governedCardColumns, tenantID, cardID, status, data, errorCode, now, evidence.ExecutionID))
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return ErrCardConflict
 		}
@@ -419,7 +560,7 @@ func (s *PostgresAuthority) Fail(ctx context.Context, tenantID, cardID, executio
 			out = card
 			return nil
 		}
-		card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status='failed',error_code=$4,completed_at=$5,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status IN ('executing','verifying') AND execution_id=$3 RETURNING `+governedCardColumns, tenantID, cardID, executionID, errorCode, now))
+		card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status='failed',error_code=$4,completed_at=$5,issued_lease_ciphertext=NULL,issued_lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status IN ('executing','verifying') AND execution_id=$3 RETURNING `+governedCardColumns, tenantID, cardID, executionID, errorCode, now))
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return ErrCardConflict
 		}

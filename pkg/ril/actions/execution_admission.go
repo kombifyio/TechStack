@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/stackkits/contracts/runtimelease"
 	"github.com/kombifyio/techstack/pkg/ril/actioncontract"
 	"github.com/google/uuid"
+	"github.com/kombifyio/stackkits/contracts/runtimelease"
 )
 
 const executionAdmissionVersion = "techstack.ril-execution-admission/v1"
@@ -97,7 +97,9 @@ func admitExecutionTx(ctx context.Context, tx *sql.Tx, card *GovernedCard, reque
 	if lifecycleState != "active" || serverDesired != "running" || connectionState != "connected" {
 		return ExecutionAdmission{}, rilaction.Request{}, fmt.Errorf("%w: runtime server is not active, desired-running, and connected", ErrExecutionAdmission)
 	}
-	if strings.TrimSpace(workerID) == "" || workerID != request.Target.RuntimeInstanceRef {
+	canonicalVerify := request.Primitive.ID == "verify-stackkit-state" && request.Primitive.OperationClass == "product-verify" && request.Target.Scope == rilaction.TargetScopeStack
+	runtimeTarget := request.Primitive.ID != "verify-stackkit-state" && request.Target.Scope == rilaction.TargetScopeRuntimeInstance && workerID == request.Target.RuntimeInstanceRef
+	if strings.TrimSpace(workerID) == "" || (!canonicalVerify && !runtimeTarget) {
 		return ExecutionAdmission{}, rilaction.Request{}, fmt.Errorf("%w: execution target is not the current runtime worker", ErrExecutionAdmission)
 	}
 	if desiredState != string(runtimelease.DesiredStateRunning) {

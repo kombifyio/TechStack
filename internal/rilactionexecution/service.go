@@ -20,7 +20,7 @@ var (
 // Dispatcher delivers one already-admitted provider-free request to the
 // StackKits-owned action endpoint. It cannot select a provider or primitive.
 type Dispatcher interface {
-	Execute(context.Context, rilaction.Request) (rilaction.Evidence, error)
+	Execute(context.Context, rilaction.Request, string) (rilaction.Evidence, error)
 }
 
 type Config struct {
@@ -83,7 +83,7 @@ func (s *Service) Execute(ctx context.Context, request rilaction.Request, execut
 		return rilaction.Evidence{}, ErrExecutionConflict
 	}
 
-	evidence, dispatchErr := s.dispatcher.Execute(ctx, request)
+	evidence, dispatchErr := s.dispatcher.Execute(ctx, request, executionAdmissionDigest)
 	if err := rilaction.ValidateEvidenceForRequest(request, evidence); err != nil {
 		if dispatchErr != nil {
 			return rilaction.Evidence{}, fmt.Errorf("StackKits dispatch failed without valid evidence: %w", dispatchErr)

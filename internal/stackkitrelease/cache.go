@@ -99,6 +99,9 @@ type Release struct {
 	// advancedOperations is the stackkit.advanced-operations/v1 catalog the
 	// release shipped; nil when the release predates the catalog.
 	advancedOperations []byte
+	verifyExpectedPlan bool
+	verifyRILPrimitive bool
+	rilPrimitiveHash   string
 }
 
 // Cache resolves current artifact pins directly and legacy v1 pins from the
@@ -288,6 +291,9 @@ func (cache Cache) Resolve(pin Pin) (Release, error) {
 		receiptPath:        receiptPath,
 		receipt:            receipt,
 		advancedOperations: catalog,
+		verifyExpectedPlan: current.verifyExpectedPlan,
+		verifyRILPrimitive: current.verifyRILPrimitive,
+		rilPrimitiveHash:   current.rilPrimitiveHash,
 	}, nil
 }
 
@@ -329,6 +335,9 @@ func resolveArtifactPin(pin Pin, pinPath string) (Release, error) {
 	}
 	return Release{
 		advancedOperations: catalog,
+		verifyExpectedPlan: current.verifyExpectedPlan,
+		verifyRILPrimitive: current.verifyRILPrimitive,
+		rilPrimitiveHash:   current.rilPrimitiveHash,
 		binaryPath:         binaryPath,
 		installDir:         filepath.Dir(binaryPath),
 		receiptPath:        pinPath,
@@ -632,8 +641,11 @@ func decodeStrict(data []byte, target any) error {
 }
 
 type fileDigest struct {
-	sha256 string
-	size   int64
+	sha256             string
+	size               int64
+	verifyExpectedPlan bool
+	verifyRILPrimitive bool
+	rilPrimitiveHash   string
 }
 
 func digestRegularFile(path string, limit int64) (fileDigest, error) {
@@ -643,7 +655,8 @@ func digestRegularFile(path string, limit int64) (fileDigest, error) {
 	}
 	defer file.Close()
 	digest := sha256.New()
-	written, err := io.Copy(digest, io.LimitReader(file, info.Size()+1))
+	scanner := &capabilityScanner{}
+	written, err := io.Copy(io.MultiWriter(digest, scanner), io.LimitReader(file, info.Size()+1))
 	if err != nil {
 		return fileDigest{}, err
 	}
@@ -653,7 +666,7 @@ func digestRegularFile(path string, limit int64) (fileDigest, error) {
 	if err := ensureUnchanged(file, info); err != nil {
 		return fileDigest{}, err
 	}
-	return fileDigest{sha256: hex.EncodeToString(digest.Sum(nil)), size: written}, nil
+	return fileDigest{sha256: hex.EncodeToString(digest.Sum(nil)), size: written, verifyExpectedPlan: scanner.matches == 1, verifyRILPrimitive: scanner.rilMatches == 1, rilPrimitiveHash: scanner.qualifiedHash()}, nil
 }
 
 func openRegularFile(path string, limit int64) (*os.File, os.FileInfo, error) {

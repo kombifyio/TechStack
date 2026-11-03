@@ -39,8 +39,8 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
-	"github.com/kombifyio/techstack/pkg/diskcustody"
 	"github.com/kombifyio/techstack/pkg/demoguard"
+	"github.com/kombifyio/techstack/pkg/diskcustody"
 	"github.com/kombifyio/techstack/pkg/enrollment"
 	"github.com/kombifyio/techstack/pkg/features"
 	"github.com/kombifyio/techstack/pkg/fulllocal"
@@ -57,6 +57,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
+	"github.com/kombifyio/techstack/pkg/ril/actions"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
 	"github.com/kombifyio/techstack/pkg/serviceauth"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
@@ -523,6 +524,9 @@ func runTechstack(ctx context.Context) error {
 	serverMaintenance := bootServerMaintenanceLoop(v2Boot, orch, log)
 	driftScheduler := bootDriftScheduler(v2Boot, startup.cfg, orch, log)
 	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log, secondaryExecution)
+	if config.RunsSharedWork() && v2Boot.db != nil && v2Boot.db.DB != nil {
+		handles.background.run(func(ctx context.Context) { actions.RunIssuedLeaseReaper(ctx, v2Boot.db.DB) })
+	}
 	if feed != nil && feed.digest != nil {
 		handles.background.run(feed.digest.Run)
 	}
